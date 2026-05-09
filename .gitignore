@@ -34,6 +34,7 @@ docker-compose.override.yml
 *.p12
 *.crt
 *.cer
+offer360域名SSL证书/
 *.sqlite
 *.sqlite3
 *.db-journal
