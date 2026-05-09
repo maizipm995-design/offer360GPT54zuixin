@@ -1,0 +1,614 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-1.1.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model JobAnnouncement {
+  id                 String            @id @default(uuid()) @db.Char(36)
+  companyFullName    String            @map("company_full_name") @db.VarChar(191)
+  enterpriseNature   String?           @map("enterprise_nature") @db.VarChar(50)
+  degreeRequirement  String?           @map("degree_requirement") @db.VarChar(50)
+  workLocation       String?           @map("work_location") @db.LongText
+  jobName            String?           @map("job_name") @db.Text
+  jobCategory        String?           @map("job_category") @db.Text
+  recruitmentType    String?           @map("recruitment_type") @db.VarChar(50)
+  deadlineAt         String?           @map("deadline_at") @db.Text
+  announcementUrl    String?           @map("announcement_url") @db.Text
+  deliveryUrl        String?           @map("delivery_url") @db.Text
+  graduationSession  String?           @map("graduation_session") @db.LongText
+  referralCode       String?           @map("referral_code") @db.Text
+  announcementTitle  String?           @map("announcement_title") @db.VarChar(255)
+  industry           String?           @db.VarChar(100)
+  entryDate          String?           @map("entry_date") @db.Text
+  accessClickCount   Int               @default(0) @map("access_click_count")
+  deliveryMarkCount  Int               @default(0) @map("delivery_mark_count")
+  lastAccessAt       DateTime?         @map("last_access_at") @db.DateTime(0)
+  lastDeliveryMarkAt DateTime?         @map("last_delivery_mark_at") @db.DateTime(0)
+  status             String            @default("published") @db.VarChar(20)
+  createdAt          DateTime          @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.DateTime(0)
+  trackings          UserJobTracking[]
+
+  @@index([companyFullName], map: "idx_jobs_company_full_name")
+  @@index([degreeRequirement], map: "idx_jobs_degree")
+  @@index([enterpriseNature], map: "idx_jobs_nature")
+  @@index([recruitmentType], map: "idx_jobs_recruitment_type")
+  @@index([updatedAt], map: "idx_jobs_updated_at")
+  @@index([status, updatedAt], map: "idx_jobs_status_updated_at")
+  @@index([deliveryMarkCount, updatedAt], map: "idx_jobs_delivery_mark_updated_at")
+  @@index([accessClickCount, updatedAt], map: "idx_jobs_access_click_updated_at")
+  @@map("job_announcements")
+}
+
+model User {
+  id                String                 @id @default(uuid()) @db.Char(36)
+  phone             String                 @unique @db.VarChar(20)
+  passwordHash      String                 @map("password_hash") @db.Text
+  myInviteCode      String                 @unique @map("my_invite_code") @db.VarChar(32)
+  parentUid         String?                @map("parent_uid") @db.Char(36)
+  status            String                 @default("active") @db.VarChar(20)
+  sourceType        String?                @map("source_type") @db.VarChar(50)
+  wechatOpenId      String?                @unique @map("wechat_open_id") @db.VarChar(64)
+  createdAt         DateTime               @default(now()) @map("created_at") @db.DateTime(0)
+  lastLoginAt       DateTime?              @map("last_login_at") @db.DateTime(0)
+  resumePdfExportCount Int                 @default(0) @map("resume_pdf_export_count")
+  profile           UserProfile?
+  preference        UserJobPreferenceTag?
+  membership        UserMembership?
+  resumeDrafts      ResumeDraft[]
+  orders            ServiceOrder[]
+  trackings         UserJobTracking[]
+  wallet            UserWallet?
+  invitees          User[]                 @relation("UserInvites")
+  inviter           User?                  @relation("UserInvites", fields: [parentUid], references: [id])
+  redirectLinks     InvRedirectLink[]      @relation("InviterRedirectLink")
+  visitorTraces     InvVisitorTrace[]      @relation("InviterVisitorTrace")
+  commissionGets    CommissionLog[]        @relation("CommissionInviter")
+  commissionPays    CommissionLog[]        @relation("CommissionConsumer")
+  bindLogsOut       InvBindLog[]           @relation("BindInviter")
+  bindLogsIn        InvBindLog[]           @relation("BindInvitee")
+
+  @@index([parentUid], map: "idx_users_parent_uid")
+  @@index([status], map: "idx_users_status")
+  @@index([sourceType], map: "idx_users_source_type")
+  @@map("users")
+}
+
+model PhoneVerificationCode {
+  id        String   @id @default(uuid()) @db.Char(36)
+  phone     String   @db.VarChar(20)
+  business  String   @db.VarChar(30)
+  codeHash  String   @map("code_hash") @db.VarChar(128)
+  expiresAt DateTime @map("expires_at") @db.DateTime(0)
+  lastSentAt DateTime @map("last_sent_at") @db.DateTime(0)
+  verifiedAt DateTime? @map("verified_at") @db.DateTime(0)
+  sendCount Int      @default(1) @map("send_count")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@unique([phone, business], map: "uniq_phone_verification_phone_business")
+  @@index([business, expiresAt], map: "idx_phone_verification_business_expires")
+  @@map("phone_verification_codes")
+}
+
+model UserProfile {
+  id             String   @id @default(uuid()) @db.Char(36)
+  userId         String   @unique @map("user_id") @db.Char(36)
+  name           String?  @db.VarChar(100)
+  graduationYear Int?     @map("graduation_year")
+  degree         String?  @db.VarChar(20)
+  schoolName     String?  @map("school_name") @db.VarChar(120)
+  major          String?  @db.VarChar(120)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model UserJobPreferenceTag {
+  id               BigInt   @id @default(autoincrement())
+  userId           String   @unique @map("user_id") @db.Char(36)
+  intentionCity    Json     @map("intention_city")
+  intentionJob     Json     @map("intention_job")
+  intentionCompany Json     @map("intention_company")
+  createTime       DateTime @default(now()) @map("create_time") @db.DateTime(0)
+  updateTime       DateTime @updatedAt @map("update_time") @db.DateTime(0)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_job_preference_tags")
+}
+
+model UserMembership {
+  id              String   @id @default(uuid()) @db.Char(36)
+  userId          String   @unique @map("user_id") @db.Char(36)
+  memberLevel     String   @default("standard") @map("member_level") @db.VarChar(30)
+  startAt         DateTime @map("start_at") @db.DateTime(0)
+  endAt           DateTime @map("end_at") @db.DateTime(0)
+  remainingDays   Int      @default(0) @map("remaining_days")
+  sourceType      String   @default("manual") @map("source_type") @db.VarChar(30)
+  sourceRemark    String?  @map("source_remark") @db.VarChar(255)
+  openedByAdminId String?  @map("opened_by_admin_id") @db.Char(36)
+  createdAt       DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([memberLevel], map: "idx_user_memberships_member_level")
+  @@index([sourceType], map: "idx_user_memberships_source_type")
+  @@index([openedByAdminId], map: "idx_user_memberships_opened_by_admin")
+  @@map("user_memberships")
+}
+
+model ResumeDraft {
+  id              String    @id @default(uuid()) @db.Char(36)
+  userId          String    @map("user_id") @db.Char(36)
+  title           String    @db.VarChar(120)
+  templateCode    String    @default("classic") @map("template_code") @db.VarChar(40)
+  status          String    @default("draft") @db.VarChar(20)
+  contentJson     Json?     @map("content_json")
+  styleJson       Json?     @map("style_json")
+  layoutJson      Json?     @map("layout_json")
+  lastValidatedAt DateTime? @map("last_validated_at") @db.DateTime(0)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt], map: "idx_resume_drafts_user_updated_at")
+  @@index([status], map: "idx_resume_drafts_status")
+  @@map("resume_drafts")
+}
+
+model ResumeTemplateConfig {
+  id           String   @id @default(uuid()) @db.Char(36)
+  templateCode String   @unique(map: "uk_resume_template_code") @map("template_code") @db.VarChar(40)
+  templateName String   @map("template_name") @db.VarChar(80)
+  description  String?  @db.VarChar(255)
+  styleJson    Json     @map("style_json")
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@map("resume_template_configs")
+}
+
+model MembershipRichTextContent {
+  id                 String      @id @default(uuid()) @db.Char(36)
+  slug               String      @unique @db.VarChar(100)
+  title              String      @db.VarChar(120)
+  htmlContent        String      @map("html_content") @db.LongText
+  status             String      @default("published") @db.VarChar(20)
+  version            Int         @default(1)
+  publishedAt        DateTime?   @map("published_at") @db.DateTime(0)
+  publishedByAdminId String?     @map("published_by_admin_id") @db.Char(36)
+  createdAt          DateTime    @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@index([slug, status], map: "idx_membership_content_slug_status")
+  @@index([publishedByAdminId], map: "idx_membership_content_published_by_admin")
+  @@map("membership_rich_text_contents")
+}
+
+model ServiceProduct {
+  id                   String         @id @default(uuid()) @db.Char(36)
+  name                 String         @db.VarChar(120)
+  description          String         @db.Text
+  price                Decimal        @db.Decimal(10, 2)
+  originalPrice        Decimal        @map("original_price") @db.Decimal(10, 2)
+  score                Decimal        @db.Decimal(3, 1)
+  salesCount           Int            @default(0) @map("sales_count")
+  isHot                Boolean        @default(false) @map("is_hot")
+  status               Boolean        @default(true)
+  productType          String         @default("service") @map("product_type") @db.VarChar(20)
+  memberLevel          String?        @map("member_level") @db.VarChar(30)
+  grantDays            Int?           @map("grant_days")
+  detailHtml           String?        @map("detail_html") @db.LongText
+  orderServiceText     String?        @map("order_service_text") @db.Text
+  orderServiceImageUrl String?        @map("order_service_image_url") @db.Text
+  createdAt            DateTime       @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.DateTime(0)
+  orders               ServiceOrder[]
+
+  @@index([productType, status, isHot, salesCount], map: "idx_service_products_type_status_hot")
+  @@index([productType, memberLevel], map: "idx_service_products_type_member_level")
+  @@map("service_products")
+}
+
+model ServiceOrder {
+  id                  String               @id @default(uuid()) @db.Char(36)
+  orderNo             String               @unique @map("order_no") @db.VarChar(40)
+  userId              String               @map("user_id") @db.Char(36)
+  productId           String               @map("product_id") @db.Char(36)
+  orderType           String               @default("service") @map("order_type") @db.VarChar(20)
+  title               String               @db.VarChar(120)
+  amount              Decimal              @db.Decimal(10, 2)
+  memberLevel         String?              @map("member_level") @db.VarChar(30)
+  grantDays           Int?                 @map("grant_days")
+  payStatus           String               @default("unpaid") @map("pay_status") @db.VarChar(20)
+  payChannel          String?              @map("pay_channel") @db.VarChar(30)
+  payScene            String?              @map("pay_scene") @db.VarChar(20)
+  wechatOpenId        String?              @map("wechat_open_id") @db.VarChar(64)
+  wechatPrepayId      String?              @map("wechat_prepay_id") @db.VarChar(100)
+  wechatCodeUrl       String?              @map("wechat_code_url") @db.Text
+  wechatH5Url         String?              @map("wechat_h5_url") @db.Text
+  wechatTransactionId String?              @map("wechat_transaction_id") @db.VarChar(64)
+  callbackPayload     Json?                @map("callback_payload")
+  payTime             DateTime?            @map("pay_time") @db.DateTime(0)
+  expireAt            DateTime?            @map("expire_at") @db.DateTime(0)
+  closedAt            DateTime?            @map("closed_at") @db.DateTime(0)
+  refundReason        String?              @map("refund_reason") @db.VarChar(255)
+  refundAt            DateTime?            @map("refund_at") @db.DateTime(0)
+  remark              String?              @db.Text
+  createdAt           DateTime             @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.DateTime(0)
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product             ServiceProduct       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  commissions         CommissionLog[]
+
+  @@index([userId, createdAt], map: "idx_orders_user_created")
+  @@index([payStatus, createdAt], map: "idx_orders_pay_status_created")
+  @@index([orderType, payStatus, createdAt], map: "idx_orders_type_status_created")
+  @@index([expireAt, payStatus], map: "idx_orders_expire_status")
+  @@index([wechatTransactionId], map: "idx_orders_wechat_transaction")
+  @@map("service_orders")
+}
+
+model UserJobTracking {
+  id             String          @id @default(uuid()) @db.Char(36)
+  userId         String          @map("user_id") @db.Char(36)
+  jobId          String          @map("job_id") @db.Char(36)
+  progressStatus String          @map("progress_status") @db.VarChar(30)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.DateTime(0)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job            JobAnnouncement @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId], map: "uniq_user_job_tracking")
+  @@index([progressStatus], map: "idx_tracking_progress")
+  @@map("user_job_tracking")
+}
+
+model InvRedirectLink {
+  id         Int      @id @default(autoincrement())
+  randomKey  String   @unique @map("random_key") @db.VarChar(64)
+  inviterUid String   @map("inviter_uid") @db.Char(36)
+  expireAt   DateTime? @map("expire_at") @db.DateTime(0)
+  createAt   DateTime @default(now()) @map("create_at") @db.DateTime(0)
+  inviter    User     @relation("InviterRedirectLink", fields: [inviterUid], references: [id], onDelete: Cascade)
+
+  @@map("inv_redirect_link")
+}
+
+model InvVisitorTrace {
+  id         Int      @id @default(autoincrement())
+  traceSn    String   @unique @map("trace_sn") @db.VarChar(64)
+  inviterUid String   @map("inviter_uid") @db.Char(36)
+  ip         String?  @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.Text
+  clickAt    DateTime @default(now()) @map("click_at") @db.DateTime(0)
+  expireAt   DateTime @map("expire_at") @db.DateTime(0)
+  inviter    User     @relation("InviterVisitorTrace", fields: [inviterUid], references: [id], onDelete: Cascade)
+
+  @@map("inv_visitor_trace")
+}
+
+model UserWallet {
+  id               Int      @id @default(autoincrement())
+  userId           String   @unique @map("user_id") @db.Char(36)
+  availableBalance Decimal  @default(0) @map("available_balance") @db.Decimal(10, 2)
+  frozenBalance    Decimal  @default(0) @map("frozen_balance") @db.Decimal(10, 2)
+  totalEarn        Decimal  @default(0) @map("total_earn") @db.Decimal(10, 2)
+  updateAt         DateTime @updatedAt @map("update_at") @db.DateTime(0)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_wallet")
+}
+
+model CommissionLog {
+  id                   Int          @id @default(autoincrement())
+  orderId              String       @map("order_id") @db.Char(36)
+  inviterUid           String       @map("inviter_uid") @db.Char(36)
+  consumeUid           String       @map("consume_uid") @db.Char(36)
+  commissionRate       Int          @default(15) @map("commission_rate")
+  commissionMoney      Decimal      @map("commission_money") @db.Decimal(10, 2)
+  originalConsumeMoney Decimal      @map("original_consume_money") @db.Decimal(10, 2)
+  logType              Int          @map("log_type")
+  createAt             DateTime     @default(now()) @map("create_at") @db.DateTime(0)
+  order                ServiceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  inviter              User         @relation("CommissionInviter", fields: [inviterUid], references: [id], onDelete: Cascade)
+  consumer             User         @relation("CommissionConsumer", fields: [consumeUid], references: [id], onDelete: Cascade)
+
+  @@map("commission_log")
+}
+
+model CommissionConfig {
+  id           Int      @id @default(autoincrement())
+  oneLevelRate Int      @default(15) @map("one_level_rate")
+  updateAt     DateTime @updatedAt @map("update_at") @db.DateTime(0)
+
+  @@map("commission_config")
+}
+
+model JobsRecommendationConfig {
+  id                        Int      @id @default(autoincrement())
+  companyWeight             Int      @default(35) @map("company_weight")
+  jobWeight                 Int      @default(30) @map("job_weight")
+  cityExactWeight           Int      @default(20) @map("city_exact_weight")
+  cityParentWeight          Int      @default(10) @map("city_parent_weight")
+  degreeWeight              Int      @default(8) @map("degree_weight")
+  majorWeight               Int      @default(8) @map("major_weight")
+  fresh3DaysWeight          Int      @default(6) @map("fresh_3_days_weight")
+  fresh7DaysWeight          Int      @default(3) @map("fresh_7_days_weight")
+  stateOwnedFallbackWeight  Int      @default(4) @map("state_owned_fallback_weight")
+  deliveredPenalty          Int      @default(-12) @map("delivered_penalty")
+  heatMax                   Int      @default(6) @map("heat_max")
+  hotAccessThreshold        Int      @default(50) @map("hot_access_threshold")
+  hotDeliveryThreshold      Int      @default(10) @map("hot_delivery_threshold")
+  updatedAt                 DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@map("jobs_recommendation_config")
+}
+
+model NormalizationTerm {
+  id                  String               @id @default(uuid()) @db.Char(36)
+  domain              String               @db.VarChar(30)
+  canonicalName       String               @map("canonical_name") @db.VarChar(120)
+  canonicalCode       String?              @map("canonical_code") @db.VarChar(80)
+  level               String?              @db.VarChar(20)
+  status              String               @default("active") @db.VarChar(20)
+  sortOrder           Int                  @default(0) @map("sort_order")
+  metadata            Json?
+  createdAt           DateTime             @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.DateTime(0)
+  aliases             NormalizationAlias[]
+  locationAsProvince  LocationHierarchy[]  @relation("LocationHierarchyProvince")
+  locationAsCity      LocationHierarchy[]  @relation("LocationHierarchyCity")
+
+  @@unique([domain, canonicalName], map: "uniq_normalization_terms_domain_name")
+  @@index([domain, status], map: "idx_normalization_terms_domain_status")
+  @@index([domain, sortOrder], map: "idx_normalization_terms_domain_sort")
+  @@index([domain, canonicalCode], map: "idx_normalization_terms_domain_code")
+  @@map("normalization_terms")
+}
+
+model NormalizationAlias {
+  id              String            @id @default(uuid()) @db.Char(36)
+  termId          String            @map("term_id") @db.Char(36)
+  aliasName       String            @map("alias_name") @db.VarChar(120)
+  aliasNormalized String            @map("alias_normalized") @db.VarChar(120)
+  matchMode       String            @default("exact") @map("match_mode") @db.VarChar(20)
+  status          String            @default("active") @db.VarChar(20)
+  source          String?           @db.VarChar(30)
+  sortOrder       Int               @default(0) @map("sort_order")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.DateTime(0)
+  term            NormalizationTerm @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  @@unique([termId, aliasNormalized], map: "uniq_normalization_alias_term_lookup")
+  @@index([aliasNormalized, status], map: "idx_normalization_alias_lookup_status")
+  @@index([termId, status], map: "idx_normalization_alias_term_status")
+  @@map("normalization_aliases")
+}
+
+model LocationHierarchy {
+  id             String            @id @default(uuid()) @db.Char(36)
+  provinceTermId String            @map("province_term_id") @db.Char(36)
+  cityTermId     String            @unique(map: "uniq_location_hierarchy_city_term") @map("city_term_id") @db.Char(36)
+  status         String            @default("active") @db.VarChar(20)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.DateTime(0)
+  provinceTerm   NormalizationTerm @relation("LocationHierarchyProvince", fields: [provinceTermId], references: [id], onDelete: Cascade)
+  cityTerm       NormalizationTerm @relation("LocationHierarchyCity", fields: [cityTermId], references: [id], onDelete: Cascade)
+
+  @@unique([provinceTermId, cityTermId], map: "uniq_location_hierarchy_province_city")
+  @@index([provinceTermId, status], map: "idx_location_hierarchy_province_status")
+  @@index([cityTermId, status], map: "idx_location_hierarchy_city_status")
+  @@map("location_hierarchies")
+}
+
+model InvBindLog {
+  id         Int      @id @default(autoincrement())
+  inviterUid String   @map("inviter_uid") @db.Char(36)
+  newUserUid String   @map("new_user_uid") @db.Char(36)
+  bindTime   DateTime @default(now()) @map("bind_time") @db.DateTime(0)
+  inviter    User     @relation("BindInviter", fields: [inviterUid], references: [id], onDelete: Cascade)
+  newUser    User     @relation("BindInvitee", fields: [newUserUid], references: [id], onDelete: Cascade)
+
+  @@map("inv_bind_log")
+}
+
+model AdminUser {
+  id                         String                        @id @default(uuid()) @db.Char(36)
+  username                   String                        @unique @db.VarChar(50)
+  passwordHash               String                        @map("password_hash") @db.Text
+  realName                   String?                       @map("real_name") @db.VarChar(50)
+  phone                      String?                       @unique @db.VarChar(20)
+  email                      String?                       @unique @db.VarChar(100)
+  status                     String                        @default("active") @db.VarChar(20)
+  remark                     String?                       @db.Text
+  lastLoginAt                DateTime?                     @map("last_login_at") @db.DateTime(0)
+  createdAt                  DateTime                      @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt                  DateTime                      @updatedAt @map("updated_at") @db.DateTime(0)
+  userRoles              AdminUserRole[]
+  operationLogs          AdminOperationLog[]
+  createdRedeemBatches   MembershipRedeemCodeBatch[] @relation("RedeemBatchCreator")
+  invalidatedRedeemCodes MembershipRedeemCode[]      @relation("RedeemCodeInvalidator")
+
+  @@index([status], map: "idx_admin_users_status")
+  @@map("admin_users")
+}
+
+model AdminRole {
+  id          String                @id @default(uuid()) @db.Char(36)
+  code        String                @unique @db.VarChar(50)
+  name        String                @unique @db.VarChar(50)
+  description String?               @db.VarChar(255)
+  status      String                @default("active") @db.VarChar(20)
+  createdAt   DateTime              @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt   DateTime              @updatedAt @map("updated_at") @db.DateTime(0)
+  userRoles   AdminUserRole[]
+  permissions AdminRolePermission[]
+
+  @@index([status], map: "idx_admin_roles_status")
+  @@map("admin_roles")
+}
+
+model AdminUserRole {
+  id          String    @id @default(uuid()) @db.Char(36)
+  adminUserId String    @map("admin_user_id") @db.Char(36)
+  roleId      String    @map("role_id") @db.Char(36)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  role        AdminRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([adminUserId, roleId], map: "uniq_admin_user_role")
+  @@index([roleId], map: "idx_admin_user_roles_role_id")
+  @@map("admin_user_roles")
+}
+
+model AdminRolePermission {
+  id              String    @id @default(uuid()) @db.Char(36)
+  roleId          String    @map("role_id") @db.Char(36)
+  permissionKey   String    @map("permission_key") @db.VarChar(120)
+  permissionName  String    @map("permission_name") @db.VarChar(120)
+  permissionGroup String?   @map("permission_group") @db.VarChar(50)
+  permissionType  String    @default("api") @map("permission_type") @db.VarChar(20)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+  role            AdminRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionKey], map: "uniq_admin_role_permission")
+  @@index([permissionGroup], map: "idx_admin_role_permission_group")
+  @@map("admin_role_permissions")
+}
+
+model AdminBootstrapConfig {
+  id                  Int      @id @default(1)
+  registerEntryClosed Boolean  @default(false) @map("register_entry_closed")
+  createdAt           DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@map("admin_bootstrap_configs")
+}
+
+model AdminOperationLog {
+  id              BigInt     @id @default(autoincrement())
+  adminUserId     String?    @map("admin_user_id") @db.Char(36)
+  module          String     @db.VarChar(50)
+  action          String     @db.VarChar(50)
+  targetType      String?    @map("target_type") @db.VarChar(50)
+  targetId        String?    @map("target_id") @db.VarChar(64)
+  requestMethod   String?    @map("request_method") @db.VarChar(10)
+  requestPath     String?    @map("request_path") @db.VarChar(191)
+  requestPayload  Json?      @map("request_payload")
+  responseSummary String?    @map("response_summary") @db.VarChar(255)
+  ip              String?    @db.VarChar(45)
+  userAgent       String?    @map("user_agent") @db.Text
+  createdAt       DateTime   @default(now()) @map("created_at") @db.DateTime(0)
+  adminUser       AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  @@index([module, createdAt], map: "idx_admin_operation_module_created")
+  @@index([adminUserId, createdAt], map: "idx_admin_operation_user_created")
+  @@map("admin_operation_logs")
+}
+
+model MembershipRedeemCodeBatch {
+  id               String                    @id @default(uuid()) @db.Char(36)
+  batchNo          String                    @unique @map("batch_no") @db.VarChar(32)
+  memberLevel      String                    @default("standard") @map("member_level") @db.VarChar(30)
+  cardType         String                    @map("card_type") @db.VarChar(20)
+  grantDays        Int                       @map("grant_days")
+  quantity         Int
+  usedCount        Int                       @default(0) @map("used_count")
+  status           String                    @default("active") @db.VarChar(20)
+  validFrom        DateTime?                 @map("valid_from") @db.DateTime(0)
+  validUntil       DateTime?                 @map("valid_until") @db.DateTime(0)
+  remark           String?                   @db.VarChar(255)
+  createdByAdminId String?                   @map("created_by_admin_id") @db.Char(36)
+  createdAt        DateTime                  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime                  @updatedAt @map("updated_at") @db.DateTime(0)
+  createdByAdmin   AdminUser?                @relation("RedeemBatchCreator", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  codes            MembershipRedeemCode[]
+  useLogs          MembershipRedeemUseLog[]
+
+  @@index([memberLevel], map: "idx_redeem_batches_member_level")
+  @@index([status, validUntil], map: "idx_redeem_batches_status_valid_until")
+  @@index([createdByAdminId], map: "idx_redeem_batches_created_by_admin")
+  @@map("membership_redeem_code_batches")
+}
+
+model MembershipRedeemCode {
+  id                   String                    @id @default(uuid()) @db.Char(36)
+  code                 String                    @unique @db.VarChar(64)
+  batchId              String                    @map("batch_id") @db.Char(36)
+  status               String                    @default("unused") @db.VarChar(20)
+  validUntil           DateTime?                 @map("valid_until") @db.DateTime(0)
+  usedByUserId         String?                   @map("used_by_user_id") @db.Char(36)
+  usedAt               DateTime?                 @map("used_at") @db.DateTime(0)
+  invalidatedByAdminId String?                   @map("invalidated_by_admin_id") @db.Char(36)
+  invalidatedAt        DateTime?                 @map("invalidated_at") @db.DateTime(0)
+  invalidReason        String?                   @map("invalid_reason") @db.VarChar(255)
+  createdAt            DateTime                  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt            DateTime                  @updatedAt @map("updated_at") @db.DateTime(0)
+  batch                MembershipRedeemCodeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  invalidatedByAdmin   AdminUser?                @relation("RedeemCodeInvalidator", fields: [invalidatedByAdminId], references: [id], onDelete: SetNull)
+  useLogs              MembershipRedeemUseLog[]
+
+  @@index([batchId, status], map: "idx_redeem_codes_batch_status")
+  @@index([usedByUserId], map: "idx_redeem_codes_used_by_user")
+  @@index([invalidatedByAdminId], map: "idx_redeem_codes_invalidated_by_admin")
+  @@map("membership_redeem_codes")
+}
+
+model MembershipRedeemUseLog {
+  id           BigInt                    @id @default(autoincrement())
+  batchId      String                    @map("batch_id") @db.Char(36)
+  codeId       String                    @map("code_id") @db.Char(36)
+  userId       String                    @map("user_id") @db.Char(36)
+  membershipId String?                   @map("membership_id") @db.Char(36)
+  grantDays    Int                       @map("grant_days")
+  usedAt       DateTime                  @default(now()) @map("used_at") @db.DateTime(0)
+  remark       String?                   @db.VarChar(255)
+  batch        MembershipRedeemCodeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  code         MembershipRedeemCode      @relation(fields: [codeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt], map: "idx_redeem_use_logs_user_used_at")
+  @@index([batchId, usedAt], map: "idx_redeem_use_logs_batch_used_at")
+  @@index([membershipId], map: "idx_redeem_use_logs_membership_id")
+  @@map("membership_redeem_use_logs")
+}
+
+model MemberRole {
+  id               String                 @id @default(uuid()) @db.Char(36)
+  code             String                 @unique @db.VarChar(50)
+  name             String                 @unique @db.VarChar(50)
+  description      String?                @db.VarChar(255)
+  status           String                 @default("active") @db.VarChar(20)
+  isSystem         Boolean                @default(true) @map("is_system")
+  sortOrder        Int                    @default(0) @map("sort_order")
+  createdAt        DateTime               @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.DateTime(0)
+  permissions      MemberRolePermission[]
+
+  @@index([status], map: "idx_member_roles_status")
+  @@index([sortOrder], map: "idx_member_roles_sort_order")
+  @@map("member_roles")
+}
+
+model MemberRolePermission {
+  id              String     @id @default(uuid()) @db.Char(36)
+  roleId          String     @map("role_id") @db.Char(36)
+  permissionKey   String     @map("permission_key") @db.VarChar(120)
+  permissionName  String     @map("permission_name") @db.VarChar(120)
+  permissionGroup String?    @map("permission_group") @db.VarChar(50)
+  permissionType  String     @default("member") @map("permission_type") @db.VarChar(20)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.DateTime(0)
+  role            MemberRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionKey], map: "uniq_member_role_permission")
+  @@index([permissionGroup], map: "idx_member_role_permission_group")
+  @@map("member_role_permissions")
+}

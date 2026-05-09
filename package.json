@@ -1,0 +1,36 @@
+{
+  "name": "offer360-platform",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:up": "bash scripts/dev-up.sh",
+    "dev:down": "bash scripts/dev-down.sh",
+    "dev:web": "npm run build --workspace @offer360/shared && npm run dev --workspace @offer360/web",
+    "dev:api": "npm run build --workspace @offer360/shared && npm run start:dev --workspace @offer360/api",
+    "build:web": "npm run build --workspace @offer360/shared && npm run build --workspace @offer360/web",
+    "build:api": "npm run build --workspace @offer360/shared && npm run build --workspace @offer360/api",
+    "build": "npm run build:web && npm run build:api",
+    "preview:web": "bash scripts/rebuild-web-preview.sh",
+    "dev:apps:rebuild": "bash scripts/dev-refresh-apps.sh",
+    "lint:web": "npm run lint --workspace @offer360/web",
+    "lint:api": "npm run lint --workspace @offer360/api",
+    "lint": "npm run lint:web && npm run lint:api",
+    "db:generate": "npm run prisma:generate --workspace @offer360/api",
+    "db:migrate": "npm run prisma:migrate --workspace @offer360/api",
+    "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @offer360/api",
+    "db:migrate:status": "npm run prisma:migrate:status --workspace @offer360/api",
+    "db:seed": "npm run prisma:seed --workspace @offer360/api",
+    "db:backfill:user-normalization": "npm run prisma:backfill-user-normalization --workspace @offer360/api --",
+    "db:backfill:resume-global-vertical-spacing": "npm run prisma:backfill-resume-global-vertical-spacing --workspace @offer360/api --",
+    "docs:generate:normalization": "tsx scripts/generate-normalization-deliverables.ts",
+    "record:cmd": "node scripts/record-command.mjs"
+  },
+  "engines": {
+    "node": ">=20.18.0"
+  }
+}

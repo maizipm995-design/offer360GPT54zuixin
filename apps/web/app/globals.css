@@ -1,0 +1,97 @@
+/* Tailwind Base Styles */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+.rich-html-content {
+  color: #334155;
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+.rich-html-content > *:first-child {
+  margin-top: 0;
+}
+
+.rich-html-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.rich-html-content h1,
+.rich-html-content h2,
+.rich-html-content h3,
+.rich-html-content h4,
+.rich-html-content h5,
+.rich-html-content h6 {
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 1.4em 0 0.6em;
+}
+
+.rich-html-content h1 {
+  font-size: 2rem;
+}
+
+.rich-html-content h2 {
+  font-size: 1.5rem;
+}
+
+.rich-html-content h3 {
+  font-size: 1.25rem;
+}
+
+.rich-html-content p,
+.rich-html-content ul,
+.rich-html-content ol,
+.rich-html-content blockquote,
+.rich-html-content table {
+  margin: 0 0 1em;
+}
+
+.rich-html-content ul,
+.rich-html-content ol {
+  padding-left: 1.5rem;
+}
+
+.rich-html-content li + li {
+  margin-top: 0.35em;
+}
+
+.rich-html-content a {
+  color: #f97316;
+  text-decoration: underline;
+}
+
+.rich-html-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 1rem;
+  margin: 1.25rem auto;
+}
+
+.rich-html-content blockquote {
+  border-left: 4px solid #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 0.9rem 1rem;
+  border-radius: 0.75rem;
+}
+
+.rich-html-content table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+}
+
+.rich-html-content th,
+.rich-html-content td {
+  border: 1px solid #e2e8f0;
+  padding: 0.75rem;
+  text-align: left;
+}

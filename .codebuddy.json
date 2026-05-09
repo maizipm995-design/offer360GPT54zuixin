@@ -1,0 +1,8 @@
+{
+  "memory": {
+    "teamMemory": {
+      "enabled": true
+    },
+    "autoMemoryEnabled": true
+  }
+}

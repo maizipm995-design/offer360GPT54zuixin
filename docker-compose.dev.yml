@@ -1,0 +1,193 @@
+# 隔离开发栈，仅用于本地开发、联调与容器验证，不作为生产发布编排文件。
+name: ${STACK_NAME:-gpt54-o360-dev}
+
+services:
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-offer360}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - '${DEV_MYSQL_PORT:-13306}:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infra/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '${DEV_REDIS_PORT:-16379}:6379'
+    volumes:
+      - redis_data:/data
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - '${DEV_ELASTICSEARCH_PORT:-19200}:9200'
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  shared-builder:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: development
+    working_dir: /app
+    restart: unless-stopped
+    command: sh -c "npm install && npm run build --workspace @offer360/shared -- --watch"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - web_node_modules:/app/apps/web/node_modules
+      - shared_node_modules:/app/packages/shared/node_modules
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: development
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_started
+      shared-builder:
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      REDIS_URL: redis://redis:6379
+      ELASTICSEARCH_NODE: http://elasticsearch:9200
+      API_PORT: 4000
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:13000}
+      JWT_SECRET: ${JWT_SECRET}
+      WEB_APP_BASE_URL: ${WEB_APP_BASE_URL:-http://host.docker.internal:${DEV_WEB_PORT:-13000}}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+      WECHAT_PAY_GATEWAY_URL: http://wechat-pay-gateway:8080
+      WECHAT_PAY_APP_ID: ${WECHAT_PAY_APP_ID:-}
+      WECHAT_PAY_APP_SECRET: ${WECHAT_PAY_APP_SECRET:-}
+      WECHAT_PAY_NOTIFY_URL: ${WECHAT_PAY_NOTIFY_URL:-}
+      WECHAT_PAY_REFUND_NOTIFY_URL: ${WECHAT_PAY_REFUND_NOTIFY_URL:-}
+      WECHAT_PAY_ORDER_EXPIRE_MINUTES: ${WECHAT_PAY_ORDER_EXPIRE_MINUTES:-15}
+      OSS_REGION: ${OSS_REGION:-}
+      OSS_ENDPOINT: ${OSS_ENDPOINT:-}
+      OSS_BUCKET: ${OSS_BUCKET:-}
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+      OSS_STS_ROLE_ARN: ${OSS_STS_ROLE_ARN:-}
+      OSS_STS_ENDPOINT: ${OSS_STS_ENDPOINT:-sts.aliyuncs.com}
+      OSS_UPLOAD_EXPIRE_SECONDS: ${OSS_UPLOAD_EXPIRE_SECONDS:-900}
+      OSS_SIGN_EXPIRE_SECONDS: ${OSS_SIGN_EXPIRE_SECONDS:-1800}
+      OSS_CUSTOM_DOMAIN: ${OSS_CUSTOM_DOMAIN:-}
+    command: sh -c "npm install && npm run db:generate && npm run start:dev --workspace @offer360/api"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - api_node_modules:/app/apps/api/node_modules
+      - shared_node_modules:/app/packages/shared/node_modules
+    ports:
+      - '${DEV_API_PORT:-14000}:4000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:4000/healthz >/dev/null 2>&1']
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  wechat-pay-gateway:
+    build:
+      context: ./apps/wechat-pay-gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      WECHAT_PAY_GATEWAY_PORT: 8080
+      WECHAT_PAY_MCH_ID: ${WECHAT_PAY_MCH_ID:-}
+      WECHAT_PAY_APP_ID: ${WECHAT_PAY_APP_ID:-}
+      WECHAT_PAY_APP_SECRET: ${WECHAT_PAY_APP_SECRET:-}
+      WECHAT_PAY_MCH_CERT_SERIAL_NO: ${WECHAT_PAY_MCH_CERT_SERIAL_NO:-}
+      WECHAT_PAY_PUBLIC_KEY_ID: ${WECHAT_PAY_PUBLIC_KEY_ID:-}
+      WECHAT_PAY_API_V3_KEY: ${WECHAT_PAY_API_V3_KEY:-}
+      WECHAT_PAY_PRIVATE_KEY_PATH: ${WECHAT_PAY_PRIVATE_KEY_PATH:-/app/.config/certs/apiclient_key.pem}
+      WECHAT_PAY_MCH_CERT_PATH: ${WECHAT_PAY_MCH_CERT_PATH:-/app/.config/certs/apiclient_cert.pem}
+      WECHAT_PAY_PUBLIC_KEY_PATH: ${WECHAT_PAY_PUBLIC_KEY_PATH:-/app/.config/certs/wechat_pay_public_key.pem}
+      WECHAT_PAY_NOTIFY_URL: ${WECHAT_PAY_NOTIFY_URL:-}
+      WECHAT_PAY_REFUND_NOTIFY_URL: ${WECHAT_PAY_REFUND_NOTIFY_URL:-}
+      WECHAT_PAY_CALLBACK_BASE_URL: ${WECHAT_PAY_CALLBACK_BASE_URL:-http://host.docker.internal:13000}
+    volumes:
+      - ./.config/certs:/app/.config/certs:ro
+    ports:
+      - '${DEV_WECHAT_PAY_GATEWAY_PORT:-15000}:8080'
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: development
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      wechat-pay-gateway:
+        condition: service_started
+      shared-builder:
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:14000/api}
+      INTERNAL_API_BASE_URL: http://api:4000/api
+      NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS: ${NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS:-localhost:13000,127.0.0.1:13000}
+    command: sh -c "npm install && npm run dev --workspace @offer360/web -- --hostname 0.0.0.0 --port 3000"
+    volumes:
+      - .:/app
+      - root_node_modules:/app/node_modules
+      - web_node_modules:/app/apps/web/node_modules
+      - shared_node_modules:/app/packages/shared/node_modules
+      - web_next_cache:/app/apps/web/.next
+    ports:
+      - '${DEV_WEB_PORT:-13000}:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:3000/healthz >/dev/null 2>&1']
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_ARBITRARY: 1
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - '${DEV_PHPMYADMIN_PORT:-13307}:80'
+
+volumes:
+  mysql_data:
+  redis_data:
+  es_data:
+  root_node_modules:
+  api_node_modules:
+  web_node_modules:
+  shared_node_modules:
+  web_next_cache:
