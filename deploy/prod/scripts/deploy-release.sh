@@ -55,7 +55,7 @@ wait_for_http "http://127.0.0.1:$(web_port_for_slot "$target_slot")/healthz" "We
 
 render_active_upstream "$target_slot"
 compose_cmd exec -T gateway nginx -s reload
-wait_for_http "http://127.0.0.1:${GATEWAY_HTTP_PORT:-80}/__gateway_health" "Gateway" 20 3
+wait_for_http "http://127.0.0.1:${GATEWAY_HTTP_PORT:-18080}/__gateway_health" "Gateway" 20 3
 
 ACTIVE_SLOT="$target_slot"
 LAST_DEPLOYED_TAG="$APP_IMAGE_TAG"

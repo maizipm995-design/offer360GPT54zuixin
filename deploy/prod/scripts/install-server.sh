@@ -23,7 +23,7 @@ cat <<EOF
 - 部署目录：$ROOT_DIR
 - 环境文件：$ENV_FILE
 - 当前激活槽位：${ACTIVE_SLOT:-blue}
-- 网关健康检查：http://127.0.0.1:${GATEWAY_HTTP_PORT:-80}/__gateway_health
+- 网关健康检查：http://127.0.0.1:${GATEWAY_HTTP_PORT:-18080}/__gateway_health
 
 下一步：
 1. 补齐 $ENV_FILE 中的全部生产环境变量。

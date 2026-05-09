@@ -40,7 +40,7 @@ wait_for_http "http://127.0.0.1:$(web_port_for_slot "$ROLLBACK_SLOT")/healthz" "
 
 render_active_upstream "$ROLLBACK_SLOT"
 compose_cmd exec -T gateway nginx -s reload
-wait_for_http "http://127.0.0.1:${GATEWAY_HTTP_PORT:-80}/__gateway_health" "Gateway" 20 3
+wait_for_http "http://127.0.0.1:${GATEWAY_HTTP_PORT:-18080}/__gateway_health" "Gateway" 20 3
 
 ACTIVE_SLOT="$ROLLBACK_SLOT"
 LAST_ROLLED_BACK_AT="$(date '+%Y-%m-%d %H:%M:%S %z')"

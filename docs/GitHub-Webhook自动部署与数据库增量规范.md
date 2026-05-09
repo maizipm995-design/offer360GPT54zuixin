@@ -39,10 +39,16 @@ ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 ```
 
 ### 5.2 GitHub 仓库设置 Webhook
-- Payload URL：`http://<你的服务器IP>:19090/webhook/github`
+- Payload URL：`https://<你的服务器域名>/webhook/github`
 - Content type：`application/json`
 - Secret：与 `WEBHOOK_SECRET` 完全一致
 - Event：选择 `Just the push event`
+
+### 5.4 端口与反向代理规范（服务器统一约定）
+- 宿主机仅 `nginx` 可占用 `80/443`。
+- 所有业务服务（含 Docker 映射端口）禁止占用宿主机 `80/443`，统一使用自定义端口（如 `18080/3000/8080/9000`）。
+- `nginx` 负责按域名转发到各业务端口，并统一维护 SSL 证书。
+- 所有 `80` 的 HTTP 请求统一 `301` 跳转至 `443` HTTPS。
 
 ### 5.3 验证
 - 本地推送一次：
