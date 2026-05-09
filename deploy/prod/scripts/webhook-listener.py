@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
 PORT = int(os.getenv("WEBHOOK_PORT", "19090"))
@@ -13,6 +14,7 @@ TARGET_BRANCH = os.getenv("TARGET_BRANCH", "main")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/opt/offer360")
 ENV_FILE = os.getenv("ENV_FILE", f"{PROJECT_ROOT}/.env")
 DEPLOY_SCRIPT = os.getenv("DEPLOY_SCRIPT", f"{PROJECT_ROOT}/deploy/prod/scripts/webhook-deploy.sh")
+LOG_FILE = os.getenv("WEBHOOK_DEPLOY_LOG", f"{PROJECT_ROOT}/deploy/prod/runtime/logs/webhook-deploy.log")
 
 
 def verify_signature(body: bytes, signature: str) -> bool:
@@ -62,14 +64,22 @@ class Handler(BaseHTTPRequestHandler):
         env["TARGET_BRANCH"] = TARGET_BRANCH
         env["PROJECT_ROOT"] = PROJECT_ROOT
         env["ENV_FILE"] = ENV_FILE
+        env["WEBHOOK_DEPLOY_LOG"] = LOG_FILE
 
-        subprocess.Popen(
-            ["bash", DEPLOY_SCRIPT],
-            cwd=PROJECT_ROOT,
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        log_path = Path(LOG_FILE)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with log_path.open("ab") as log_file:
+            log_file.write(
+                f"\n=== webhook deploy start branch={TARGET_BRANCH} commit={app_image_tag} ===\n".encode("utf-8")
+            )
+            subprocess.Popen(
+                ["bash", DEPLOY_SCRIPT],
+                cwd=PROJECT_ROOT,
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
 
         self.send_response(202)
         self.end_headers()

@@ -29,6 +29,10 @@ if [ -z "${WEBHOOK_SECRET:-}" ]; then
 fi
 
 WEBHOOK_PORT="${WEBHOOK_PORT:-19090}"
+TARGET_BRANCH="${TARGET_BRANCH:-main}"
+WEBHOOK_DEPLOY_LOG="${WEBHOOK_DEPLOY_LOG:-$PROJECT_ROOT/deploy/prod/runtime/logs/webhook-deploy.log}"
+
+mkdir -p "$(dirname "$WEBHOOK_DEPLOY_LOG")"
 
 sudo tee "$SYSTEMD_FILE" >/dev/null <<EOF
 [Unit]
@@ -41,13 +45,16 @@ WorkingDirectory=${PROJECT_ROOT}
 EnvironmentFile=${ENV_FILE}
 Environment=WEBHOOK_SECRET=${WEBHOOK_SECRET}
 Environment=WEBHOOK_PORT=${WEBHOOK_PORT}
-Environment=TARGET_BRANCH=main
+Environment=TARGET_BRANCH=${TARGET_BRANCH}
 Environment=PROJECT_ROOT=${PROJECT_ROOT}
 Environment=ENV_FILE=${ENV_FILE}
 Environment=DEPLOY_SCRIPT=${PROJECT_ROOT}/deploy/prod/scripts/webhook-deploy.sh
+Environment=WEBHOOK_DEPLOY_LOG=${WEBHOOK_DEPLOY_LOG}
 ExecStart=/usr/bin/python3 ${PROJECT_ROOT}/deploy/prod/scripts/webhook-listener.py
 Restart=always
 RestartSec=3
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

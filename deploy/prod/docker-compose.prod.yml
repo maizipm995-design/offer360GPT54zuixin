@@ -111,9 +111,12 @@ services:
     environment:
       SERVER_NAME: ${SERVER_NAME:-_}
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-19090}
     volumes:
       - ./nginx/offer360.conf:/etc/nginx/templates/default.conf.template:ro
       - ./runtime/nginx:/etc/nginx/conf.d/upstreams:rw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${GATEWAY_HTTP_PORT:-18080}:80"
     healthcheck:

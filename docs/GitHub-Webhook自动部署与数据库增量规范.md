@@ -35,9 +35,15 @@ RESET_CONFIRM=YES ENV_FILE=/opt/offer360/.env \
 ```bash
 cd /opt/offer360
 echo 'WEBHOOK_SECRET=请替换成你的随机长字符串' >> .env
+echo 'TARGET_BRANCH=main' >> .env
 echo 'GITHUB_REPO_SLUG=maizipm995-design/offer360GPT54zuixin' >> .env
+echo 'GITHUB_USERNAME=你的 GitHub 用户名' >> .env
+echo 'GITHUB_TOKEN=你的 GitHub Personal Access Token' >> .env
 ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 ```
+
+- 私有仓库必须配置 `GITHUB_USERNAME` 与 `GITHUB_TOKEN`，否则服务器无法自动 `git fetch` 或下载源码包。
+- `TARGET_BRANCH` 必须与 GitHub Webhook 监听分支保持一致，当前默认是 `main`。
 
 ### 5.2 GitHub 仓库设置 Webhook
 - Payload URL：`https://<你的服务器域名>/webhook/github`
@@ -51,7 +57,9 @@ ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 - 所有业务服务（含 Docker 映射端口）禁止占用宿主机 `80/443`，统一使用自定义端口（如 `18080/3000/8080/9000`）。
 - `nginx` 负责按域名转发到各业务端口，并统一维护 SSL 证书。
 - 所有 `80` 的 HTTP 请求统一 `301` 跳转至 `443` HTTPS。
+- 仓库内的生产网关会把 `https://<域名>/webhook/github` 继续转发到宿主机 `WEBHOOK_PORT`，因此宿主机防火墙需要允许本机到该端口的访问。
 - 若服务器环境无法稳定直连 `github.com`，`webhook-deploy.sh` 会自动回退为从 `codeload.github.com` 下载目标分支源码包后再构建发布。
+- 若仓库是私有仓库，`webhook-deploy.sh` 会优先使用 `GITHUB_TOKEN` 通过 GitHub API 下载源码包。
 
 ### 5.3 验证
 - 本地推送一次：
@@ -61,12 +69,15 @@ git push origin main
 - 服务器查看状态：
 ```bash
 systemctl status offer360-webhook --no-pager
+journalctl -u offer360-webhook -n 100 --no-pager
+tail -n 100 /opt/offer360/deploy/prod/runtime/logs/webhook-deploy.log
 docker compose --env-file /opt/offer360/.env -f /opt/offer360/deploy/prod/docker-compose.prod.yml ps
 ```
 
 ## 6. 发布链路（自动执行）
 - `webhook-deploy.sh`：
   - 拉取 `main` 最新代码
+  - 使用部署锁避免多个 `push` 并发发布
   - 构建 `api/web/wechat-pay-gateway` 镜像
   - 调用 `deploy-release.sh`
 - `deploy-release.sh`：

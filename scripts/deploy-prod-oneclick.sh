@@ -20,6 +20,17 @@ fi
 ENV_FILE="$ENV_FILE" bash "$ROOT_DIR/deploy/prod/scripts/install-server.sh"
 
 echo
-echo "已完成生产环境基础设施初始化。"
-echo "后续正式版本发布请由 CI/CD 传入 APP_IMAGE_TAG 调用："
-echo "ENV_FILE=$ENV_FILE APP_IMAGE_TAG=<镜像标签> bash deploy/prod/scripts/deploy-release.sh"
+if grep -q '^WEBHOOK_SECRET=' "$ENV_FILE" && ! grep -q '^WEBHOOK_SECRET=CHANGE_ME_' "$ENV_FILE"; then
+  ENV_FILE="$ENV_FILE" bash "$ROOT_DIR/deploy/prod/scripts/install-webhook-service.sh"
+  echo
+  echo "已完成生产环境基础设施和 Webhook 监听服务初始化。"
+  echo "请在 GitHub 仓库中配置 Webhook："
+  echo "- Payload URL: https://<你的域名>/webhook/github"
+  echo "- Content type: application/json"
+  echo "- Secret: 使用 $ENV_FILE 中的 WEBHOOK_SECRET"
+  echo "- Event: Just the push event"
+else
+  echo "已完成生产环境基础设施初始化，但未安装 Webhook 服务。"
+  echo "原因：$ENV_FILE 中还没有有效的 WEBHOOK_SECRET。"
+  echo "补齐后执行：ENV_FILE=$ENV_FILE bash deploy/prod/scripts/install-webhook-service.sh"
+fi
