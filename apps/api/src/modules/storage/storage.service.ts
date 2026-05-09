@@ -98,6 +98,7 @@ const SCENE_RULES: Record<OssUploadScene, OssUploadSceneRule> = {
 export class StorageService {
   private stsClient: Sts20150401 | null = null;
   private ossClient: any = null;
+  private ossAccessClient: any = null;
 
   async createUserUploadSession(user: CurrentUserPayload, dto: CreateOssUploadSessionDto): Promise<OssUploadSessionPayload> {
     if (!USER_OSS_UPLOAD_SCENES.includes(dto.scene as (typeof USER_OSS_UPLOAD_SCENES)[number])) {
@@ -158,11 +159,13 @@ export class StorageService {
     if (!normalized) {
       return '';
     }
-    if (this.isDirectAccessValue(normalized)) {
+
+    const objectKey = this.extractObjectKeyFromValue(normalized);
+    if (!objectKey) {
       return normalized;
     }
     try {
-      return await this.createSignedReadUrl(this.extractObjectKeyFromValue(normalized));
+      return await this.createSignedReadUrl(objectKey);
     } catch {
       // In dev, placeholder OSS config should not block core business pages.
       return '';
@@ -194,7 +197,7 @@ export class StorageService {
     }
 
     this.assertStorageConfigured();
-    const url = this.getOssClient().signatureUrl(normalizedObjectKey, {
+    const url = this.getOssAccessClient().signatureUrl(normalizedObjectKey, {
       method: 'GET',
       expires: this.normalizeExpireSeconds(expiresSeconds),
     });
@@ -214,7 +217,7 @@ export class StorageService {
     }
 
     this.assertStorageConfigured();
-    const url = this.getOssClient().signatureUrl(normalizedObjectKey, {
+    const url = this.getOssAccessClient().signatureUrl(normalizedObjectKey, {
       method: 'GET',
       expires: this.normalizeExpireSeconds(expiresSeconds),
       response: {
@@ -322,7 +325,7 @@ export class StorageService {
       scene: rule.scene,
       bucket: env.ossBucket,
       region: env.ossRegion,
-      endpoint: this.resolveOssEndpoint(),
+      endpoint: this.resolveOssUploadEndpoint(),
       objectKey,
       signedUrl: await this.createSignedReadUrl(objectKey),
       signedUrlExpiresAt,
@@ -354,15 +357,41 @@ export class StorageService {
       return this.ossClient;
     }
 
-    this.ossClient = new OSS({
-      region: env.ossRegion,
-      bucket: env.ossBucket,
+    this.ossClient = this.createOssClient({
       endpoint: this.resolveOssEndpoint(),
-      accessKeyId: env.ossAccessKeyId,
-      accessKeySecret: env.ossAccessKeySecret,
-      secure: true,
+      cname: false,
     });
     return this.ossClient;
+  }
+
+  private getOssAccessClient() {
+    if (this.ossAccessClient) {
+      return this.ossAccessClient;
+    }
+
+    this.ossAccessClient = this.createOssClient({
+      endpoint: this.resolveOssAccessEndpoint(),
+      cname: this.shouldUseCustomDomainAccess(),
+    });
+    return this.ossAccessClient;
+  }
+
+  private createOssClient({
+    endpoint,
+    cname,
+  }: {
+    endpoint: string;
+    cname: boolean;
+  }) {
+    return new OSS({
+      region: env.ossRegion,
+      bucket: env.ossBucket,
+      endpoint,
+      accessKeyId: env.ossAccessKeyId,
+      accessKeySecret: env.ossAccessKeySecret,
+      cname,
+      secure: true,
+    });
   }
 
   private async assumeUploadRole({
@@ -540,16 +569,28 @@ export class StorageService {
     return `https://${env.ossRegion}.aliyuncs.com`;
   }
 
+  private resolveOssAccessEndpoint() {
+    const customDomain = env.ossCustomDomain.trim().replace(/\/+$/, '');
+    if (customDomain) {
+      return /^https?:\/\//i.test(customDomain) ? customDomain : `https://${customDomain}`;
+    }
+    return this.resolveOssEndpoint();
+  }
+
+  private resolveOssUploadEndpoint() {
+    return this.resolveOssAccessEndpoint();
+  }
+
+  private shouldUseCustomDomainAccess() {
+    return Boolean(env.ossCustomDomain.trim());
+  }
+
   private buildExpirationTimestamp(expiresSeconds: number) {
     return new Date(Date.now() + this.normalizeExpireSeconds(expiresSeconds) * 1000).toISOString();
   }
 
   private normalizeExpireSeconds(expiresSeconds: number) {
     return Math.max(60, Math.floor(expiresSeconds || env.ossSignExpireSeconds || 1800));
-  }
-
-  private isDirectAccessValue(value: string) {
-    return /^https?:\/\//i.test(value) || value.startsWith('data:');
   }
 
   toStoredObjectReference(objectKey: string) {
@@ -559,13 +600,63 @@ export class StorageService {
 
   private extractObjectKeyFromValue(value: string) {
     const normalized = value.trim();
-    if (!normalized || this.isDirectAccessValue(normalized)) {
+    if (!normalized || normalized.startsWith('data:')) {
       return '';
     }
     if (normalized.startsWith('oss://')) {
       return normalized.slice('oss://'.length).replace(/^\/+/, '');
     }
+    if (/^https?:\/\//i.test(normalized)) {
+      return this.extractObjectKeyFromUrl(normalized);
+    }
     return normalized;
+  }
+
+  private extractObjectKeyFromUrl(value: string) {
+    try {
+      const url = new URL(value);
+      if (!this.isKnownOssAccessHost(url.hostname)) {
+        return '';
+      }
+      return decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    } catch {
+      return '';
+    }
+  }
+
+  private isKnownOssAccessHost(hostname: string) {
+    const normalizedHost = hostname.trim().toLowerCase();
+    if (!normalizedHost) {
+      return false;
+    }
+
+    const configuredEndpointHost = this.extractHostname(this.resolveOssEndpoint());
+    const configuredAccessHost = this.extractHostname(this.resolveOssAccessEndpoint());
+    const officialBucketHost =
+      configuredEndpointHost && env.ossBucket.trim()
+        ? `${env.ossBucket.trim().toLowerCase()}.${configuredEndpointHost}`
+        : '';
+
+    return new Set(
+      [
+        configuredAccessHost,
+        configuredEndpointHost,
+        officialBucketHost,
+        'static.offer360.cn',
+        'offer360.cn',
+        'www.offer360.cn',
+        'offer360.cn-beijing.taihangpfm.cn',
+        'offer360.oss-cn-beijing.aliyuncs.com',
+      ].filter(Boolean),
+    ).has(normalizedHost);
+  }
+
+  private extractHostname(value: string) {
+    try {
+      return new URL(value).hostname.trim().toLowerCase();
+    } catch {
+      return '';
+    }
   }
 
   private async buildHtmlAssetUrlMap(html: string) {

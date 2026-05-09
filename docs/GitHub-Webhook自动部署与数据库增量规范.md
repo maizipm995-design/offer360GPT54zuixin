@@ -34,7 +34,7 @@ RESET_CONFIRM=YES ENV_FILE=/opt/offer360/.env \
 ### 5.1 安装监听服务
 ```bash
 cd /opt/offer360
-export WEBHOOK_SECRET='请替换成你的随机长字符串'
+echo 'WEBHOOK_SECRET=请替换成你的随机长字符串' >> .env
 ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 ```
 
@@ -43,6 +43,7 @@ ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 - Content type：`application/json`
 - Secret：与 `WEBHOOK_SECRET` 完全一致
 - Event：选择 `Just the push event`
+- 不要继续使用 `http://<服务器IP>/webhook/github`，在全站 HTTPS 场景下应统一改为域名 HTTPS 地址。
 
 ### 5.4 端口与反向代理规范（服务器统一约定）
 - 宿主机仅 `nginx` 可占用 `80/443`。

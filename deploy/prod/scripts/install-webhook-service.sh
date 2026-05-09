@@ -18,11 +18,17 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+# shellcheck disable=SC1090
+set -a
+source "$ENV_FILE"
+set +a
+
 if [ -z "${WEBHOOK_SECRET:-}" ]; then
-  echo "请先导出 WEBHOOK_SECRET 再执行。"
-  echo "示例：export WEBHOOK_SECRET='your-github-webhook-secret'"
+  echo "请先在 $ENV_FILE 中配置 WEBHOOK_SECRET 再执行。"
   exit 1
 fi
+
+WEBHOOK_PORT="${WEBHOOK_PORT:-19090}"
 
 sudo tee "$SYSTEMD_FILE" >/dev/null <<EOF
 [Unit]
@@ -32,7 +38,9 @@ After=network.target docker.service
 [Service]
 Type=simple
 WorkingDirectory=${PROJECT_ROOT}
+EnvironmentFile=${ENV_FILE}
 Environment=WEBHOOK_SECRET=${WEBHOOK_SECRET}
+Environment=WEBHOOK_PORT=${WEBHOOK_PORT}
 Environment=TARGET_BRANCH=main
 Environment=PROJECT_ROOT=${PROJECT_ROOT}
 Environment=ENV_FILE=${ENV_FILE}

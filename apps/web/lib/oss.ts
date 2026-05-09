@@ -32,13 +32,15 @@ export async function requestAdminOssUploadSession({
 }
 
 export async function uploadFileToOss(session: OssUploadSessionPayload, file: File) {
+  const endpoint = session.endpoint.trim();
   const client = new OSS({
     region: session.region,
     bucket: session.bucket,
-    endpoint: session.endpoint.trim() || undefined,
+    endpoint: endpoint || undefined,
     accessKeyId: session.credentials.accessKeyId,
     accessKeySecret: session.credentials.accessKeySecret,
     stsToken: session.credentials.securityToken,
+    cname: shouldUseOssCname(endpoint),
     secure: true,
   });
 
@@ -53,4 +55,17 @@ export async function uploadFileToOss(session: OssUploadSessionPayload, file: Fi
     objectReference: `oss://${session.objectKey}`,
     signedUrl: session.signedUrl || '',
   };
+}
+
+function shouldUseOssCname(endpoint: string) {
+  if (!endpoint) {
+    return false;
+  }
+
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    return hostname === 'static.offer360.cn' || hostname === 'offer360.cn-beijing.taihangpfm.cn';
+  } catch {
+    return false;
+  }
 }
