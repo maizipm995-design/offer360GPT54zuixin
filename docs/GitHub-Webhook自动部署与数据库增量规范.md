@@ -35,6 +35,7 @@ RESET_CONFIRM=YES ENV_FILE=/opt/offer360/.env \
 ```bash
 cd /opt/offer360
 echo 'WEBHOOK_SECRET=请替换成你的随机长字符串' >> .env
+echo 'GITHUB_REPO_SLUG=maizipm995-design/offer360GPT54zuixin' >> .env
 ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 ```
 
@@ -50,6 +51,7 @@ ENV_FILE=/opt/offer360/.env bash deploy/prod/scripts/install-webhook-service.sh
 - 所有业务服务（含 Docker 映射端口）禁止占用宿主机 `80/443`，统一使用自定义端口（如 `18080/3000/8080/9000`）。
 - `nginx` 负责按域名转发到各业务端口，并统一维护 SSL 证书。
 - 所有 `80` 的 HTTP 请求统一 `301` 跳转至 `443` HTTPS。
+- 若服务器环境无法稳定直连 `github.com`，`webhook-deploy.sh` 会自动回退为从 `codeload.github.com` 下载目标分支源码包后再构建发布。
 
 ### 5.3 验证
 - 本地推送一次：
