@@ -53,6 +53,14 @@ function extractLocationTokens(text: string | null | undefined, dictionary: Loca
 }
 
 export function buildLocationRecallClauses(preference: LocationPreferenceKeyword) {
+  if (preference.kind === 'province') {
+    return {
+      exactKeywords: Array.from(new Set(preference.aliases.length ? preference.aliases : [preference.canonical])),
+      parentProvinceKeywords: [],
+      siblingCityKeywords: [],
+    };
+  }
+
   return {
     exactKeywords: Array.from(new Set(preference.aliases.length ? preference.aliases : [preference.canonical])),
     parentProvinceKeywords: Array.from(

@@ -4,7 +4,8 @@ WORKDIR /app
 ENV CI=true
 ARG PRISMA_ENGINES_MIRROR=https://binaries.prisma.sh
 ENV PRISMA_ENGINES_MIRROR=${PRISMA_ENGINES_MIRROR}
-RUN apk add --no-cache \
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories && \
+    apk add --no-cache \
   bash \
   openssl \
   chromium \

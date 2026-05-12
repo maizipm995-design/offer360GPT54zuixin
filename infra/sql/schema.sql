@@ -1,62 +1,20 @@
 CREATE DATABASE IF NOT EXISTS `offer360` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `offer360`;
 
-#1 [internal] load local bake definitions
-#1 reading from stdin 576B done
-#1 DONE 0.0s
 
-#2 [internal] load build definition from Dockerfile
-#2 transferring dockerfile: 2.13kB done
-#2 DONE 0.0s
 
-#3 [internal] load metadata for docker.io/library/node:20-alpine
-#3 DONE 0.0s
 
-#4 [internal] load .dockerignore
-#4 transferring context: 285B done
-#4 DONE 0.0s
 
-#5 [base 1/3] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
-#5 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 done
-#5 DONE 0.0s
 
-#6 [internal] load build context
-#6 transferring context: 487.88kB done
-#6 DONE 0.0s
 
-#7 [deps 4/5] COPY packages/shared/package.json ./packages/shared/package.json
-#7 CACHED
 
-#8 [base 2/3] WORKDIR /app
-#8 CACHED
 
-#9 [base 3/3] RUN apk add --no-cache   bash   openssl   chromium   nss   freetype   harfbuzz   ca-certificates   ttf-freefont   font-noto-cjk
-#9 CACHED
 
-#10 [deps 2/5] COPY apps/api/package.json ./apps/api/package.json
-#10 CACHED
 
-#11 [deps 3/5] COPY apps/web/package.json ./apps/web/package.json
-#11 CACHED
 
-#12 [deps 1/5] COPY package.json package-lock.json ./
-#12 CACHED
 
-#13 [deps 5/5] RUN npm config set registry https://registry.npmmirror.com && npm ci
-#13 CACHED
 
-#14 exporting to image
-#14 exporting layers done
-#14 exporting manifest sha256:bd70e45398e73600f7e4d7630e92a2dc997ca7dd85c1347afe54004fbf146202 done
-#14 exporting config sha256:b2d1212c486ce243edbbc9dd614fe5418bba9ebf44720e4b193ea36343704d28 done
-#14 exporting attestation manifest sha256:bc07ff1c2877b66bb3545510c2bb6fe33a2bce56abe4feea3c7565e7411fe64f done
-#14 exporting manifest list sha256:b0ed1a4b5fce81f94264c4ad77babc26093ae45e3f8ae193a65ed45843129cc4 done
-#14 naming to docker.io/library/gpt54-o360-dev-api:latest done
-#14 unpacking to docker.io/library/gpt54-o360-dev-api:latest done
-#14 DONE 0.0s
 
-#15 resolving provenance for metadata file
-#15 DONE 0.0s
 -- CreateTable
 CREATE TABLE `job_announcements` (
     `id` CHAR(36) NOT NULL,

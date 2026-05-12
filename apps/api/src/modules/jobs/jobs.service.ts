@@ -9,6 +9,8 @@ import { buildLegacyJobCard, resolveJobDeliveryMethod, type JobAnnouncementViewP
 import { invalidateJobsRecommendationCacheByUserId } from './jobs-recommendation-cache';
 import { JobsMetricsService } from './jobs-metrics.service';
 import { JobsRecommendationService } from './jobs-recommendation.service';
+import { JobsNormalizationService } from './jobs-normalization.service';
+import { buildLocationRecallClauses } from './jobs-recommendation-location';
 import { subDays } from './jobs.utils';
 
 const GENERAL_SEARCH_FIELDS = [
@@ -38,6 +40,7 @@ export class JobsService {
     private readonly prisma: PrismaService,
     private readonly jobsRecommendationService: JobsRecommendationService,
     private readonly jobsMetricsService: JobsMetricsService,
+    private readonly normalizationService: JobsNormalizationService,
   ) {}
 
   async getFilters() {
@@ -206,7 +209,7 @@ export class JobsService {
       and.push(generalKeywordFilter);
     }
 
-    const cityKeywordFilter = this.buildSingleFieldContainsFilter('workLocation', query.cityKeyword);
+    const cityKeywordFilter = await this.buildLocationKeywordFilter(query.cityKeyword);
     if (cityKeywordFilter) {
       and.push(cityKeywordFilter);
     }
@@ -266,6 +269,40 @@ export class JobsService {
     }
 
     return and.length === 1 ? and[0] : { AND: and };
+  }
+
+  private async buildLocationKeywordFilter(keyword?: string): Promise<Prisma.JobAnnouncementWhereInput | null> {
+    const normalizedKeyword = keyword?.trim();
+    if (!normalizedKeyword) {
+      return null;
+    }
+
+    const locationPreferences = await this.normalizationService.normalizeLocationPreferences([normalizedKeyword]);
+    if (!locationPreferences.length) {
+      return { workLocation: { contains: normalizedKeyword } };
+    }
+
+    const preference = locationPreferences[0];
+    const clauses = buildLocationRecallClauses(preference);
+    const exactConditions = clauses.exactKeywords.map((kw) => ({ workLocation: { contains: kw } }));
+
+    if (!clauses.parentProvinceKeywords.length) {
+      return exactConditions.length === 1 ? exactConditions[0] : { OR: exactConditions };
+    }
+
+    return {
+      OR: [
+        ...exactConditions,
+        ...clauses.parentProvinceKeywords.map((parentProvinceKeyword) => ({
+          AND: [
+            { workLocation: { contains: parentProvinceKeyword } },
+            ...(clauses.siblingCityKeywords.length
+              ? [{ NOT: clauses.siblingCityKeywords.map((city) => ({ workLocation: { contains: city } })) }]
+              : []),
+          ],
+        })),
+      ],
+    };
   }
 
   private buildGeneralKeywordFilter(keyword?: string) {

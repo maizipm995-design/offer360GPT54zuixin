@@ -13,7 +13,8 @@ RUN GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/wechat-p
 
 FROM ${ALPINE_BASE_IMAGE} AS runner
 WORKDIR /app
-RUN apk add --no-cache ca-certificates && adduser -D -H -u 10001 app
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories && \
+    apk add --no-cache ca-certificates && adduser -D -H -u 10001 app
 COPY --from=builder /out/wechat-pay-gateway /usr/local/bin/wechat-pay-gateway
 USER app
 EXPOSE 8080

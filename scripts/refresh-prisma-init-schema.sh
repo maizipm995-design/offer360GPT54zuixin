@@ -24,10 +24,10 @@ cleanup() {
 
 trap cleanup EXIT
 
-echo "根据 apps/api/prisma/schema.prisma 重新生成开发库初始化 SQL..."
+echo "正在从 schema.prisma 生成初始化 SQL..."
 docker compose --env-file "$ENV_FILE" -f docker-compose.dev.yml run --rm --no-deps --build -T api \
   sh -lc 'npx prisma migrate diff --from-empty --to-schema-datamodel apps/api/prisma/schema.prisma --script' \
-  >"$TMP_SCHEMA_SQL"
+  | grep -v '^#' >"$TMP_SCHEMA_SQL" 2>/dev/null
 
 {
   echo "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE:-offer360}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"

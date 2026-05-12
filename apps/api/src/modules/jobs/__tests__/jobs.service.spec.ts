@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { JobsRecommendationService } from '../jobs-recommendation.service';
+import { JobsNormalizationService } from '../jobs-normalization.service';
 import { JobsService } from '../jobs.service';
 
 type MockJob = {
@@ -133,7 +135,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ companyFullName: '深圳互联科技集团', jobName: '算法工程师', jobCategory: '人工智能研发类' }),
       createJob({ id: 'job-2', companyFullName: '江苏电力集团', jobName: '行政专员', jobCategory: '职能类' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
 
     const result = await service.getList({ keyword: '互联科技', page: 1, limit: 20 });
 
@@ -146,7 +148,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ workLocation: '北京海淀区' }),
       createJob({ id: 'job-2', workLocation: '上海徐汇区' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
 
     const result = await service.getList({ cityKeyword: '海淀', page: 1, limit: 20 });
 
@@ -178,7 +180,7 @@ describe('JobsService fuzzy search filters', () => {
         updatedAt: new Date('2026-03-01T00:00:00Z'),
       }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
 
     const result = await service.getList({
       keyword: '产品',
@@ -202,7 +204,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ id: 'job-2', degreeRequirement: '硕士', enterpriseNature: '国企', recruitmentType: '实习' }),
       createJob({ id: 'job-3', degreeRequirement: '本科', enterpriseNature: '民企', recruitmentType: '校招' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
 
     const filters = await service.getFilters();
 
@@ -216,7 +218,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ trackings: [{ userId: 'user-1', progressStatus: '已投递' }] }),
       createJob({ id: 'job-2', trackings: [{ userId: 'user-1', progressStatus: '已面试' }] }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
 
     const result = await service.getList({ userId: 'user-1', progressStatus: '已投递', page: 1, limit: 20 });
 

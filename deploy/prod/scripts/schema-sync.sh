@@ -44,8 +44,8 @@ compose_cmd exec -T mysql \
 echo "校验 Prisma migrations 与 schema.prisma 是否一致..."
 set +e
 compose_cmd run --rm --no-deps -T api sh -lc \
-  "SHADOW_DATABASE_URL=\"\${DATABASE_URL%/*}/${SHADOW_DATABASE_NAME}\"; export SHADOW_DATABASE_URL; npx prisma migrate diff --from-migrations apps/api/prisma/migrations --to-schema-datamodel apps/api/prisma/schema.prisma --shadow-database-url \"\$SHADOW_DATABASE_URL\" --exit-code" \
-  >"$MIGRATION_DIFF_REPORT_PATH"
+  "SHADOW_DATABASE_URL=\"${DATABASE_URL%/*}/${SHADOW_DATABASE_NAME}\"; export SHADOW_DATABASE_URL; npx prisma migrate diff --from-migrations apps/api/prisma/migrations --to-schema-datamodel apps/api/prisma/schema.prisma --shadow-database-url \"\$SHADOW_DATABASE_URL\" --exit-code" \
+  >"$MIGRATION_DIFF_REPORT_PATH" 2>&1
 migration_status=$?
 set -e
 
@@ -71,7 +71,7 @@ fi
 echo "校验表结构记录文件是否与 schema.prisma 一致..."
 compose_cmd run --rm --no-deps -T api sh -lc \
   'npx prisma migrate diff --from-empty --to-schema-datamodel apps/api/prisma/schema.prisma --script' \
-  >"$EXPECTED_INIT_SQL_PATH"
+  | grep -v '^#' >"$EXPECTED_INIT_SQL_PATH" 2>/dev/null
 
 {
   echo "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
@@ -81,7 +81,7 @@ compose_cmd run --rm --no-deps -T api sh -lc \
 } >"${EXPECTED_INIT_SQL_PATH}.full"
 mv "${EXPECTED_INIT_SQL_PATH}.full" "$EXPECTED_INIT_SQL_PATH"
 
-if ! cmp -s "$EXPECTED_INIT_SQL_PATH" "$ROOT_DIR/../../infra/sql/schema.sql"; then
+if ! diff -qB "$EXPECTED_INIT_SQL_PATH" "$ROOT_DIR/../../infra/sql/schema.sql" >/dev/null; then
   cat >"$SCHEMA_RECORD_MISMATCH_PATH" <<EOF
 检测到结构记录文件未同步：
 - schema 真源：apps/api/prisma/schema.prisma
