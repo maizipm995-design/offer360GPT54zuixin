@@ -22,7 +22,9 @@ DEV_MYSQL_PORT="${DEV_MYSQL_PORT:-13306}"
 DEV_REDIS_PORT="${DEV_REDIS_PORT:-16379}"
 DEV_ELASTICSEARCH_PORT="${DEV_ELASTICSEARCH_PORT:-19200}"
 
+bash "$ROOT_DIR/scripts/refresh-prisma-init-schema.sh"
 docker compose --env-file "$ENV_FILE" -f docker-compose.dev.yml up -d --build
+SKIP_SCHEMA_SQL_REFRESH=1 bash "$ROOT_DIR/scripts/sync-dev-db-schema.sh"
 
 echo "隔离开发环境已启动。"
 echo "- 栈名前缀: ${STACK_NAME}"

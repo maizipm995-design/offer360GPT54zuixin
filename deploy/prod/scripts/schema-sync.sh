@@ -24,11 +24,76 @@ export APP_IMAGE_TAG
 RUNTIME_DIR="${ROOT_DIR}/runtime/schema-sync"
 DIFF_SQL_PATH="${RUNTIME_DIR}/schema-diff-${APP_IMAGE_TAG}.sql"
 RISK_REPORT_PATH="${RUNTIME_DIR}/schema-risk-${APP_IMAGE_TAG}.txt"
+EXPECTED_INIT_SQL_PATH="${RUNTIME_DIR}/schema-init-expected-${APP_IMAGE_TAG}.sql"
+SCHEMA_RECORD_MISMATCH_PATH="${RUNTIME_DIR}/schema-record-mismatch-${APP_IMAGE_TAG}.txt"
+MIGRATION_DIFF_REPORT_PATH="${RUNTIME_DIR}/migration-schema-diff-${APP_IMAGE_TAG}.txt"
+SHADOW_DATABASE_NAME="${MYSQL_DATABASE}_shadow"
 
 mkdir -p "$RUNTIME_DIR"
 
 if ! compose_cmd ps --status running --services | grep -qx "mysql"; then
   echo "MySQL 服务未处于运行状态。为了避免脚本自动触碰数据库容器，已停止本次结构同步。"
+  exit 1
+fi
+
+echo "准备 Prisma shadow database：$SHADOW_DATABASE_NAME"
+compose_cmd exec -T mysql \
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+  -e "CREATE DATABASE IF NOT EXISTS \`${SHADOW_DATABASE_NAME}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+echo "校验 Prisma migrations 与 schema.prisma 是否一致..."
+set +e
+compose_cmd run --rm --no-deps -T api sh -lc \
+  "SHADOW_DATABASE_URL=\"\${DATABASE_URL%/*}/${SHADOW_DATABASE_NAME}\"; export SHADOW_DATABASE_URL; npx prisma migrate diff --from-migrations apps/api/prisma/migrations --to-schema-datamodel apps/api/prisma/schema.prisma --shadow-database-url \"\$SHADOW_DATABASE_URL\" --exit-code" \
+  >"$MIGRATION_DIFF_REPORT_PATH"
+migration_status=$?
+set -e
+
+if [ "$migration_status" -eq 2 ]; then
+  cat <<EOF
+检测到 Prisma 迁移记录未同步，已阻断自动结构同步：
+- migrations 目录：apps/api/prisma/migrations
+- schema 真源：apps/api/prisma/schema.prisma
+- 差异报告：$MIGRATION_DIFF_REPORT_PATH
+
+请先补齐并提交缺失的 migration，再重新执行发布。
+EOF
+  cat "$MIGRATION_DIFF_REPORT_PATH"
+  exit 1
+fi
+
+if [ "$migration_status" -ne 0 ]; then
+  echo "Prisma migrations 一致性校验失败，请查看：$MIGRATION_DIFF_REPORT_PATH"
+  cat "$MIGRATION_DIFF_REPORT_PATH"
+  exit 1
+fi
+
+echo "校验表结构记录文件是否与 schema.prisma 一致..."
+compose_cmd run --rm --no-deps -T api sh -lc \
+  'npx prisma migrate diff --from-empty --to-schema-datamodel apps/api/prisma/schema.prisma --script' \
+  >"$EXPECTED_INIT_SQL_PATH"
+
+{
+  echo "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  echo "USE \`${MYSQL_DATABASE}\`;"
+  echo
+  cat "$EXPECTED_INIT_SQL_PATH"
+} >"${EXPECTED_INIT_SQL_PATH}.full"
+mv "${EXPECTED_INIT_SQL_PATH}.full" "$EXPECTED_INIT_SQL_PATH"
+
+if ! cmp -s "$EXPECTED_INIT_SQL_PATH" "$ROOT_DIR/../../infra/sql/schema.sql"; then
+  cat >"$SCHEMA_RECORD_MISMATCH_PATH" <<EOF
+检测到结构记录文件未同步：
+- schema 真源：apps/api/prisma/schema.prisma
+- 过期文件：infra/sql/schema.sql
+
+当前发布脚本依赖 schema.prisma 识别结构变更。
+如果数据库改动没有同步回结构记录文件，脚本就会误判“无改动”。
+请先在代码仓库执行：
+1. npm run db:schema:sql:refresh
+2. 确认 apps/api/prisma/schema.prisma / migrations / infra/sql/schema.sql 已同步提交
+EOF
+  cat "$SCHEMA_RECORD_MISMATCH_PATH"
   exit 1
 fi
 

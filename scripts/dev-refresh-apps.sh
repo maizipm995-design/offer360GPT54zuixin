@@ -19,6 +19,7 @@ DEV_WEB_PORT="${DEV_WEB_PORT:-13000}"
 DEV_API_PORT="${DEV_API_PORT:-14000}"
 
 docker compose --env-file "$ENV_FILE" -f docker-compose.dev.yml up -d --build shared-builder api web
+bash "$ROOT_DIR/scripts/sync-dev-db-schema.sh"
 
 echo "已重建并重启开发环境中的 shared-builder / Web / API 容器。"
 echo "- Web: http://localhost:${DEV_WEB_PORT}"
