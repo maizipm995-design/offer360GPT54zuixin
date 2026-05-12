@@ -533,7 +533,7 @@ export const jobTitleTermRound1SeedItems: SeedNormalizationTermItem[] = [
     track: 'operations',
     coverage: 'core-round2',
   }),
-  createMainTerm('JOB_TITLE', '数据分析', 'JOB-DATA-ANALYSIS', 150, {
+  createMainTerm('JOB_TITLE', '数据', 'JOB-DATA-ANALYSIS', 150, {
     domain: 'JOB_TITLE',
     track: 'data-analysis',
     coverage: 'core-round2',
@@ -554,7 +554,12 @@ export const jobTitleTermRound1SeedItems: SeedNormalizationTermItem[] = [
     track: 'functional',
     coverage: 'core-round2',
   }),
-  createMainTerm('JOB_TITLE', '人事 / 行政', 'JOB-HR-ADMIN', 190, {
+  createMainTerm('JOB_TITLE', '人事', 'JOB-HR-ADMIN-1', 190, {
+    domain: 'JOB_TITLE',
+    track: 'functional',
+    coverage: 'core-round2',
+  }),
+  createMainTerm('JOB_TITLE', '行政', 'JOB-HR-ADMIN-2', 191, {
     domain: 'JOB_TITLE',
     track: 'functional',
     coverage: 'core-round2',
@@ -600,7 +605,7 @@ export const jobTitleTermRound1SeedItems: SeedNormalizationTermItem[] = [
     track: 'campus',
     coverage: 'core-round2',
   }),
-  createMainTerm('JOB_TITLE', 'IT技术', 'JOB-IT', 280, {
+  createMainTerm('JOB_TITLE', 'IT', 'JOB-IT', 280, {
     domain: 'JOB_TITLE',
     track: 'it-support',
     coverage: 'core-round2',
@@ -621,12 +626,12 @@ export const jobTitleTermRound1SeedItems: SeedNormalizationTermItem[] = [
     track: 'medical',
     coverage: 'core-round3',
   }),
-  createMainTerm('JOB_TITLE', '生产制造', 'JOB-MANUFACTURING', 284, {
+  createMainTerm('JOB_TITLE', '制造', 'JOB-MANUFACTURING', 284, {
     domain: 'JOB_TITLE',
     track: 'manufacturing',
     coverage: 'core-round3',
   }),
-  createMainTerm('JOB_TITLE', '房地产', 'JOB-REAL-ESTATE', 285, {
+  createMainTerm('JOB_TITLE', '地产', 'JOB-REAL-ESTATE', 285, {
     domain: 'JOB_TITLE',
     track: 'real-estate',
     coverage: 'core-round3',
@@ -646,7 +651,7 @@ export const jobTitleTermRound1SeedItems: SeedNormalizationTermItem[] = [
     track: 'functional',
     coverage: 'core-round3',
   }),
-  createMainTerm('JOB_TITLE', '餐饮服务', 'JOB-CATERING', 289, {
+  createMainTerm('JOB_TITLE', '餐饮', 'JOB-CATERING', 289, {
     domain: 'JOB_TITLE',
     track: 'service',
     coverage: 'core-round3',
@@ -926,6 +931,55 @@ export const locationAliasSeedItems: SeedNormalizationAliasItem[] = [
   createAlias('LOCATION', '广州', '穗', 20),
   createAlias('LOCATION', '杭州', '杭州市', 10),
   createAlias('LOCATION', '杭州', '杭', 20),
+
+  // 核心一二线城市补充 Alias (拼音首字母, 区县名, 旧称)
+  createAlias('LOCATION', '北京', '北京市', 10),
+  createAlias('LOCATION', '北京', '京', 20),
+  createAlias('LOCATION', '北京', 'bj', 30),
+  createContainsAlias('LOCATION', '北京', '朝阳区', 40),
+  createContainsAlias('LOCATION', '北京', '海淀区', 50),
+  createContainsAlias('LOCATION', '北京', '北平', 60),
+
+  createAlias('LOCATION', '上海', 'sh', 30),
+  createContainsAlias('LOCATION', '上海', '浦东', 40),
+  createContainsAlias('LOCATION', '上海', '徐汇', 50),
+  createContainsAlias('LOCATION', '上海', '申城', 60),
+
+  createAlias('LOCATION', '广州', 'gz', 30),
+  createContainsAlias('LOCATION', '广州', '天河区', 40),
+  createContainsAlias('LOCATION', '广州', '越秀区', 50),
+  createContainsAlias('LOCATION', '广州', '羊城', 60),
+
+  createAlias('LOCATION', '深圳', 'sz', 30),
+  createContainsAlias('LOCATION', '深圳', '南山区', 40),
+  createContainsAlias('LOCATION', '深圳', '福田区', 50),
+  createContainsAlias('LOCATION', '深圳', '鹏城', 60),
+
+  createAlias('LOCATION', '成都', '成都市', 10),
+  createAlias('LOCATION', '成都', '蓉', 20),
+  createAlias('LOCATION', '成都', 'cd', 30),
+  createContainsAlias('LOCATION', '成都', '武侯区', 40),
+  createContainsAlias('LOCATION', '成都', '高新区', 50),
+  createContainsAlias('LOCATION', '成都', '锦城', 60),
+
+  createAlias('LOCATION', '杭州', 'hz', 30),
+  createContainsAlias('LOCATION', '杭州', '余杭区', 40),
+  createContainsAlias('LOCATION', '杭州', '西湖区', 50),
+  createContainsAlias('LOCATION', '杭州', '临安', 60),
+
+  createAlias('LOCATION', '武汉', '武汉市', 10),
+  createAlias('LOCATION', '武汉', '汉', 20),
+  createAlias('LOCATION', '武汉', 'wh', 30),
+  createContainsAlias('LOCATION', '武汉', '武昌', 40),
+  createContainsAlias('LOCATION', '武汉', '汉口', 50),
+  createContainsAlias('LOCATION', '武汉', '江城', 60),
+
+  createAlias('LOCATION', '重庆', '重庆市', 10),
+  createAlias('LOCATION', '重庆', '渝', 20),
+  createAlias('LOCATION', '重庆', 'cq', 30),
+  createContainsAlias('LOCATION', '重庆', '渝北', 40),
+  createContainsAlias('LOCATION', '重庆', '江北', 50),
+  createContainsAlias('LOCATION', '重庆', '山城', 60),
 ];
 
 export const jobTitleAliasRound1SeedItems: SeedNormalizationAliasItem[] = [
@@ -1024,9 +1078,9 @@ export const jobTitleAliasRound1SeedItems: SeedNormalizationAliasItem[] = [
   createContainsAlias('JOB_TITLE', '运营', '短视频内容运营', 110),
   createContainsAlias('JOB_TITLE', '运营', '运营管理培训生', 120),
 
-  createAlias('JOB_TITLE', '数据分析', '数据', 10),
-  createContainsAlias('JOB_TITLE', '数据分析', '数据分析师', 20),
-  createContainsAlias('JOB_TITLE', '数据分析', '数据分析工程师', 30),
+  createContainsAlias('JOB_TITLE', '数据', '数据分析', 10),
+  createContainsAlias('JOB_TITLE', '数据', '数据分析师', 20),
+  createContainsAlias('JOB_TITLE', '数据', '数据分析工程师', 30),
 
   createAlias('JOB_TITLE', 'UI', 'UI', 10),
   createContainsAlias('JOB_TITLE', 'UI', 'UI设计', 20),
@@ -1047,14 +1101,14 @@ export const jobTitleAliasRound1SeedItems: SeedNormalizationAliasItem[] = [
   createContainsAlias('JOB_TITLE', '人力', '人力资源管理', 30),
   createContainsAlias('JOB_TITLE', '人力', '招聘专员', 40),
 
-  createAlias('JOB_TITLE', '人事 / 行政', '人事', 10),
-  createAlias('JOB_TITLE', '人事 / 行政', '行政', 20),
-  createContainsAlias('JOB_TITLE', '人事 / 行政', '行政岗', 30),
-  createContainsAlias('JOB_TITLE', '人事 / 行政', '行政文员', 40),
-  createContainsAlias('JOB_TITLE', '人事 / 行政', '行政助理', 50),
-  createContainsAlias('JOB_TITLE', '人事 / 行政', '行政专员', 60),
-  createContainsAlias('JOB_TITLE', '人事 / 行政', '人事行政', 70),
-  createContainsAlias('JOB_TITLE', '人事 / 行政', '综合行政', 80),
+  createContainsAlias('JOB_TITLE', '人事', '人事行政', 10),
+  createContainsAlias('JOB_TITLE', '人事', '人事专员', 20),
+  createContainsAlias('JOB_TITLE', '人事', '人事经理', 30),
+  createContainsAlias('JOB_TITLE', '行政', '行政岗', 40),
+  createContainsAlias('JOB_TITLE', '行政', '行政文员', 50),
+  createContainsAlias('JOB_TITLE', '行政', '行政助理', 60),
+  createContainsAlias('JOB_TITLE', '行政', '行政专员', 70),
+  createContainsAlias('JOB_TITLE', '行政', '综合行政', 80),
 
   createAlias('JOB_TITLE', '财务', '会计', 10),
   createAlias('JOB_TITLE', '财务', '出纳', 20),
@@ -1094,8 +1148,63 @@ export const jobTitleAliasRound1SeedItems: SeedNormalizationAliasItem[] = [
   createContainsAlias('JOB_TITLE', '校园大使', '校园推广大使', 10),
   createContainsAlias('JOB_TITLE', '校园大使', '校园合伙人', 20),
 
-  createContainsAlias('JOB_TITLE', 'IT技术', 'IT技术岗', 10),
-  createContainsAlias('JOB_TITLE', 'IT技术', '信息技术岗', 20),
+  createContainsAlias('JOB_TITLE', 'IT', 'IT技术岗', 10),
+  createContainsAlias('JOB_TITLE', 'IT', '信息技术岗', 20),
+  createContainsAlias('JOB_TITLE', 'IT', 'IT支持', 30),
+
+  createContainsAlias('JOB_TITLE', '销售', '销售代表', 10),
+  createContainsAlias('JOB_TITLE', '销售', '销售经理', 20),
+  createContainsAlias('JOB_TITLE', '销售', '业务员', 30),
+  createContainsAlias('JOB_TITLE', '销售', '销售专员', 40),
+  createContainsAlias('JOB_TITLE', '销售', '客户经理', 50),
+
+  createContainsAlias('JOB_TITLE', '教育', '教师', 10),
+  createContainsAlias('JOB_TITLE', '教育', '老师', 20),
+  createContainsAlias('JOB_TITLE', '教育', '授课老师', 30),
+  createContainsAlias('JOB_TITLE', '教育', '讲师', 40),
+  createContainsAlias('JOB_TITLE', '教育', '辅导老师', 50),
+  createContainsAlias('JOB_TITLE', '教育', '教研', 60),
+
+  createContainsAlias('JOB_TITLE', '医疗', '医生', 10),
+  createContainsAlias('JOB_TITLE', '医疗', '护士', 20),
+  createContainsAlias('JOB_TITLE', '医疗', '药剂师', 30),
+  createContainsAlias('JOB_TITLE', '医疗', '医药代表', 40),
+  createContainsAlias('JOB_TITLE', '医疗', '临床', 50),
+
+  createContainsAlias('JOB_TITLE', '制造', '生产制造', 10),
+  createContainsAlias('JOB_TITLE', '制造', '生产专员', 20),
+  createContainsAlias('JOB_TITLE', '制造', '生产主管', 30),
+  createContainsAlias('JOB_TITLE', '制造', '普工', 40),
+  createContainsAlias('JOB_TITLE', '制造', '操作工', 50),
+
+  createContainsAlias('JOB_TITLE', '地产', '房地产', 10),
+  createContainsAlias('JOB_TITLE', '地产', '房产经纪人', 20),
+  createContainsAlias('JOB_TITLE', '地产', '卖房的', 30),
+  createContainsAlias('JOB_TITLE', '地产', '置业顾问', 40),
+  createContainsAlias('JOB_TITLE', '地产', '房产销售', 50),
+
+  createContainsAlias('JOB_TITLE', '供应链', '采购', 10),
+  createContainsAlias('JOB_TITLE', '供应链', '物流', 20),
+  createContainsAlias('JOB_TITLE', '供应链', '仓储', 30),
+  createContainsAlias('JOB_TITLE', '供应链', '供应链管理', 40),
+  createContainsAlias('JOB_TITLE', '供应链', '物控', 50),
+
+  createContainsAlias('JOB_TITLE', '客服', '客服专员', 10),
+  createContainsAlias('JOB_TITLE', '客服', '客户服务', 20),
+  createContainsAlias('JOB_TITLE', '客服', '售后客服', 30),
+  createContainsAlias('JOB_TITLE', '客服', '售前客服', 40),
+  createContainsAlias('JOB_TITLE', '客服', '话务员', 50),
+
+  createContainsAlias('JOB_TITLE', '法务', '法务专员', 10),
+  createContainsAlias('JOB_TITLE', '法务', '律师', 20),
+  createContainsAlias('JOB_TITLE', '法务', '合规专员', 30),
+  createContainsAlias('JOB_TITLE', '法务', '法务主管', 40),
+
+  createContainsAlias('JOB_TITLE', '餐饮', '餐饮服务', 10),
+  createContainsAlias('JOB_TITLE', '餐饮', '服务员', 20),
+  createContainsAlias('JOB_TITLE', '餐饮', '厨师', 30),
+  createContainsAlias('JOB_TITLE', '餐饮', '餐饮管理', 40),
+  createContainsAlias('JOB_TITLE', '餐饮', '后厨', 50),
 
   createContainsAlias('JOB_TITLE', '其他职位', '其他岗位', 10),
   createContainsAlias('JOB_TITLE', '其他职位', '综合培养岗', 20),

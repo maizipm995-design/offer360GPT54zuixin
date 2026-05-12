@@ -25,13 +25,13 @@ function normalizeAlias(value: string) {
 }
 
 describe('jobs-normalization.seed-data', () => {
-  it('LOCATION 首轮主表补数覆盖 31 个省级词和 57 个城市词', () => {
+  it('LOCATION 首轮主表补数覆盖 31 个省级词和 289 个城市词', () => {
     const provinces = locationTermRound1SeedItems.filter((item) => item.level === 'province');
     const cities = locationTermRound1SeedItems.filter((item) => item.level === 'city');
     const canonicalNames = locationTermRound1SeedItems.map((item) => item.canonicalName);
 
     expect(provinces).toHaveLength(31);
-    expect(cities).toHaveLength(57);
+    expect(cities).toHaveLength(289);
     expect(new Set(canonicalNames).size).toBe(canonicalNames.length);
     expect(locationTermRound1SeedItems.every((item) => item.canonicalCode?.startsWith('CN-'))).toBe(true);
   });
@@ -52,7 +52,7 @@ describe('jobs-normalization.seed-data', () => {
   });
 
   it('四个非 LOCATION 域主表首轮补数覆盖预期范围并保留兼容锚点', () => {
-    expect(jobTitleTermRound1SeedItems).toHaveLength(29);
+    expect(jobTitleTermRound1SeedItems).toHaveLength(39);
     expect(companyTermRound1SeedItems).toHaveLength(16);
     expect(degreeTermRound1SeedItems).toHaveLength(5);
     expect(majorTermRound1SeedItems).toHaveLength(24);
@@ -80,9 +80,9 @@ describe('jobs-normalization.seed-data', () => {
     expect(nonLocationItems.every((item) => item.metadata?.seedLayer === 'terms')).toBe(true);
     expect(jobTitleTermRound1SeedItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ canonicalName: '数据分析', metadata: expect.objectContaining({ coverage: 'core-round2', track: 'data-analysis' }) }),
+        expect.objectContaining({ canonicalName: '数据', metadata: expect.objectContaining({ coverage: 'core-round2', track: 'data-analysis' }) }),
         expect.objectContaining({ canonicalName: '工程师', metadata: expect.objectContaining({ coverage: 'core-round2', track: 'engineering' }) }),
-        expect.objectContaining({ canonicalName: 'IT技术', metadata: expect.objectContaining({ coverage: 'core-round2', track: 'it-support' }) }),
+        expect.objectContaining({ canonicalName: 'IT', metadata: expect.objectContaining({ coverage: 'core-round2', track: 'it-support' }) }),
         expect.objectContaining({ canonicalName: '其他职位', metadata: expect.objectContaining({ coverage: 'fallback-round2', track: 'fallback' }) }),
       ]),
     );
@@ -111,7 +111,7 @@ describe('jobs-normalization.seed-data', () => {
         expect.objectContaining({ canonicalName: '后端', aliasName: 'Java后端开发', matchMode: 'contains' }),
         expect.objectContaining({ canonicalName: '运营', aliasName: '短视频内容运营', matchMode: 'contains' }),
         expect.objectContaining({ canonicalName: '管培生', aliasName: '管理培训生', matchMode: 'contains' }),
-        expect.objectContaining({ canonicalName: '人事 / 行政', aliasName: '行政', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '行政', aliasName: '行政岗', matchMode: 'contains' }),
         expect.objectContaining({ canonicalName: '产品', aliasName: '产品经理', matchMode: 'contains' }),
       ]),
     );
