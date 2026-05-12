@@ -10,17 +10,15 @@ import {
   getMemberLevelLabel,
   normalizeStoredMemberLevel,
   parseMemberLevelInput,
+  resolveMembershipState,
 } from '../../common/utils/member-access';
 import { PrismaService } from '../../prisma.service';
 import { MembershipsService } from '../memberships/memberships.service';
 import {
   WechatGatewayClient,
-  type WechatGatewayOrderQueryResponse,
   type WechatGatewayPrepayPayload,
   type WechatGatewayPrepayResponse,
-  type WechatGatewayRefundQueryResponse,
   type WechatGatewayRefundResponse,
-  type WechatGatewayRefundNotifyParseResponse,
   type WechatPayScene,
 } from './wechat-gateway.client';
 
@@ -31,8 +29,12 @@ const PAYMENT_STATUS_CLOSED = 'closed';
 const PAYMENT_STATUS_REFUND_PENDING = 'refund_pending';
 const PAYMENT_STATUS_REFUNDED = 'refunded';
 const PAYMENT_CHANNEL_WECHAT = 'wechat_pay';
+const PAYMENT_CHANNEL_BALANCE = 'balance_wallet';
 const SERVICE_PRODUCT_TYPE = 'service';
 const MEMBERSHIP_PRODUCT_TYPE = 'membership';
+const SUPER_MEMBER_DISCOUNT_RATE = 0.9;
+const SUPER_MEMBER_INCENTIVE_RATE = 0.1;
+const DEFAULT_MEMBER_INCENTIVE_RATE = 0.05;
 
 const WECHAT_SUCCESS_STATES = new Set(['SUCCESS']);
 const WECHAT_PENDING_STATES = new Set(['NOTPAY', 'USERPAYING']);
@@ -45,12 +47,19 @@ const WECHAT_REFUND_FAILED_STATES = new Set(['ABNORMAL', 'CLOSED']);
 const MOBILE_USER_AGENT_PATTERN = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i;
 const WECHAT_USER_AGENT_PATTERN = /MicroMessenger/i;
 
+const orderRelationsInclude = {
+  user: {
+    include: {
+      wallet: true,
+      membership: true,
+    },
+  },
+  product: true,
+  commissions: true,
+} as const;
+
 type OrderWithRelations = Prisma.ServiceOrderGetPayload<{
-  include: {
-    user: true;
-    product: true;
-    commissions: true;
-  };
+  include: typeof orderRelationsInclude;
 }>;
 
 interface CreateCheckoutOrderInput {
@@ -65,6 +74,7 @@ interface PaymentRequestContext {
   forwardedFor?: string;
   requestIp?: string;
   returnPath?: string;
+  useBalance?: boolean;
 }
 
 interface ReconcileRecentOrdersInput {
@@ -87,6 +97,23 @@ interface RefundTransitionOptions {
   notifyPayload?: Record<string, unknown> | null;
   queryPayload?: Record<string, unknown> | null;
   failureMessage?: string | null;
+}
+
+interface BalanceUsageSnapshot {
+  useBalance: boolean;
+  reservedAmount: number;
+  actualDeductAmount: number;
+  payableAmount: number;
+  settled: boolean;
+  refunded: boolean;
+}
+
+interface PricingSnapshot {
+  originalAmount: number;
+  memberDiscountAmount: number;
+  discountedAmount: number;
+  incentiveDeductRate: number;
+  maxDeductibleAmount: number;
 }
 
 @Injectable()
@@ -113,6 +140,11 @@ export class PaymentsService {
       throw new BadRequestException('会员商品缺少会员等级或时长配置');
     }
 
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { membership: true },
+    });
+
     const scene = this.detectPayScene(body.userAgent);
     const now = new Date();
     const expireAt = new Date(now.getTime() + this.getOrderExpireMinutes() * 60 * 1000);
@@ -125,11 +157,7 @@ export class PaymentsService {
         payChannel: PAYMENT_CHANNEL_WECHAT,
         expireAt: { gt: now },
       },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -154,15 +182,18 @@ export class PaymentsService {
         payChannel: PAYMENT_CHANNEL_WECHAT,
         payScene: scene,
         expireAt,
+        callbackPayload: this.buildCallbackPayloadSection(null, 'pricing', {
+          ...this.buildPricingSnapshot({
+          originalAmount: this.normalizeMoney(product.price),
+          membership: user?.membership ?? null,
+          orderType,
+          }),
+        }),
         remark: orderType === MEMBERSHIP_PRODUCT_TYPE
           ? `${getMemberLevelLabel(product.memberLevel)} ${product.grantDays} 天待支付订单`
           : '微信支付待支付订单',
       },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
     });
 
     return {
@@ -207,6 +238,31 @@ export class PaymentsService {
       };
     }
 
+    order = await this.syncBalanceReservation(order, Boolean(context?.useBalance));
+    const balanceUsage = this.readBalanceUsage(order.callbackPayload, this.readPricingSnapshot(order.callbackPayload, this.buildPricingSnapshot({
+      originalAmount: this.normalizeMoney(order.amount),
+      membership: order.user.membership,
+      orderType: order.orderType,
+    })));
+    if (balanceUsage.useBalance && balanceUsage.payableAmount <= 0) {
+      order = await this.markOrderPaid(order.id, {
+        payChannel: PAYMENT_CHANNEL_BALANCE,
+        successTime: new Date().toISOString(),
+        remark: '激励金已完成订单抵扣',
+        callbackPayload: {
+          source: 'wallet_balance_full_deduction',
+          deductedAmount: balanceUsage.reservedAmount,
+          payableAmount: 0,
+          receivedAt: new Date().toISOString(),
+        },
+      });
+      return {
+        order: this.toCheckoutOrder(order),
+        scene,
+        action: 'already_paid' as const,
+      };
+    }
+
     if (scene === 'jsapi') {
       const openId = order.wechatOpenId || order.user.wechatOpenId;
       if (!openId) {
@@ -233,11 +289,7 @@ export class PaymentsService {
         wechatH5Url: payment.h5Url ?? null,
         expireAt: order.expireAt ?? new Date(Date.now() + this.getOrderExpireMinutes() * 60 * 1000),
       },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
     });
 
     return {
@@ -331,11 +383,7 @@ export class PaymentsService {
 
     const order = await this.prisma.serviceOrder.findUnique({
       where: { orderNo },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
     });
     if (!order) {
       throw new NotFoundException('回调订单不存在');
@@ -387,11 +435,7 @@ export class PaymentsService {
 
     const order = await this.prisma.serviceOrder.findUnique({
       where: { orderNo },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
     });
     if (!order) {
       throw new NotFoundException('退款回调订单不存在');
@@ -572,11 +616,7 @@ export class PaymentsService {
         payStatus: { in: [PAYMENT_STATUS_UNPAID, PAYMENT_STATUS_REFUND_PENDING] },
         createdAt: { gte: since },
       },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -668,11 +708,7 @@ export class PaymentsService {
       return this.prisma.serviceOrder.update({
         where: { id: order.id },
         data: { payScene: context.scene },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
     }
 
@@ -732,13 +768,179 @@ export class PaymentsService {
     return order;
   }
 
+  private async syncBalanceReservation(order: OrderWithRelations, useBalance: boolean) {
+    if (order.payStatus !== PAYMENT_STATUS_UNPAID) {
+      return order;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const currentOrder = await tx.serviceOrder.findUnique({
+        where: { id: order.id },
+        include: orderRelationsInclude,
+      });
+      if (!currentOrder) {
+        throw new NotFoundException('订单不存在');
+      }
+      if (currentOrder.payStatus !== PAYMENT_STATUS_UNPAID) {
+        return currentOrder;
+      }
+
+      const pricing = this.buildPricingSnapshot({
+        originalAmount: this.normalizeMoney(currentOrder.amount),
+        membership: currentOrder.user.membership,
+        orderType: currentOrder.orderType,
+      });
+      const balanceUsage = this.readBalanceUsage(currentOrder.callbackPayload, pricing);
+      const currentReservedAmount = balanceUsage.settled ? 0 : balanceUsage.reservedAmount;
+      const walletAvailable = this.normalizeMoney(currentOrder.user.wallet?.availableBalance);
+      const walletFrozen = this.normalizeMoney(currentOrder.user.wallet?.frozenBalance);
+      const totalDeductible = this.normalizeMoney(walletAvailable + currentReservedAmount);
+      const targetReservedAmount = useBalance ? Math.min(totalDeductible, pricing.maxDeductibleAmount) : 0;
+      const delta = this.normalizeMoney(targetReservedAmount - currentReservedAmount);
+
+      if (delta !== 0) {
+        await tx.userWallet.upsert({
+          where: { userId: currentOrder.userId },
+          update: {
+            availableBalance: this.normalizeMoney(walletAvailable - delta),
+            frozenBalance: this.normalizeMoney(walletFrozen + delta),
+          },
+          create: {
+            userId: currentOrder.userId,
+            availableBalance: 0,
+            frozenBalance: 0,
+            totalEarn: 0,
+          },
+        });
+      }
+
+      return tx.serviceOrder.update({
+        where: { id: currentOrder.id },
+        data: {
+          callbackPayload: this.buildCallbackPayloadSection(
+            this.buildCallbackPayloadSection(currentOrder.callbackPayload, 'pricing', { ...pricing }) as unknown as Prisma.JsonValue,
+            'balance',
+            {
+              useBalance,
+              originalAmount: pricing.originalAmount,
+              reservedAmount: targetReservedAmount,
+              actualDeductAmount: balanceUsage.settled ? balanceUsage.actualDeductAmount : 0,
+              payableAmount: this.normalizeMoney(pricing.discountedAmount - targetReservedAmount),
+              settled: false,
+              refunded: false,
+              updatedAt: new Date().toISOString(),
+            },
+          ),
+        },
+        include: orderRelationsInclude,
+      });
+    });
+  }
+
+  private readPricingSnapshot(value: Prisma.JsonValue | null | undefined, fallback: PricingSnapshot): PricingSnapshot {
+    const root = this.toPlainObject(value);
+    const pricing = this.toPlainObject(root.pricing);
+
+    return {
+      originalAmount: this.normalizeMoneyFromUnknown(pricing.originalAmount, fallback.originalAmount),
+      memberDiscountAmount: this.normalizeMoneyFromUnknown(pricing.memberDiscountAmount, fallback.memberDiscountAmount),
+      discountedAmount: this.normalizeMoneyFromUnknown(pricing.discountedAmount, fallback.discountedAmount),
+      incentiveDeductRate: this.normalizeRate(pricing.incentiveDeductRate, fallback.incentiveDeductRate),
+      maxDeductibleAmount: this.normalizeMoneyFromUnknown(pricing.maxDeductibleAmount, fallback.maxDeductibleAmount),
+    };
+  }
+
+  private readBalanceUsage(value: Prisma.JsonValue | null | undefined, pricing: PricingSnapshot): BalanceUsageSnapshot {
+    const root = this.toPlainObject(value);
+    const balance = this.toPlainObject(root.balance);
+    const settled = balance.settled === true;
+    const reservedAmount = settled ? 0 : this.normalizeMoneyFromUnknown(balance.reservedAmount);
+    const actualDeductAmount = this.normalizeMoneyFromUnknown(
+      settled ? balance.actualDeductAmount ?? balance.reservedAmount : 0,
+    );
+    const effectiveDeductAmount = settled ? actualDeductAmount : reservedAmount;
+    const storedPayableAmount = this.normalizeMoneyFromUnknown(balance.payableAmount);
+
+    return {
+      useBalance: balance.useBalance === true,
+      reservedAmount,
+      actualDeductAmount,
+      payableAmount: storedPayableAmount || this.normalizeMoney(Math.max(pricing.discountedAmount - effectiveDeductAmount, 0)),
+      settled,
+      refunded: balance.refunded === true,
+    };
+  }
+
+  private buildCheckoutWallet(order: OrderWithRelations) {
+    const pricing = this.readPricingSnapshot(order.callbackPayload, this.buildPricingSnapshot({
+      originalAmount: this.normalizeMoney(order.amount),
+      membership: order.user.membership,
+      orderType: order.orderType,
+    }));
+    const balanceUsage = this.readBalanceUsage(order.callbackPayload, pricing);
+    const reservedBalance = balanceUsage.reservedAmount;
+    const availableBalance = this.normalizeMoney(order.user.wallet?.availableBalance);
+    return {
+      availableBalance,
+      frozenBalance: this.normalizeMoney(order.user.wallet?.frozenBalance),
+      totalEarn: this.normalizeMoney(order.user.wallet?.totalEarn),
+      reservedBalance,
+      deductibleBalance: this.normalizeMoney(Math.min(availableBalance + reservedBalance, pricing.maxDeductibleAmount)),
+    };
+  }
+
+  private buildCheckoutPricing(order: OrderWithRelations) {
+    const pricing = this.readPricingSnapshot(order.callbackPayload, this.buildPricingSnapshot({
+      originalAmount: this.normalizeMoney(order.amount),
+      membership: order.user.membership,
+      orderType: order.orderType,
+    }));
+    const balanceUsage = this.readBalanceUsage(order.callbackPayload, pricing);
+    const deductibleAmount = balanceUsage.settled
+      ? balanceUsage.actualDeductAmount
+      : balanceUsage.reservedAmount;
+
+    return {
+      useBalance: balanceUsage.useBalance,
+      originalAmount: pricing.originalAmount,
+      memberDiscountAmount: pricing.memberDiscountAmount,
+      discountedAmount: pricing.discountedAmount,
+      maxDeductibleAmount: pricing.maxDeductibleAmount,
+      incentiveDeductRate: pricing.incentiveDeductRate,
+      deductibleAmount,
+      payableAmount: this.normalizeMoney(Math.max(pricing.discountedAmount - deductibleAmount, 0)),
+    };
+  }
+
+  private buildPricingSnapshot(options: {
+    originalAmount: number;
+    membership: OrderWithRelations['user']['membership'] | null;
+    orderType: string;
+  }): PricingSnapshot {
+    const resolved = resolveMembershipState(options.membership);
+    const hasSuperDiscount = resolved.activeLevel === 'super';
+    const discountedAmount = hasSuperDiscount
+      ? this.normalizeMoney(options.originalAmount * SUPER_MEMBER_DISCOUNT_RATE)
+      : this.normalizeMoney(options.originalAmount);
+    const incentiveDeductRate = hasSuperDiscount ? SUPER_MEMBER_INCENTIVE_RATE : DEFAULT_MEMBER_INCENTIVE_RATE;
+
+    return {
+      originalAmount: this.normalizeMoney(options.originalAmount),
+      memberDiscountAmount: this.normalizeMoney(options.originalAmount - discountedAmount),
+      discountedAmount,
+      incentiveDeductRate,
+      maxDeductibleAmount: this.normalizeMoney(discountedAmount * incentiveDeductRate),
+    };
+  }
+
   private buildWechatPrepayPayload(order: OrderWithRelations, scene: WechatPayScene, context?: PaymentRequestContext): WechatGatewayPrepayPayload {
+    const pricing = this.buildCheckoutPricing(order);
     const payload: WechatGatewayPrepayPayload = {
       scene,
       description: order.title,
       outTradeNo: order.orderNo,
       notifyUrl: this.buildPaymentNotifyUrl(),
-      total: this.toFen(order.amount),
+      total: this.toFen(pricing.payableAmount),
       currency: 'CNY',
       attach: order.orderType,
       timeExpire: (order.expireAt ?? new Date(Date.now() + this.getOrderExpireMinutes() * 60 * 1000)).toISOString(),
@@ -799,12 +1001,133 @@ export class PaymentsService {
     }
   }
 
+  private async finalizeBalanceDeductionOnPaid(tx: Prisma.TransactionClient, order: OrderWithRelations) {
+    const pricing = this.readPricingSnapshot(order.callbackPayload, this.buildPricingSnapshot({
+      originalAmount: this.normalizeMoney(order.amount),
+      membership: order.user.membership,
+      orderType: order.orderType,
+    }));
+    const balanceUsage = this.readBalanceUsage(order.callbackPayload, pricing);
+    if (!balanceUsage.useBalance || balanceUsage.reservedAmount <= 0) {
+      return order;
+    }
+
+    const wallet = await tx.userWallet.findUnique({ where: { userId: order.userId } });
+    if (wallet) {
+      await tx.userWallet.update({
+        where: { userId: order.userId },
+        data: {
+          frozenBalance: this.normalizeMoney(Number(wallet.frozenBalance) - balanceUsage.reservedAmount),
+        },
+      });
+    }
+
+    return tx.serviceOrder.update({
+      where: { id: order.id },
+      data: {
+        callbackPayload: this.buildCallbackPayloadSection(order.callbackPayload, 'balance', {
+          useBalance: true,
+          originalAmount: pricing.originalAmount,
+          reservedAmount: balanceUsage.reservedAmount,
+          actualDeductAmount: balanceUsage.reservedAmount,
+          payableAmount: this.normalizeMoney(pricing.discountedAmount - balanceUsage.reservedAmount),
+          settled: true,
+          refunded: false,
+          settledAt: new Date().toISOString(),
+        }),
+      },
+      include: orderRelationsInclude,
+    });
+  }
+
+  private async releaseBalanceReservation(tx: Prisma.TransactionClient, order: OrderWithRelations) {
+    const pricing = this.readPricingSnapshot(order.callbackPayload, this.buildPricingSnapshot({
+      originalAmount: this.normalizeMoney(order.amount),
+      membership: order.user.membership,
+      orderType: order.orderType,
+    }));
+    const balanceUsage = this.readBalanceUsage(order.callbackPayload, pricing);
+    if (!balanceUsage.useBalance || balanceUsage.reservedAmount <= 0) {
+      return order.callbackPayload;
+    }
+
+    const wallet = await tx.userWallet.findUnique({ where: { userId: order.userId } });
+    if (wallet) {
+      await tx.userWallet.update({
+        where: { userId: order.userId },
+        data: {
+          availableBalance: this.normalizeMoney(Number(wallet.availableBalance) + balanceUsage.reservedAmount),
+          frozenBalance: this.normalizeMoney(Number(wallet.frozenBalance) - balanceUsage.reservedAmount),
+        },
+      });
+    }
+
+    return this.buildCallbackPayloadSection(order.callbackPayload, 'balance', {
+      useBalance: false,
+      originalAmount: pricing.originalAmount,
+      reservedAmount: 0,
+      actualDeductAmount: 0,
+      payableAmount: pricing.discountedAmount,
+      settled: false,
+      refunded: false,
+      releasedAt: new Date().toISOString(),
+    });
+  }
+
+  private async restoreBalanceForRefund(tx: Prisma.TransactionClient, order: OrderWithRelations) {
+    const pricing = this.readPricingSnapshot(order.callbackPayload, this.buildPricingSnapshot({
+      originalAmount: this.normalizeMoney(order.amount),
+      membership: order.user.membership,
+      orderType: order.orderType,
+    }));
+    const balanceUsage = this.readBalanceUsage(order.callbackPayload, pricing);
+    if (!balanceUsage.settled || balanceUsage.actualDeductAmount <= 0 || balanceUsage.refunded) {
+      return;
+    }
+
+    const wallet = await tx.userWallet.findUnique({ where: { userId: order.userId } });
+    if (wallet) {
+      await tx.userWallet.update({
+        where: { userId: order.userId },
+        data: {
+          availableBalance: this.normalizeMoney(Number(wallet.availableBalance) + balanceUsage.actualDeductAmount),
+        },
+      });
+    } else {
+      await tx.userWallet.create({
+        data: {
+          userId: order.userId,
+          availableBalance: balanceUsage.actualDeductAmount,
+          frozenBalance: 0,
+          totalEarn: 0,
+        },
+      });
+    }
+
+    await tx.serviceOrder.update({
+      where: { id: order.id },
+      data: {
+        callbackPayload: this.buildCallbackPayloadSection(order.callbackPayload, 'balance', {
+          useBalance: true,
+          originalAmount: pricing.originalAmount,
+          reservedAmount: balanceUsage.reservedAmount || balanceUsage.actualDeductAmount,
+          actualDeductAmount: balanceUsage.actualDeductAmount,
+          payableAmount: this.normalizeMoney(pricing.discountedAmount - balanceUsage.actualDeductAmount),
+          settled: true,
+          refunded: true,
+          refundedAt: new Date().toISOString(),
+        }),
+      },
+    });
+  }
+
   private async markOrderPaid(
     orderId: string,
     options: {
       transactionId?: string | null;
       successTime?: string | null;
       payerOpenId?: string | null;
+      payChannel?: string | null;
       callbackPayload?: Record<string, unknown>;
       remark?: string | null;
     },
@@ -812,11 +1135,7 @@ export class PaymentsService {
     return this.prisma.$transaction(async (tx) => {
       const order: OrderWithRelations | null = await tx.serviceOrder.findUnique({
         where: { id: orderId },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
       if (!order) {
         throw new NotFoundException('订单不存在');
@@ -830,6 +1149,7 @@ export class PaymentsService {
         where: { id: orderId },
         data: {
           payStatus: PAYMENT_STATUS_PAID,
+          payChannel: options.payChannel || order.payChannel,
           payTime: Number.isNaN(successTime.getTime()) ? new Date() : successTime,
           closedAt: null,
           wechatTransactionId: options.transactionId || order.wechatTransactionId,
@@ -843,28 +1163,25 @@ export class PaymentsService {
           }),
           remark: options.remark ? this.appendRemark(order.remark, options.remark) : order.remark,
         },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
+      const settledOrder = await this.finalizeBalanceDeductionOnPaid(tx, updatedOrder);
 
-      if (updatedOrder.orderType === MEMBERSHIP_PRODUCT_TYPE) {
-        await this.membershipsService.grantMembershipFromOrder(tx, updatedOrder.userId, {
-          memberLevel: parseMemberLevelInput(updatedOrder.memberLevel, 'standard'),
-          grantDays: updatedOrder.grantDays ?? 0,
-          orderNo: updatedOrder.orderNo,
+      if (settledOrder.orderType === MEMBERSHIP_PRODUCT_TYPE) {
+        await this.membershipsService.grantMembershipFromOrder(tx, settledOrder.userId, {
+          memberLevel: parseMemberLevelInput(settledOrder.memberLevel, 'standard'),
+          grantDays: settledOrder.grantDays ?? 0,
+          orderNo: settledOrder.orderNo,
         });
       }
 
       await tx.serviceProduct.update({
-        where: { id: updatedOrder.productId },
+        where: { id: settledOrder.productId },
         data: { salesCount: { increment: 1 } },
       }).catch(() => null);
 
-      await this.ensureCommissionForPaidOrder(tx, updatedOrder);
-      return updatedOrder;
+      await this.ensureCommissionForPaidOrder(tx, settledOrder);
+      return settledOrder;
     });
   }
 
@@ -872,11 +1189,7 @@ export class PaymentsService {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.serviceOrder.findUnique({
         where: { id: orderId },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
       if (!order) {
         throw new NotFoundException('订单不存在');
@@ -906,11 +1219,7 @@ export class PaymentsService {
           }),
           remark: options.remark ? this.appendRemark(order.remark, options.remark) : order.remark,
         },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
     });
   }
@@ -919,11 +1228,7 @@ export class PaymentsService {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.serviceOrder.findUnique({
         where: { id: orderId },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
       if (!order) {
         throw new NotFoundException('订单不存在');
@@ -936,7 +1241,7 @@ export class PaymentsService {
       }
 
       const successTime = options.successTime ? new Date(options.successTime) : new Date();
-      const updated = await tx.serviceOrder.update({
+      await tx.serviceOrder.update({
         where: { id: order.id },
         data: {
           payStatus: PAYMENT_STATUS_REFUNDED,
@@ -957,14 +1262,14 @@ export class PaymentsService {
           }),
           remark: options.remark ? this.appendRemark(order.remark, options.remark) : order.remark,
         },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
       await this.rollbackCommissionForRefund(tx, order.id);
-      return updated;
+      await this.restoreBalanceForRefund(tx, order);
+      return tx.serviceOrder.findUniqueOrThrow({
+        where: { id: order.id },
+        include: orderRelationsInclude,
+      });
     });
   }
 
@@ -972,11 +1277,7 @@ export class PaymentsService {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.serviceOrder.findUnique({
         where: { id: orderId },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
       if (!order) {
         throw new NotFoundException('订单不存在');
@@ -1007,29 +1308,35 @@ export class PaymentsService {
           }),
           remark: options.remark ? this.appendRemark(order.remark, options.remark) : order.remark,
         },
-        include: {
-          user: true,
-          product: true,
-          commissions: true,
-        },
+        include: orderRelationsInclude,
       });
     });
   }
 
   private async closeOrderRecord(orderId: string, reason: string): Promise<OrderWithRelations> {
-    const current = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
-    return this.prisma.serviceOrder.update({
-      where: { id: orderId },
-      data: {
-        payStatus: PAYMENT_STATUS_CLOSED,
-        closedAt: new Date(),
-        remark: this.appendRemark(current?.remark, reason),
-      },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.serviceOrder.findUnique({
+        where: { id: orderId },
+        include: orderRelationsInclude,
+      });
+      if (!current) {
+        throw new NotFoundException('订单不存在');
+      }
+
+      const callbackPayload = current.payStatus === PAYMENT_STATUS_UNPAID
+        ? await this.releaseBalanceReservation(tx, current)
+        : current.callbackPayload;
+
+      return tx.serviceOrder.update({
+        where: { id: orderId },
+        data: {
+          payStatus: PAYMENT_STATUS_CLOSED,
+          closedAt: new Date(),
+          callbackPayload: this.toPrismaJson(callbackPayload),
+          remark: this.appendRemark(current.remark, reason),
+        },
+        include: orderRelationsInclude,
+      });
     });
   }
 
@@ -1043,7 +1350,12 @@ export class PaymentsService {
 
     const config = await tx.commissionConfig.findFirst({ orderBy: { id: 'asc' } });
     const rate = config?.oneLevelRate ?? 15;
-    const commissionMoney = (Number(order.amount) * rate) / 100;
+    const pricing = this.buildCheckoutPricing(order);
+    const commissionBase = pricing.payableAmount;
+    const commissionMoney = this.normalizeMoney((commissionBase * rate) / 100);
+    if (commissionMoney <= 0) {
+      return;
+    }
 
     await tx.commissionLog.create({
       data: {
@@ -1052,7 +1364,7 @@ export class PaymentsService {
         consumeUid: order.user.id,
         commissionRate: rate,
         commissionMoney,
-        originalConsumeMoney: order.amount,
+        originalConsumeMoney: commissionBase,
         logType: 1,
       },
     });
@@ -1119,11 +1431,7 @@ export class PaymentsService {
   private async getUserOrderOrThrow(userId: string, orderNo: string) {
     const order = await this.prisma.serviceOrder.findUnique({
       where: { orderNo },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
     });
     if (!order) {
       throw new NotFoundException('订单不存在');
@@ -1137,11 +1445,7 @@ export class PaymentsService {
   private async getOrderByIdOrThrow(orderId: string) {
     const order = await this.prisma.serviceOrder.findUnique({
       where: { id: orderId },
-      include: {
-        user: true,
-        product: true,
-        commissions: true,
-      },
+      include: orderRelationsInclude,
     });
     if (!order) {
       throw new NotFoundException('订单不存在');
@@ -1150,6 +1454,7 @@ export class PaymentsService {
   }
 
   private toCheckoutOrder(order: OrderWithRelations) {
+    const pricing = this.buildCheckoutPricing(order);
     return {
       id: order.id,
       orderNo: order.orderNo,
@@ -1178,6 +1483,8 @@ export class PaymentsService {
         name: order.product.name,
         productType: this.normalizeProductType(order.product.productType),
       },
+      wallet: this.buildCheckoutWallet(order),
+      pricing,
       wechatCodeUrl: order.wechatCodeUrl,
       wechatH5Url: order.wechatH5Url,
       wechatTransactionId: order.wechatTransactionId,
@@ -1358,5 +1665,26 @@ export class PaymentsService {
 
   private toFen(amount: Prisma.Decimal | number) {
     return Math.round(Number(amount) * 100);
+  }
+
+  private normalizeMoney(amount: Prisma.Decimal | number | string | null | undefined) {
+    return Math.max(0, Number(Number(amount || 0).toFixed(2)));
+  }
+
+  private normalizeRate(value: unknown, fallback = 0) {
+    if (typeof value === 'number' || typeof value === 'string') {
+      const next = Number(value);
+      if (Number.isFinite(next) && next >= 0) {
+        return Number(next.toFixed(4));
+      }
+    }
+    return Number(fallback.toFixed(4));
+  }
+
+  private normalizeMoneyFromUnknown(amount: unknown, fallback = 0) {
+    if (typeof amount === 'number' || typeof amount === 'string' || amount instanceof Prisma.Decimal) {
+      return this.normalizeMoney(amount);
+    }
+    return this.normalizeMoney(fallback);
   }
 }

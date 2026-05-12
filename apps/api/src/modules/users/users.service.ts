@@ -3,9 +3,8 @@ import bcrypt from 'bcryptjs';
 import {
   buildMemberAccessSnapshot,
   getMemberRolePermissionMaps,
-  normalizeStoredMemberLevel,
+  resolveMembershipState,
 } from '../../common/utils/member-access';
-import { isMembershipActive } from '../../common/utils/membership-time';
 import { PrismaService } from '../../prisma.service';
 import { PhoneVerificationService } from '../auth/phone-verification.service';
 import { JobsNormalizationService } from '../jobs/jobs-normalization.service';
@@ -57,6 +56,7 @@ export class UsersService {
         : Promise.resolve(null),
     ]);
     const access = buildMemberAccessSnapshot(user.membership, permissionMaps.effectivePermissionMap, now);
+    const currentMembership = this.serializeActiveMembership(user.membership, now, access);
 
     return {
       id: user.id,
@@ -73,18 +73,7 @@ export class UsersService {
       memberRoleName: access.memberRoleName,
       permissionKeys: access.permissionKeys,
       membershipRemainingDays: access.membershipRemainingDays,
-      membership: user.membership && isMembershipActive(user.membership.endAt, now)
-        ? {
-            id: user.membership.id,
-            memberLevel: normalizeStoredMemberLevel(user.membership.memberLevel) ?? 'standard',
-            memberLevelLabel: access.memberLevelLabel,
-            memberRoleCode: access.memberRoleCode,
-            memberRoleName: access.memberRoleName,
-            startAt: user.membership.startAt,
-            endAt: user.membership.endAt,
-            remainingDays: access.membershipRemainingDays,
-          }
-        : null,
+      membership: currentMembership,
       wallet: user.wallet
         ? {
             availableBalance: Number(user.wallet.availableBalance),
@@ -163,6 +152,45 @@ export class UsersService {
     return {
       ...serialized,
       normalizedPreference: await this.buildNormalizedPreferencePayload(serialized),
+    };
+  }
+
+  private serializeActiveMembership(
+    membership: {
+      id: string;
+      standardStartAt?: Date | null;
+      standardEndAt?: Date | null;
+      superStartAt?: Date | null;
+      superEndAt?: Date | null;
+    } | null,
+    now: Date,
+    access: {
+      isMember: boolean;
+      memberLevel: 'standard' | 'super' | null;
+      memberLevelLabel: string;
+      memberRoleCode: string;
+      memberRoleName: string;
+      membershipRemainingDays: number;
+    },
+  ) {
+    if (!membership || !access.isMember) {
+      return null;
+    }
+
+    const resolved = resolveMembershipState(membership, now);
+    if (!resolved.isMember || !resolved.activeLevel || !resolved.activeStartAt || !resolved.activeEndAt) {
+      return null;
+    }
+
+    return {
+      id: membership.id,
+      memberLevel: resolved.activeLevel,
+      memberLevelLabel: access.memberLevelLabel,
+      memberRoleCode: access.memberRoleCode,
+      memberRoleName: access.memberRoleName,
+      startAt: resolved.activeStartAt,
+      endAt: resolved.activeEndAt,
+      remainingDays: access.membershipRemainingDays,
     };
   }
 

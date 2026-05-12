@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
-import { getMembershipRemainingDays, isMembershipActive } from '../../common/utils/membership-time';
+import { getMembershipRemainingDays } from '../../common/utils/membership-time';
+import { normalizeStoredMemberLevel, resolveMembershipState } from '../../common/utils/member-access';
 import { PrismaService } from '../../prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { ADMIN_PERMISSION_CATALOG, ADMIN_PERMISSION_KEY_SET } from './admin-permissions';
@@ -685,10 +686,15 @@ export class AdminGovernanceService {
       membership: item.membership
         ? {
             id: item.membership.id,
-            startAt: item.membership.startAt,
-            endAt: item.membership.endAt,
-            remainingDays: getMembershipRemainingDays(item.membership.endAt),
-            isActive: isMembershipActive(item.membership.endAt),
+            memberLevel: resolveMembershipState(item.membership).activeLevel
+              ?? normalizeStoredMemberLevel(item.membership.memberLevel)
+              ?? 'standard',
+            startAt: resolveMembershipState(item.membership).activeStartAt ?? item.membership.startAt,
+            endAt: resolveMembershipState(item.membership).activeEndAt ?? item.membership.endAt,
+            remainingDays: resolveMembershipState(item.membership).isMember
+              ? resolveMembershipState(item.membership).remainingDays
+              : getMembershipRemainingDays(item.membership.endAt),
+            isActive: resolveMembershipState(item.membership).isMember,
           }
         : null,
       wallet: item.wallet

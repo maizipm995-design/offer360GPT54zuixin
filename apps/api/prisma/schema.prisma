@@ -72,6 +72,7 @@ model User {
   commissionPays    CommissionLog[]        @relation("CommissionConsumer")
   bindLogsOut       InvBindLog[]           @relation("BindInviter")
   bindLogsIn        InvBindLog[]           @relation("BindInvitee")
+  inviteRewards     InviteRewardLog[]      @relation("InviteRewardInviter")
 
   @@index([parentUid], map: "idx_users_parent_uid")
   @@index([status], map: "idx_users_status")
@@ -129,6 +130,10 @@ model UserMembership {
   memberLevel     String   @default("standard") @map("member_level") @db.VarChar(30)
   startAt         DateTime @map("start_at") @db.DateTime(0)
   endAt           DateTime @map("end_at") @db.DateTime(0)
+  standardStartAt DateTime? @map("standard_start_at") @db.DateTime(0)
+  standardEndAt   DateTime? @map("standard_end_at") @db.DateTime(0)
+  superStartAt    DateTime? @map("super_start_at") @db.DateTime(0)
+  superEndAt      DateTime? @map("super_end_at") @db.DateTime(0)
   remainingDays   Int      @default(0) @map("remaining_days")
   sourceType      String   @default("manual") @map("source_type") @db.VarChar(30)
   sourceRemark    String?  @map("source_remark") @db.VarChar(255)
@@ -138,6 +143,8 @@ model UserMembership {
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([memberLevel], map: "idx_user_memberships_member_level")
+  @@index([standardEndAt], map: "idx_user_memberships_standard_end_at")
+  @@index([superEndAt], map: "idx_user_memberships_super_end_at")
   @@index([sourceType], map: "idx_user_memberships_source_type")
   @@index([openedByAdminId], map: "idx_user_memberships_opened_by_admin")
   @@map("user_memberships")
@@ -417,6 +424,21 @@ model InvBindLog {
   newUser    User     @relation("BindInvitee", fields: [newUserUid], references: [id], onDelete: Cascade)
 
   @@map("inv_bind_log")
+}
+
+model InviteRewardLog {
+  id                 Int      @id @default(autoincrement())
+  inviterUid         String   @map("inviter_uid") @db.Char(36)
+  milestone          Int
+  grantDays          Int      @map("grant_days")
+  inviteCountSnapshot Int     @map("invite_count_snapshot")
+  triggeredByUserId  String?  @map("triggered_by_user_id") @db.Char(36)
+  rewardedAt         DateTime @default(now()) @map("rewarded_at") @db.DateTime(0)
+  inviter            User     @relation("InviteRewardInviter", fields: [inviterUid], references: [id], onDelete: Cascade)
+
+  @@unique([inviterUid, milestone], map: "uniq_invite_reward_inviter_milestone")
+  @@index([inviterUid, rewardedAt], map: "idx_invite_reward_inviter_rewarded_at")
+  @@map("invite_reward_log")
 }
 
 model AdminUser {

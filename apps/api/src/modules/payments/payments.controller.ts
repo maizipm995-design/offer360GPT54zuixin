@@ -56,6 +56,7 @@ export class PaymentsController {
       userAgent?: string;
       clientIp?: string;
       returnPath?: string;
+      useBalance?: boolean;
     },
     @Headers('user-agent') userAgent?: string,
     @Headers('x-forwarded-for') forwardedFor?: string,
@@ -68,6 +69,7 @@ export class PaymentsController {
       forwardedFor,
       requestIp: request?.ip,
       returnPath: body.returnPath,
+      useBalance: body.useBalance,
     });
   }
 

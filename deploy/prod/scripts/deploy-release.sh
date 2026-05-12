@@ -4,7 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/../../.env}"
-APP_IMAGE_TAG="${APP_IMAGE_TAG:-${1:-}}"
+REQUESTED_APP_IMAGE_TAG="${APP_IMAGE_TAG:-${1:-}}"
+APP_IMAGE_TAG="$REQUESTED_APP_IMAGE_TAG"
+IMAGE_ARCHIVE="${IMAGE_ARCHIVE:-${2:-}}"
 
 if [ -z "$APP_IMAGE_TAG" ]; then
   echo "请通过 APP_IMAGE_TAG 环境变量或脚本第一个参数传入本次发布的镜像标签。"
@@ -17,56 +19,53 @@ source "$SCRIPT_DIR/common.sh"
 ensure_commands docker curl
 load_env
 load_state
+APP_IMAGE_TAG="$REQUESTED_APP_IMAGE_TAG"
 
-ACTIVE_SLOT="${ACTIVE_SLOT:-blue}"
-BLUE_IMAGE_TAG="${BLUE_IMAGE_TAG:-bootstrap}"
-GREEN_IMAGE_TAG="${GREEN_IMAGE_TAG:-bootstrap}"
+if [ -n "$IMAGE_ARCHIVE" ]; then
+  if [ ! -f "$IMAGE_ARCHIVE" ]; then
+    echo "离线镜像包不存在：$IMAGE_ARCHIVE"
+    exit 1
+  fi
+  echo "正在导入离线镜像包：$IMAGE_ARCHIVE"
+  docker_cmd load -i "$IMAGE_ARCHIVE"
+fi
 
-current_active_tag="$(image_tag_for_slot "$ACTIVE_SLOT")"
-if [ -z "$current_active_tag" ] || [ "$current_active_tag" = "bootstrap" ]; then
-  target_slot="${INITIAL_SLOT:-blue}"
+previous_tag="${CURRENT_APP_IMAGE_TAG:-}"
+
+export APP_IMAGE_TAG
+
+echo "开始发布离线镜像标签：$APP_IMAGE_TAG"
+for required_service in mysql redis elasticsearch; do
+  if ! compose_cmd ps --status running --services | grep -qx "$required_service"; then
+    echo "依赖服务未运行：$required_service"
+    echo "为了避免发布脚本自动启动或重建现有基础容器，已停止本次发布。请先手动确认该服务。"
+    exit 1
+  fi
+done
+
+if [ "${SKIP_DB_BACKUP:-0}" = "1" ] || [ -z "${previous_tag:-}" ]; then
+  echo "跳过数据库备份：首次发布或显式禁用备份。"
 else
-  target_slot="$(other_slot "$ACTIVE_SLOT")"
+  ENV_FILE="$ENV_FILE" bash "$SCRIPT_DIR/backup-db.sh"
 fi
 
-if [ "$target_slot" = "blue" ]; then
-  BLUE_IMAGE_TAG="$APP_IMAGE_TAG"
-else
-  GREEN_IMAGE_TAG="$APP_IMAGE_TAG"
-fi
+ENV_FILE="$ENV_FILE" APP_IMAGE_TAG="$APP_IMAGE_TAG" bash "$SCRIPT_DIR/schema-sync.sh"
+compose_cmd up -d --no-deps --force-recreate --remove-orphans wechat-pay-gateway api web
 
-export BLUE_IMAGE_TAG GREEN_IMAGE_TAG
-export MIGRATION_IMAGE_TAG="$APP_IMAGE_TAG"
+wait_for_http "http://127.0.0.1:${API_PORT_HOST:-4000}/healthz" "API" 40 5
+wait_for_http "http://127.0.0.1:${WEB_PORT_HOST:-3000}/healthz" "Web" 40 5
 
-echo "开始发布镜像标签：$APP_IMAGE_TAG"
-echo "当前激活槽位：$ACTIVE_SLOT"
-echo "目标槽位：$target_slot"
-
-compose_cmd up -d mysql redis elasticsearch gateway
-ENV_FILE="$ENV_FILE" bash "$SCRIPT_DIR/backup-db.sh"
-if [ "${SKIP_PULL:-0}" != "1" ]; then
-  compose_cmd pull migrator "wechat-pay-gateway-$target_slot" "api-$target_slot" "web-$target_slot"
-fi
-compose_cmd run --rm migrator
-compose_cmd up -d "wechat-pay-gateway-$target_slot" "api-$target_slot" "web-$target_slot"
-
-wait_for_http "http://127.0.0.1:$(api_port_for_slot "$target_slot")/healthz" "API(${target_slot})" 40 5
-wait_for_http "http://127.0.0.1:$(web_port_for_slot "$target_slot")/healthz" "Web(${target_slot})" 40 5
-
-render_active_upstream "$target_slot"
-compose_cmd exec -T gateway nginx -s reload
-wait_for_http "http://127.0.0.1:${GATEWAY_HTTP_PORT:-18080}/__gateway_health" "Gateway" 20 3
-
-ACTIVE_SLOT="$target_slot"
+PREVIOUS_APP_IMAGE_TAG="${previous_tag:-}"
+CURRENT_APP_IMAGE_TAG="$APP_IMAGE_TAG"
 LAST_DEPLOYED_TAG="$APP_IMAGE_TAG"
 LAST_DEPLOYED_AT="$(date '+%Y-%m-%d %H:%M:%S %z')"
+LAST_ARCHIVE_PATH="${IMAGE_ARCHIVE:-}"
 write_state
 
 cat <<EOF
 发布成功：
 - 镜像标签：$APP_IMAGE_TAG
-- 当前激活槽位：$ACTIVE_SLOT
-- 蓝槽镜像：$BLUE_IMAGE_TAG
-- 绿槽镜像：$GREEN_IMAGE_TAG
-- 外部入口：${WEB_APP_BASE_URL}
+- 上一版本：${PREVIOUS_APP_IMAGE_TAG:-无}
+- Web 健康检查：http://127.0.0.1:${WEB_PORT_HOST:-3000}/healthz
+- API 健康检查：http://127.0.0.1:${API_PORT_HOST:-4000}/healthz
 EOF

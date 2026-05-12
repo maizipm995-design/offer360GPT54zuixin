@@ -1,4 +1,5 @@
-FROM node:20-alpine AS base
+ARG NODE_BASE_IMAGE=node:20-alpine
+FROM ${NODE_BASE_IMAGE} AS base
 WORKDIR /app
 ENV CI=true
 
@@ -17,7 +18,7 @@ COPY . .
 RUN npm run build --workspace @offer360/shared
 RUN npm run build:web
 
-FROM node:20-alpine AS runner
+FROM ${NODE_BASE_IMAGE} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000

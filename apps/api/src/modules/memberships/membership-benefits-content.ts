@@ -1,5 +1,5 @@
 export const MEMBERSHIP_BENEFITS_CONTENT_SLUG = 'offer360-membership-benefits';
-export const MEMBERSHIP_BENEFITS_CONTENT_TITLE = 'offer360求职会员六大权益';
+export const MEMBERSHIP_BENEFITS_CONTENT_TITLE = 'offer360求职会员权益说明';
 export const MEMBERSHIP_BENEFITS_CONTENT_HTML = `
 <section class="membership-rich-section">
   <h3>权益一：24小时实时更新校招信息，全、准、快、新</h3>

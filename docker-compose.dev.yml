@@ -77,6 +77,9 @@ services:
       ELASTICSEARCH_NODE: http://elasticsearch:9200
       API_PORT: 4000
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:13000}
+      AUTH_CODE_TTL_MINUTES: ${AUTH_CODE_TTL_MINUTES:-5}
+      AUTH_CODE_LENGTH: ${AUTH_CODE_LENGTH:-6}
+      AUTH_CODE_SECRET: ${AUTH_CODE_SECRET}
       JWT_SECRET: ${JWT_SECRET}
       WEB_APP_BASE_URL: ${WEB_APP_BASE_URL:-http://host.docker.internal:${DEV_WEB_PORT:-13000}}
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
@@ -130,7 +133,7 @@ services:
       WECHAT_PAY_REFUND_NOTIFY_URL: ${WECHAT_PAY_REFUND_NOTIFY_URL:-}
       WECHAT_PAY_CALLBACK_BASE_URL: ${WECHAT_PAY_CALLBACK_BASE_URL:-http://host.docker.internal:13000}
     volumes:
-      - ./.config/certs:/app/.config/certs:ro
+      - ${WECHAT_PAY_CERTS_HOST_PATH:-./.config/certs}:/app/.config/certs:ro
     ports:
       - '${DEV_WECHAT_PAY_GATEWAY_PORT:-15000}:8080'
 
@@ -150,6 +153,7 @@ services:
         condition: service_started
     environment:
       NODE_ENV: development
+      WEB_APP_BASE_URL: ${WEB_APP_BASE_URL:-http://localhost:${DEV_WEB_PORT:-13000}}
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:14000/api}
       INTERNAL_API_BASE_URL: http://api:4000/api
       NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS: ${NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS:-localhost:13000,127.0.0.1:13000}

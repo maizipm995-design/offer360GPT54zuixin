@@ -19,6 +19,7 @@ import {
   Star,
   Users,
 } from 'lucide-react';
+import { MemberAccessDialog } from '@/components/membership/member-access-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -584,6 +585,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [activeClipboardModal, setActiveClipboardModal] = useState<ClipboardModalState | null>(null);
   const [copyingClipboardValue, setCopyingClipboardValue] = useState(false);
+  const [memberAccessMessage, setMemberAccessMessage] = useState('');
 
   // 用于追踪上一次应用到 API 的过滤条件，避免重复请求和无限循环
   const lastAppliedRef = useRef<{ filters: string; tab: string }>({
@@ -776,8 +778,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     if (hasPermission(permissionKey)) {
       return true;
     }
-    showToast(messageText);
-    router.push('/membership');
+    setMemberAccessMessage(messageText);
     return false;
   };
 
@@ -1541,6 +1542,15 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
           </Card>
         </div>
       ) : null}
+      <MemberAccessDialog
+        open={Boolean(memberAccessMessage)}
+        message={memberAccessMessage}
+        onClose={() => setMemberAccessMessage('')}
+        onConfirm={() => {
+          setMemberAccessMessage('');
+          router.push('/membership');
+        }}
+      />
     </main>
   );
 }

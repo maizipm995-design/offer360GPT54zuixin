@@ -20,12 +20,11 @@ import {
 } from '@/types';
 
 interface InvitationData {
-  inviteCode: string;
   shareText: string;
   rules: string[];
   stats: {
     inviteCount: number;
-    nextMilestone: number;
+    nextMilestone: number | null;
     rewardedTimes: number;
     distanceToNext: number;
     wallet?: { availableBalance: number; totalEarn: number } | null;
@@ -610,16 +609,17 @@ export function PersonalCenterClient() {
                   {invitation?.rules.map((rule) => <p key={rule}>{rule}</p>)}
                 </div>
               </div>
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm">
-                <p className="text-muted">我的邀请码</p>
-                <p className="mt-2 text-2xl font-bold text-brand">{invitation?.inviteCode}</p>
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm lg:w-[320px]">
+                <p className="text-muted">激励金余额</p>
+                <p className="mt-2 text-2xl font-bold text-brand">{formatCurrency(invitation?.stats.wallet?.availableBalance ?? 0)}</p>
+                <p className="mt-2 text-xs leading-5 text-muted">激励金不可提现，仅限站内下单抵扣使用。</p>
                 <Button className="mt-4 w-full" onClick={copyInvite}>一键复制邀请文案</Button>
               </div>
             </div>
             <div className="mt-6 grid gap-4 md:grid-cols-3">
               <Card className="p-4"><p className="text-sm text-muted">累计邀请</p><p className="mt-2 text-2xl font-bold text-ink">{invitation?.stats.inviteCount ?? 0}</p></Card>
-              <Card className="p-4"><p className="text-sm text-muted">下一里程碑</p><p className="mt-2 text-2xl font-bold text-ink">{invitation?.stats.nextMilestone ?? 0}</p></Card>
-              <Card className="p-4"><p className="text-sm text-muted">已获奖励</p><p className="mt-2 text-2xl font-bold text-ink">{invitation?.stats.rewardedTimes ?? 0}</p></Card>
+              <Card className="p-4"><p className="text-sm text-muted">累计激励金</p><p className="mt-2 text-2xl font-bold text-ink">{formatCurrency(invitation?.stats.wallet?.totalEarn ?? 0)}</p></Card>
+              <Card className="p-4"><p className="text-sm text-muted">下一里程碑</p><p className="mt-2 text-2xl font-bold text-ink">{invitation?.stats.nextMilestone ?? '已完成'}</p></Card>
             </div>
             <div className="mt-6 rounded-2xl bg-slate-50 p-4">
               <div className="h-3 rounded-full bg-slate-200">
@@ -636,7 +636,7 @@ export function PersonalCenterClient() {
                     <p className="font-medium text-brand">{record.rewardStatus}</p>
                   </div>
                 </div>
-              )) : <p className="text-sm text-muted">还没有邀请记录，快去分享邀请码吧。</p>}
+              )) : <p className="text-sm text-muted">还没有邀请记录，快去分享邀请链接吧。</p>}
             </div>
           </Card>
 

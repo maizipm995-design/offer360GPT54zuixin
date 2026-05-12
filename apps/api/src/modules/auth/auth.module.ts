@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { MembershipsModule } from '../memberships/memberships.module';
 import { env } from '../../config/env';
 import { PrismaService } from '../../prisma.service';
 import { AliyunSmsService } from './aliyun-sms.service';
@@ -12,6 +13,7 @@ import { PhoneVerificationService } from './phone-verification.service';
 @Module({
   imports: [
     PassportModule,
+    MembershipsModule,
     JwtModule.register({
       secret: env.jwtSecret,
       signOptions: { expiresIn: '7d' },

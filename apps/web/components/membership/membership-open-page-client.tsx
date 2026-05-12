@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Crown, Ticket } from 'lucide-react';
+import { CircleHelp, Crown, Ticket } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { clientFetch } from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
@@ -13,7 +13,13 @@ interface Props {
   plans: MembershipPlanItem[];
 }
 
-const freeUserBenefits = [
+type BenefitItem = {
+  title: string;
+  content: string;
+  hint?: string;
+};
+
+const freeUserBenefits: BenefitItem[] = [
   {
     title: '校招公告查看：',
     content: '每天仅能查看10条招聘,错过大量热门优质总招岗位机会窗口',
@@ -27,8 +33,18 @@ const freeUserBenefits = [
     content: '网上零散拼凑优质资料,简历/面试题缺乏体系,求职竞争力较弱',
   },
   {
-    title: '求职辅导直播课：',
-    content: '面试踩坑无人指导,面试屡屡失利,宝贵优质求职机会全被浪费掉',
+    title: '商品购买权益：',
+    content: '站内全部商品均按原价购买,无会员专属折扣',
+    hint: '开通超级会员后，网站内所有商品和会员续费订单都可长期享受 9 折优惠。',
+  },
+  {
+    title: '激励金抵扣权益：',
+    content: '激励金单笔订单最高仅可抵扣 5%',
+    hint: '激励金可通过邀请好友注册或下单获得，下单时可按会员规则抵扣部分金额，普通/标准会员最高 5%，超级会员最高 10%。',
+  },
+  {
+    title: '求职辅导视频课：',
+    content: '缺少系统化精品录播课程,求职方法碎片化,面试容易反复踩坑',
   },
   {
     title: '服务周期：',
@@ -36,7 +52,7 @@ const freeUserBenefits = [
   },
 ] as const;
 
-const superMemberBenefits = [
+const superMemberBenefits: BenefitItem[] = [
   {
     title: '校招公告查看：',
     content: '每日更新100+全行业岗位,无限次查看,不错过任何投递窗口',
@@ -50,8 +66,18 @@ const superMemberBenefits = [
     content: '全套求职资料:高分简历模板+大厂面试题+行业科普,一站式备齐',
   },
   {
-    title: '求职辅导直播课：',
-    content: '行业大牛每月定期开授课,拆解简历/群面/单面技巧,直播答疑解惑',
+    title: '商品购买权益：',
+    content: '购买站内全部商品一律享 9 折优惠',
+    hint: '开通超级会员后，网站内所有商品和会员续费订单都可长期享受 9 折优惠。',
+  },
+  {
+    title: '激励金抵扣权益：',
+    content: '激励金单笔订单最高可抵扣 10%',
+    hint: '激励金可通过邀请好友注册或下单获得，下单时可按会员规则抵扣部分金额，普通/标准会员最高 5%，超级会员最高 10%。',
+  },
+  {
+    title: '求职辅导视频课：',
+    content: '行业大牛精心打造精品求职辅导视频课程,可反复学习,系统提升求职能力',
   },
   {
     title: '服务周期：',
@@ -247,7 +273,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                   <div className="mt-4 space-y-3 text-[10px] leading-[1.45] text-[#555555] sm:mt-6 sm:space-y-5 sm:text-[15px] sm:leading-7">
                     {freeUserBenefits.map((item) => (
                       <div key={item.title} className="min-w-0">
-                        <p className="font-semibold text-[#333333]">{item.title}</p>
+                        <BenefitTitle title={item.title} hint={item.hint} tone="default" />
                         <p>{item.content}</p>
                       </div>
                     ))}
@@ -255,8 +281,8 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                   <div className="mt-auto border-t border-[#E9E9E9] pt-4 sm:pt-5">
                     <button
                       type="button"
-                      onClick={() => router.push('/jobs')}
-                      className="mx-auto inline-flex h-9 w-full items-center justify-center rounded-lg bg-[#F08A24] px-2 text-[11px] font-semibold text-white transition hover:bg-[#DD7C1A] sm:h-11 sm:min-w-[132px] sm:w-auto sm:rounded-xl sm:px-6 sm:text-sm"
+                      onClick={() => router.push('/')}
+                      className="mx-auto inline-flex h-9 w-full items-center justify-center rounded-lg bg-brand px-2 text-[11px] font-semibold text-white transition hover:bg-brand-dark sm:h-11 sm:min-w-[132px] sm:w-auto sm:rounded-xl sm:px-6 sm:text-sm"
                     >
                       去查看公告
                     </button>
@@ -268,7 +294,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                   <div className="mt-4 space-y-3 text-[10px] leading-[1.45] text-[#555555] sm:mt-6 sm:space-y-5 sm:text-[15px] sm:leading-7">
                     {superMemberBenefits.map((item) => (
                       <div key={item.title} className="min-w-0">
-                        <p className="font-semibold text-[#F08A24]">{item.title}</p>
+                        <BenefitTitle title={item.title} hint={item.hint} tone="accent" />
                         <p>{item.content}</p>
                       </div>
                     ))}
@@ -283,6 +309,10 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                           <span className="pb-0.5 text-[10px] text-[#666666] sm:pb-1 sm:text-sm">/年</span>
                         </div>
                         <p className="mt-1 text-[10px] text-[#666666] sm:text-sm">日均仅约 ¥{((displaySuperPlan?.price ?? 99) / 365).toFixed(2)}</p>
+                        <div className="mt-2 space-y-1 text-[10px] leading-4 text-[#666666] sm:text-sm sm:leading-5">
+                          <p>标准会员为系统赠送权益，不支持单独购买。</p>
+                          <p>超级会员支持随时购买、提前续费，系统会自动顺延叠加时长。</p>
+                        </div>
                         <label className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-[#666666] sm:gap-2 sm:text-sm sm:leading-5">
                           <input
                             type="checkbox"
@@ -303,7 +333,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                         </label>
                         {user?.isMember ? (
                           <p className="mt-2 text-[10px] font-medium leading-4 text-[#F08A24] sm:text-sm sm:leading-5">
-                            当前账号已开通 {user.memberLevelLabel}，剩余约 {user.membershipRemainingDays ?? 0} 天。
+                            当前账号已开通 {user.memberLevelLabel}，剩余约 {user.membershipRemainingDays ?? 0} 天，可随时继续购买或续费。
                           </p>
                         ) : null}
                       </div>
@@ -314,7 +344,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                         disabled={!displaySuperPlan || loadingPlanId === displaySuperPlan?.id}
                         className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-[#F08A24] px-2 text-[11px] font-semibold text-white transition hover:bg-[#DD7C1A] disabled:cursor-not-allowed disabled:opacity-60 sm:h-11 sm:min-w-[132px] sm:w-auto sm:rounded-xl sm:px-6 sm:text-sm"
                       >
-                        {loadingPlanId === displaySuperPlan?.id ? '创建订单中...' : '立即开通'}
+                        {loadingPlanId === displaySuperPlan?.id ? '创建订单中...' : user?.memberLevel === 'super' ? '立即续费超级会员' : '立即开通超级会员'}
                       </button>
                     </div>
                   </div>
@@ -326,11 +356,54 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
           <section id="membership-benefits" className="px-4 py-6">
             <div className="mx-auto max-w-[980px] rounded-3xl bg-white p-8 shadow-sm">
               <h2 className="mb-8 text-center text-2xl font-bold text-[#FF7D00]">{benefitsContent.title}</h2>
-              <div className="membership-rich-content" dangerouslySetInnerHTML={{ __html: benefitsContent.htmlContent }} />
+              <div className="rich-html-content membership-rich-content" dangerouslySetInnerHTML={{ __html: benefitsContent.htmlContent }} />
             </div>
           </section>
         </>
       )}
     </main>
+  );
+}
+
+function BenefitTitle({
+  title,
+  hint,
+  tone,
+}: {
+  title: string;
+  hint?: string;
+  tone: 'default' | 'accent';
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative inline-flex items-start gap-1">
+      <p className={`font-semibold ${tone === 'accent' ? 'text-[#F08A24]' : 'text-[#333333]'}`}>{title}</p>
+      {hint ? (
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          className={`relative mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition sm:h-4.5 sm:w-4.5 ${
+            tone === 'accent'
+              ? 'border-[#F4B276] text-[#F08A24] hover:bg-[#FFF5EC]'
+              : 'border-[#D9D9D9] text-[#999999] hover:bg-[#F8F8F8]'
+          }`}
+          aria-label={`${title}说明`}
+        >
+          <CircleHelp className="h-3 w-3" />
+          {open ? (
+            <span
+              className="absolute left-1/2 top-full z-20 mt-2 w-[220px] -translate-x-1/2 rounded-xl border border-[#FFE2C7] bg-white px-3 py-2 text-left text-[11px] font-normal leading-5 text-[#666666] shadow-[0_12px_36px_rgba(15,23,42,0.12)]"
+              onMouseEnter={() => setOpen(true)}
+              onMouseLeave={() => setOpen(false)}
+            >
+              {hint}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
+    </div>
   );
 }

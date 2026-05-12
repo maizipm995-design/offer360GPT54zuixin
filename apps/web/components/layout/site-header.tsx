@@ -14,7 +14,7 @@ import { AuthUser, PersonalOverview } from '@/types';
 const BRAND_LOGO_URL = 'https://i.postimg.cc/h4scGvF6/sun-lao-shilogo-64X64.png';
 
 const navs = [
-  { href: '/jobs', label: '名企校招', icon: GraduationCap },
+  { href: '/', label: '名企校招', icon: GraduationCap },
   { href: '/resume-optimizer', label: '简历优化', icon: Sparkles },
   { href: '/services', label: '求职服务', icon: BriefcaseBusiness },
   { href: '/career-journey', label: '我的求职之路', icon: Map },
@@ -41,6 +41,13 @@ function getMobileTitle(pathname: string) {
 
 function getUserDisplayName(name?: string | null, phone?: string | null) {
   return (name || phone || '个人中心').trim();
+}
+
+function isNavActive(pathname: string, href: string) {
+  if (href === '/') {
+    return pathname === '/';
+  }
+  return pathname.startsWith(href);
 }
 
 export function SiteHeader() {
@@ -121,7 +128,7 @@ export function SiteHeader() {
   const handleLogout = () => {
     setMenuOpen(false);
     logout();
-    router.push('/jobs');
+    router.push('/');
   };
 
   return (
@@ -129,7 +136,7 @@ export function SiteHeader() {
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto hidden h-[56px] max-w-[1366px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 px-4 md:grid lg:px-6">
           <div className="min-w-0">
-            <Link prefetch={false} href="/jobs" className="inline-flex items-center gap-2 whitespace-nowrap">
+            <Link prefetch={false} href="/" className="inline-flex items-center gap-2 whitespace-nowrap">
               <span className="flex h-[45px] w-[45px] items-center justify-center overflow-hidden rounded-xl bg-white p-0">
                 <Image
                   src={BRAND_LOGO_URL}
@@ -156,7 +163,7 @@ export function SiteHeader() {
                 prefetch={false}
                 className={cn(
                   desktopPillClass,
-                  pathname.startsWith(item.href) ? desktopNavActiveClass : desktopNavIdleClass,
+                  isNavActive(pathname, item.href) ? desktopNavActiveClass : desktopNavIdleClass,
                 )}
               >
                 {item.label}
@@ -204,7 +211,7 @@ export function SiteHeader() {
         </div>
 
         <div className="mx-auto flex h-[48px] max-w-[1366px] items-center justify-between gap-2 px-3 md:hidden">
-          <Link prefetch={false} href="/jobs" className="inline-flex min-w-0 max-w-[140px] items-center gap-1.5">
+          <Link prefetch={false} href="/" className="inline-flex min-w-0 max-w-[140px] items-center gap-1.5">
             <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-0">
               <Image
                 src={BRAND_LOGO_URL}
@@ -265,7 +272,7 @@ export function SiteHeader() {
         <div className="grid grid-cols-5 gap-1 px-2 py-2">
           {navs.map((item) => {
             const Icon = item.icon;
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(pathname, item.href);
 
             return (
               <Link

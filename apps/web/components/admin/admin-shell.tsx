@@ -36,16 +36,15 @@ const adminMenus = [
   { href: '/admin/users', label: '用户管理', icon: Users, permission: 'admin:user:manage' },
   { href: '/admin/memberships', label: '会员管理', icon: Crown, permission: 'admin:membership:manage' },
   { href: '/admin/member-roles', label: 'C端会员角色权限', icon: Settings2, permission: 'admin:membership:manage' },
-  { href: '/admin/membership-content', label: '会员权益内容', icon: FileText, permission: 'admin:membership:manage' },
-  { href: '/admin/career-journey-content', label: '我的求职之路', icon: FileText, permission: 'admin:membership:manage' },
+  { href: '/admin/membership-content', label: 'HTML通用内容管理', icon: FileText, permission: 'admin:membership:manage' },
   { href: '/admin/site-config-assets', label: '网站运营配置文件', icon: FileText, permission: 'admin:service:manage' },
   { href: '/admin/redeem-batches', label: '兑换码批次', icon: Ticket, permission: 'admin:redeem:manage' },
   { href: '/admin/redeem-codes', label: '会员兑换码', icon: ListChecks, permission: 'admin:redeem:manage' },
   { href: '/admin/resume-template-configs', label: '简历模板排版配置', icon: Settings2, permission: 'admin:service:manage' },
   { href: '/admin/service-products', label: '服务商品管理', icon: ShoppingBag, permission: 'admin:service:manage' },
   { href: '/admin/orders', label: '服务订单管理', icon: Receipt, permission: 'admin:service:manage' },
-  { href: '/admin/commission-logs', label: '分销流水管理', icon: Coins, permission: 'admin:commission:manage' },
-  { href: '/admin/commission-config', label: '分销配置', icon: Settings2, permission: 'admin:commission:manage' },
+  { href: '/admin/commission-logs', label: '激励金流水管理', icon: Coins, permission: 'admin:commission:manage' },
+  { href: '/admin/commission-config', label: '激励金配置', icon: Settings2, permission: 'admin:commission:manage' },
 ] as const;
 
 function hasPermission(session: AdminAuthSession | null, permission: string) {

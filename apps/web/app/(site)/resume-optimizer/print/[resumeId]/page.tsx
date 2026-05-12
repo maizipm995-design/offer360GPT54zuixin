@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { ResumeDocument } from '@/components/resume/resume-document';
 import {
   normalizeResumeContent,
@@ -6,6 +7,17 @@ import {
   type ResumeDraftRecord,
 } from '@/components/resume/resume-types';
 import { serverGet } from '@/lib/api';
+import { buildPageMetadata } from '@/lib/seo';
+
+export const metadata: Metadata = buildPageMetadata({
+  title: '简历打印',
+  description: 'offer360 简历打印页。',
+  path: '/resume-optimizer/print',
+  robots: {
+    index: false,
+    follow: false,
+  },
+});
 
 export const dynamic = 'force-dynamic';
 

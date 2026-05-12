@@ -63,8 +63,20 @@ function shouldUseOssCname(endpoint: string) {
   }
 
   try {
-    const hostname = new URL(endpoint).hostname.toLowerCase();
-    return hostname === 'static.offer360.cn' || hostname === 'offer360.cn-beijing.taihangpfm.cn';
+    const url = endpoint.includes('://') ? new URL(endpoint) : new URL(`https://${endpoint}`);
+    const hostname = url.hostname.toLowerCase();
+
+    // 明确已知的自定义域名
+    if (hostname === 'static.offer360.cn' || hostname === 'offer360.cn-beijing.taihangpfm.cn') {
+      return true;
+    }
+
+    // 如果不是阿里云原生的 endpoint (oss-*.aliyuncs.com)，通常都是自定义域名 CNAME
+    if (!hostname.endsWith('.aliyuncs.com')) {
+      return true;
+    }
+
+    return false;
   } catch {
     return false;
   }

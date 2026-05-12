@@ -1,139 +1,99 @@
-# Offer360 生产环境参数与 CI Secrets 清单
+# Offer360 生产环境参数清单
 
-## 目标
-- 让 `.env` 只承载服务器运行时所需的真实生产参数
-- 让 CI 平台只保存最小必要的登录与部署凭据
-- 避免 `.env`、截图、聊天记录、日志中继续散落真实生产值
+## 归属原则
+- 当前部署方案为本地离线镜像包上传，不再依赖 GitHub Actions、私有镜像仓库或镜像仓库登录凭据。
+- 服务器 `.env` 只保存：
+  - 容器运行时业务参数
+  - 数据库密码
+  - OSS / 短信 / 微信支付密钥
+  - 域名配置
+- HTTPS 证书单独保存在宿主机 `/etc/nginx/ssl/www.offer360.cn`
+- 微信支付证书单独保存在宿主机 `/opt/offer360/certs`
 
-## 存放原则
-- `.env`
-  - 只允许放本地开发或联调用占位值、测试值
-  - 禁止放真实生产短信、OSS、微信支付密钥
-- `.env`
-  - 放服务器运行时真正需要的生产参数
-  - 该文件只存在于服务器，不提交仓库
-- CI Secrets
-  - 只放 CI 登录镜像仓库和登录服务器所需凭据
-  - 不重复保存可以放在服务器 `.env` 中的业务配置
-
-## 一、`.env` 安全使用说明
-### 1. 生成方式
-在服务器上进入 `deploy/prod` 目录后执行：
-
-```bash
-cp .env.example .env
-```
-
-### 2. 填写原则
-- 所有 `CHANGE_ME_*` 必须替换为真实生产值
-- 所有 `YOUR_*` 必须替换为真实生产值
-- 不要把 `.env` 回传到本地开发目录
-- 不要把 `.env` 上传到仓库
-- 不要把 `.env` 内容贴到工单、IM、截图里
-
-### 3. 建议由服务器保存的字段
-- 镜像仓库运行参数：
-  - `IMAGE_REGISTRY`
-  - `IMAGE_NAMESPACE`
-- 对外访问与域名：
-  - `SERVER_NAME`
-  - `WEB_APP_BASE_URL`
-  - `NEXT_PUBLIC_API_BASE_URL`
-  - `NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS`
-  - `CORS_ORIGIN`
-- 数据库与中间件：
-  - `MYSQL_DATABASE`
-  - `MYSQL_ROOT_PASSWORD`
-  - `ES_JAVA_OPTS`
-- 应用安全参数：
-  - `JWT_SECRET`
-  - `AUTH_CODE_SECRET`
-- 短信、OSS、微信支付全部业务密钥
-- 微信支付证书目录：
-  - `WECHAT_PAY_CERTS_HOST_PATH`
-
-### 4. 不建议放到 CI Secrets 的业务参数
-以下内容更适合只保存在服务器 `.env`：
+## 服务器 `.env` 必填
+### 基础运行
+- `MYSQL_DATABASE`
 - `MYSQL_ROOT_PASSWORD`
 - `JWT_SECRET`
 - `AUTH_CODE_SECRET`
-- `ALIYUN_SMS_*`
-- `OSS_*`
-- `WECHAT_PAY_*`
+- `WEB_APP_BASE_URL`
+- `CORS_ORIGIN`
+- `NEXT_PUBLIC_API_BASE_URL`
+- `NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS`
 
-原因：
-- 这些值只给生产容器运行时使用
-- CI 不需要读取业务密钥明文也能完成部署
-- 统一放服务器更利于权限收口
+### 微信支付
+- `WECHAT_PAY_APP_ID`
+- `WECHAT_PAY_APP_SECRET`
+- `WECHAT_PAY_NOTIFY_URL`
+- `WECHAT_PAY_REFUND_NOTIFY_URL`
+- `WECHAT_PAY_CALLBACK_BASE_URL`
+- `WECHAT_PAY_MCH_ID`
+- `WECHAT_PAY_MCH_CERT_SERIAL_NO`
+- `WECHAT_PAY_PUBLIC_KEY_ID`
+- `WECHAT_PAY_API_V3_KEY`
 
-## 二、CI Secrets 清单
-当前流水线文件为：
-- [deploy.yml](file:///Users/maizim/Documents/2605GPT54offer360/.github/workflows/deploy.yml)
+### 阿里云短信
+- `ALIYUN_SMS_ACCESS_KEY_ID`
+- `ALIYUN_SMS_ACCESS_KEY_SECRET`
+- `ALIYUN_SMS_SIGN_NAME`
+- `ALIYUN_SMS_TEMPLATE_CODE`
 
-### 必填 Secrets
+### 阿里云 OSS
+- `OSS_REGION`
+- `OSS_ENDPOINT`
+- `OSS_BUCKET`
+- `OSS_ACCESS_KEY_ID`
+- `OSS_ACCESS_KEY_SECRET`
+- `OSS_STS_ROLE_ARN`
+
+## 服务器 `.env` 可保留默认值
+- `API_PORT=4000`
+- `AUTH_CODE_TTL_MINUTES=5`
+- `AUTH_CODE_LENGTH=6`
+- `ALIYUN_SMS_ENDPOINT=dysmsapi.aliyuncs.com`
+- `ALIYUN_SMS_TEMPLATE_PARAM_NAME=code`
+- `OSS_STS_ENDPOINT=sts.aliyuncs.com`
+- `OSS_UPLOAD_EXPIRE_SECONDS=900`
+- `OSS_SIGN_EXPIRE_SECONDS=1800`
+- `WECHAT_PAY_ORDER_EXPIRE_MINUTES=15`
+- `WEB_PORT_HOST=3000`
+- `API_PORT_HOST=4000`
+
+## 不再需要的 CI/仓库参数
 - `OCI_REGISTRY`
-  - 用途：登录 OCI 镜像仓库
-  - 示例：`registry.cn-hangzhou.aliyuncs.com`
 - `OCI_NAMESPACE`
-  - 用途：镜像命名空间
-  - 示例：`your-namespace`
 - `OCI_USERNAME`
-  - 用途：镜像仓库账号
 - `OCI_PASSWORD`
-  - 用途：镜像仓库密码或 AccessToken
-- `DEPLOY_HOST`
-  - 用途：部署服务器地址
-- `DEPLOY_PORT`
-  - 用途：部署服务器 SSH 端口
-- `DEPLOY_USER`
-  - 用途：部署服务器 SSH 用户
-- `DEPLOY_SSH_KEY`
-  - 用途：CI 登录服务器的私钥
 - `DEPLOY_ROOT`
-  - 用途：服务器部署目录
-  - 推荐值：`/opt/offer360/deploy/prod`
+- `SERVER_HOST`
+- `SERVER_PORT`
+- `SSH_USER`
+- `SSH_PASS`
 
-### 可选补充
-- 如果你后续要把生产业务参数也改成 CI 下发，再额外增加对应 Secrets
-- 但当前推荐方案是不这么做，而是让服务器本地 `.env` 承载业务参数
+## 证书目录要求
+### 宿主机 Nginx 证书
+- 目录：`/etc/nginx/ssl/www.offer360.cn`
+- 文件：
+  - `fullchain.pem`
+  - `privkey.pem`
 
-## 三、当前文件与参数归属建议
-### 本地开发文件
-- `.env`
-  - 现在已经清理掉真实生产密钥
-  - 若要本地联调，请改填测试值或临时值
+### 微信支付证书
+- 目录：`/opt/offer360/certs`
+- 文件名按微信支付证书实际文件放置
 
-### 模板文件
-- `.env.example`
-- `.env.example`
-- `.env.example`
-  - 这些文件只保留字段结构与占位符
+## `.env` 使用方式
+- 如果服务器缺少 `/opt/offer360/.env`，先把仓库中的 `.env.example` 复制过去：
 
-### 服务器文件
-- `.env`
-  - 存放真实生产值
+```bash
+cp /opt/offer360/.env.example /opt/offer360/.env
+```
 
-### CI 平台
-- 仅保存：
-  - 镜像仓库登录信息
-  - 服务器 SSH 登录信息
-  - 部署根目录
+- 所有 `CHANGE_ME_*` 都必须替换成真实值。
+- 不要把服务器 `.env` 提交 Git。
+- 不要把服务器 `.env` 下载回本地仓库。
+- 不要把服务器 `.env` 内容发到聊天、截图或工单。
 
-## 四、建议立刻执行的安全动作
-- 轮换已经暴露过的生产级密钥：
-  - 阿里云 `AK/SK`
-  - OSS 相关访问密钥与 STS 角色策略
-  - 微信 `AppSecret`
-  - 微信支付 `API V3 Key`
-  - 微信支付商户公钥/证书相关标识
-  - 短信服务相关密钥
-- 重新生成后：
-  - 只写入服务器 `.env`
-  - CI 中只更新最小必要的登录 Secrets
-  - 本地 `.env` 继续保持占位或测试值
-
-## 五、推荐交接口径
-- 开发同学只维护 `.env.example`
-- 运维同学只维护服务器 `.env`
-- 仓库管理员只维护 CI Secrets
-- 任何真实生产密钥都不再进入 Git 工作区长期保存
+## 安全提醒
+- 生产密钥、数据库密码、证书文件都只应存放在服务器本机。
+- 离线镜像包传输建议走 `scp` 或 `rsync over ssh`。
+- 如果服务器登录密码或第三方密钥曾在聊天中明文出现，应立即轮换。

@@ -5,10 +5,10 @@ import { Prisma, User } from '@prisma/client';
 import {
   buildMemberAccessSnapshot,
   getMemberRolePermissionMaps,
-  normalizeStoredMemberLevel,
+  resolveMembershipState,
 } from '../../common/utils/member-access';
-import { getMembershipRemainingDays, isMembershipActive, MEMBERSHIP_DAY_IN_MS } from '../../common/utils/membership-time';
 import { PrismaService } from '../../prisma.service';
+import { MembershipsService } from '../memberships/memberships.service';
 import { AuthCodeBusiness } from './auth-code.constants';
 import { PhoneVerificationService } from './phone-verification.service';
 import { CodeLoginDto } from './dto/code-login.dto';
@@ -21,8 +21,23 @@ import { VerifyAuthCodeDto } from './dto/verify-auth-code.dto';
 
 type AuthUserEntity = User & {
   profile?: { name?: string | null } | null;
-  membership?: { endAt: Date; memberLevel?: string | null } | null;
+  membership?: {
+    startAt?: Date | null;
+    endAt?: Date | null;
+    memberLevel?: string | null;
+    standardStartAt?: Date | null;
+    standardEndAt?: Date | null;
+    superStartAt?: Date | null;
+    superEndAt?: Date | null;
+  } | null;
 };
+
+const REGISTER_GIFT_DAYS = 1;
+const INVITE_REWARD_MILESTONES = [
+  { milestone: 3, grantDays: 10 },
+  { milestone: 5, grantDays: 15 },
+  { milestone: 8, grantDays: 30 },
+] as const;
 
 @Injectable()
 export class AuthService {
@@ -30,6 +45,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly phoneVerificationService: PhoneVerificationService,
+    private readonly membershipsService: MembershipsService,
   ) {}
 
   async identifyPhone(dto: IdentifyPhoneDto) {
@@ -97,14 +113,7 @@ export class AuthService {
     await this.phoneVerificationService.verifyCode(phone, 'register', dto.verificationCode);
 
     const passwordHash = await bcrypt.hash(dto.password.trim(), 10);
-    const inviteCodeInput = dto.inviteCode?.trim().toUpperCase();
-    const inviter = inviteCodeInput
-      ? await this.prisma.user.findUnique({ where: { myInviteCode: inviteCodeInput } })
-      : null;
-
-    if (inviteCodeInput && !inviter) {
-      throw new BadRequestException('邀请码不存在');
-    }
+    const inviter = await this.resolveInviter(dto);
 
     const inviteCode = await this.generateInviteCode(phone);
     const now = new Date();
@@ -149,20 +158,15 @@ export class AuthService {
         },
       });
 
-      // 新用户注册自动赠送7天标准会员
-      const giftDays = 7;
-      const giftEndAt = new Date(now.getTime() + giftDays * MEMBERSHIP_DAY_IN_MS);
-      await tx.userMembership.create({
-        data: {
-          userId: created.id,
-          memberLevel: 'standard',
-          startAt: now,
-          endAt: giftEndAt,
-          remainingDays: giftDays,
-          sourceType: 'register_gift',
-          sourceRemark: '新用户注册自动赠送',
-        },
+      await this.membershipsService.grantMembershipDaysWithTx(tx, created.id, REGISTER_GIFT_DAYS, {
+        memberLevel: 'standard',
+        sourceType: 'register_gift',
+        sourceRemark: '新用户注册自动赠送 1 天标准会员',
       });
+
+      if (inviter) {
+        await this.grantInviteMilestoneRewards(tx, inviter.id, created.id, now);
+      }
 
       return tx.user.findUniqueOrThrow({
         where: { id: created.id },
@@ -233,17 +237,7 @@ export class AuthService {
       memberRoleName: access.memberRoleName,
       permissionKeys: access.permissionKeys,
       membershipRemainingDays: access.membershipRemainingDays,
-      membership:
-        access.isMember && user.membership && isMembershipActive(user.membership.endAt, now)
-          ? {
-              ...user.membership,
-              memberLevel: normalizeStoredMemberLevel(user.membership.memberLevel) ?? 'standard',
-              memberLevelLabel: access.memberLevelLabel,
-              memberRoleCode: access.memberRoleCode,
-              memberRoleName: access.memberRoleName,
-              remainingDays: access.membershipRemainingDays,
-            }
-          : null,
+      membership: this.serializeActiveMembership(user.membership, now, access),
     };
   }
 
@@ -286,6 +280,81 @@ export class AuthService {
       permissionKeys: access.permissionKeys,
       membershipRemainingDays: access.membershipRemainingDays,
       inviteCode: user.myInviteCode,
+    };
+  }
+
+  private async grantInviteMilestoneRewards(
+    tx: Prisma.TransactionClient,
+    inviterUserId: string,
+    triggeredByUserId: string,
+    now: Date,
+  ) {
+    const inviteCount = await tx.user.count({ where: { parentUid: inviterUserId } });
+    for (const item of INVITE_REWARD_MILESTONES) {
+      if (inviteCount < item.milestone) {
+        continue;
+      }
+
+      const existingReward = await tx.inviteRewardLog.findUnique({
+        where: {
+          inviterUid_milestone: {
+            inviterUid: inviterUserId,
+            milestone: item.milestone,
+          },
+        },
+      });
+      if (existingReward) {
+        continue;
+      }
+
+      await this.membershipsService.grantMembershipDaysWithTx(tx, inviterUserId, item.grantDays, {
+        memberLevel: 'standard',
+        sourceType: 'invite_reward',
+        sourceRemark: `邀请满 ${item.milestone} 人奖励 ${item.grantDays} 天标准会员`,
+      });
+      await tx.inviteRewardLog.create({
+        data: {
+          inviterUid: inviterUserId,
+          milestone: item.milestone,
+          grantDays: item.grantDays,
+          inviteCountSnapshot: inviteCount,
+          triggeredByUserId,
+          rewardedAt: now,
+        },
+      });
+    }
+  }
+
+  private serializeActiveMembership(
+    membership: AuthUserEntity['membership'],
+    now: Date,
+    access: {
+      isMember: boolean;
+      memberLevel: 'standard' | 'super' | null;
+      memberLevelLabel: string;
+      memberRoleCode: string;
+      memberRoleName: string;
+      membershipRemainingDays: number;
+    },
+  ) {
+    if (!membership || !access.isMember) {
+      return null;
+    }
+
+    const resolved = resolveMembershipState(membership, now);
+    if (!resolved.isMember || !resolved.activeLevel || !resolved.activeStartAt || !resolved.activeEndAt) {
+      return null;
+    }
+
+    return {
+      ...membership,
+      memberLevel: resolved.activeLevel,
+      startAt: resolved.activeStartAt,
+      endAt: resolved.activeEndAt,
+      memberLevelLabel: access.memberLevelLabel,
+      memberRoleCode: access.memberRoleCode,
+      memberRoleName: access.memberRoleName,
+      remainingDays: access.membershipRemainingDays,
     };
   }
 
@@ -349,5 +418,36 @@ export class AuthService {
       }
     }
     return `INV${Date.now().toString(36).toUpperCase()}`;
+  }
+
+  private async resolveInviter(dto: RegisterDto) {
+    const inviteTokenInput = dto.inviteToken?.trim().toUpperCase();
+    if (inviteTokenInput) {
+      const redirectLink = await this.prisma.invRedirectLink.findUnique({
+        where: { randomKey: inviteTokenInput },
+        select: {
+          inviterUid: true,
+          expireAt: true,
+        },
+      });
+
+      if (redirectLink && (!redirectLink.expireAt || redirectLink.expireAt > new Date())) {
+        const inviter = await this.prisma.user.findUnique({
+          where: { id: redirectLink.inviterUid },
+        });
+        if (inviter) {
+          return inviter;
+        }
+      }
+    }
+
+    const inviteCodeInput = dto.inviteCode?.trim().toUpperCase();
+    if (!inviteCodeInput) {
+      return null;
+    }
+
+    return this.prisma.user.findUnique({
+      where: { myInviteCode: inviteCodeInput },
+    });
   }
 }

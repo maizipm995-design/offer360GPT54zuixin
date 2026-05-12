@@ -156,6 +156,24 @@ export class AdminController {
     return this.adminService.updateCareerJourneyContent(body);
   }
 
+  @Get('html-content-positions')
+  @RequireAdminPermissions('admin:membership:manage')
+  getHtmlContentPositions() {
+    return this.adminService.getHtmlContentPositions();
+  }
+
+  @Get('html-content-positions/:location')
+  @RequireAdminPermissions('admin:membership:manage')
+  getHtmlContentByLocation(@Param('location') location: string) {
+    return this.adminService.getHtmlContentByLocation(location);
+  }
+
+  @Patch('html-content-positions/:location')
+  @RequireAdminPermissions('admin:membership:manage')
+  updateHtmlContentByLocation(@Param('location') location: string, @Body() body: Record<string, unknown>) {
+    return this.adminService.updateHtmlContentByLocation(location, body);
+  }
+
   @Get('service-products')
   @RequireAdminPermissions('admin:service:manage')
   getServiceProducts(@Query() query: Record<string, string | undefined>) {

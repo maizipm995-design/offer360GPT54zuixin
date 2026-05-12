@@ -39,7 +39,7 @@ export default function AdminCommissionLogsPage() {
       const result = await clientFetch<AdminCommissionLogListResponse>(`/admin/commission-logs?${buildQuery({ ...nextFilters, page, limit: 10 })}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '分销流水加载失败');
+      setMessage(error instanceof Error ? error.message : '激励金流水加载失败');
     } finally {
       setLoading(false);
     }
@@ -51,8 +51,8 @@ export default function AdminCommissionLogsPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportRows = () => {
-    downloadCsv('分销流水当前结果.csv', [
-      ['订单号', '邀请人手机号', '消费人手机号', '提成比例', '提成金额', '原始消费金额', '流水类型', '创建时间'],
+    downloadCsv('激励金流水当前结果.csv', [
+      ['订单号', '邀请人手机号', '消费人手机号', '激励比例', '激励金额', '原始消费金额', '流水类型', '创建时间'],
       ...data.list.map((item) => [
         item.orderNo,
         item.inviter.phone,
@@ -69,11 +69,11 @@ export default function AdminCommissionLogsPage() {
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-card">
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand">Admin commission logs</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand">Admin incentive logs</p>
         <div className="mt-2 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <h2 className="text-3xl font-bold text-ink">分销流水管理</h2>
-            <p className="mt-2 text-sm text-muted">支持按订单号、邀请人、消费人检索提成流水，服务财务核对和运营排查。</p>
+            <h2 className="text-3xl font-bold text-ink">激励金流水管理</h2>
+            <p className="mt-2 text-sm text-muted">支持按订单号、邀请人、消费人检索激励金流水，服务财务核对和运营排查。</p>
           </div>
           <Button variant="secondary" onClick={exportRows}>导出当前结果</Button>
         </div>
@@ -87,7 +87,7 @@ export default function AdminCommissionLogsPage() {
               <p className="mt-3 text-3xl font-bold text-ink">{data.stats.total}</p>
             </Card>
             <Card className="rounded-3xl p-5">
-              <p className="text-sm text-muted">当前筛选分销金额</p>
+              <p className="text-sm text-muted">当前筛选激励金金额</p>
               <p className="mt-3 text-3xl font-bold text-ink">{formatCurrency(data.stats.amount)}</p>
             </Card>
           </div>
@@ -97,7 +97,7 @@ export default function AdminCommissionLogsPage() {
               <Input placeholder="搜索订单号 / 邀请人 / 消费人" value={filters.keyword} onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))} />
               <Select value={filters.logType} onChange={(e) => setFilters((prev) => ({ ...prev, logType: e.target.value }))}>
                 <option value="">全部流水类型</option>
-                <option value="1">正常提成</option>
+                <option value="1">正常入账</option>
                 <option value="2">退款扣减</option>
               </Select>
               <div className="flex gap-2">
@@ -107,7 +107,7 @@ export default function AdminCommissionLogsPage() {
             </div>
           </Card>
 
-          <AdminTable headers={['订单号', '邀请人', '消费人', '提成金额', '比例', '流水类型']} hasData={data.list.length > 0} emptyText={loading ? '分销流水加载中...' : '暂无流水数据'}>
+          <AdminTable headers={['订单号', '邀请人', '消费人', '激励金额', '比例', '流水类型']} hasData={data.list.length > 0} emptyText={loading ? '激励金流水加载中...' : '暂无流水数据'}>
             {data.list.map((item) => (
               <tr
                 key={item.id}
@@ -119,7 +119,7 @@ export default function AdminCommissionLogsPage() {
                 <td className="px-4 py-3 text-slate-600">{item.consumer.phone}</td>
                 <td className="px-4 py-3 text-slate-600">{formatCurrency(item.commissionMoney)}</td>
                 <td className="px-4 py-3 text-slate-600">{item.commissionRate}%</td>
-                <td className="px-4 py-3 text-slate-600">{item.logType === 1 ? '正常提成' : '退款扣减'}</td>
+                <td className="px-4 py-3 text-slate-600">{item.logType === 1 ? '正常入账' : '退款扣减'}</td>
               </tr>
             ))}
           </AdminTable>
@@ -134,7 +134,7 @@ export default function AdminCommissionLogsPage() {
 
         <Card className="rounded-3xl p-5 xl:sticky xl:top-6 xl:self-start">
           <h3 className="text-xl font-semibold text-ink">流水详情</h3>
-          <p className="mt-1 text-sm text-muted">这里用于核对邀请人、消费人、订单金额与提成计算结果。</p>
+          <p className="mt-1 text-sm text-muted">这里用于核对邀请人、消费人、订单金额与激励金结算结果。</p>
 
           {selectedLog ? (
             <div className="mt-5 space-y-3 text-sm text-slate-600">
@@ -151,20 +151,20 @@ export default function AdminCommissionLogsPage() {
               <div className="rounded-2xl bg-slate-50 p-4">
                 <p className="font-semibold text-ink">原始消费金额</p>
                 <p className="mt-1">{formatCurrency(selectedLog.originalConsumeMoney)}</p>
-                <p className="mt-2 font-semibold text-ink">提成比例</p>
+                <p className="mt-2 font-semibold text-ink">激励比例</p>
                 <p className="mt-1">{selectedLog.commissionRate}%</p>
-                <p className="mt-2 font-semibold text-ink">提成金额</p>
+                <p className="mt-2 font-semibold text-ink">激励金额</p>
                 <p className="mt-1">{formatCurrency(selectedLog.commissionMoney)}</p>
               </div>
               <div className="rounded-2xl bg-slate-50 p-4">
                 <p className="font-semibold text-ink">流水类型</p>
-                <p className="mt-1">{selectedLog.logType === 1 ? '正常提成' : '退款扣减'}</p>
+                <p className="mt-1">{selectedLog.logType === 1 ? '正常入账' : '退款扣减'}</p>
                 <p className="mt-2 font-semibold text-ink">生成时间</p>
                 <p className="mt-1">{formatDate(selectedLog.createAt)}</p>
               </div>
             </div>
           ) : (
-            <p className="mt-6 rounded-2xl bg-slate-50 px-4 py-6 text-sm text-muted">请先从左侧选择一条分销流水记录。</p>
+            <p className="mt-6 rounded-2xl bg-slate-50 px-4 py-6 text-sm text-muted">请先从左侧选择一条激励金流水记录。</p>
           )}
         </Card>
       </section>

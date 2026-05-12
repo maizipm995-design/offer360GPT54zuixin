@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { env } from '../../config/env';
 import { PrismaService } from '../../prisma.service';
 import { JobsModule } from '../jobs/jobs.module';
+import { MembershipsModule } from '../memberships/memberships.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { StorageModule } from '../storage/storage.module';
 import { AdminAuthController } from './admin-auth.controller';
@@ -34,6 +35,7 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy';
       signOptions: { expiresIn: '7d' },
     }),
     JobsModule,
+    MembershipsModule,
     PaymentsModule,
     StorageModule,
   ],

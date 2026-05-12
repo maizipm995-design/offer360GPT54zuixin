@@ -4,22 +4,23 @@ import { Prisma } from '@prisma/client';
 import {
   buildMemberAccessSnapshot,
   getMemberLevelLabel,
-  getMemberRoleName,
   getMemberRolePermissionMaps,
   MEMBER_PERMISSION_CATALOG,
   MEMBER_ROLE_DEFINITIONS,
   normalizeStoredMemberLevel,
   parseMemberLevelInput,
+  resolveMembershipState,
   type MemberLevel,
   type MemberPermissionKey,
   type MemberRoleCode,
 } from '../../common/utils/member-access';
-import { getMembershipRemainingDays, isMembershipActive } from '../../common/utils/membership-time';
+import { getMembershipRemainingDays } from '../../common/utils/membership-time';
 import { normalizeJobTextDate, parseJobTextDate } from '../../common/utils/job-text-date';
 import { PrismaService } from '../../prisma.service';
 import { ensureJobsRecommendationConfig } from '../jobs/jobs-recommendation-config';
 import { JobsNormalizationService } from '../jobs/jobs-normalization.service';
 import { clearAllJobsRecommendationCache, invalidateJobsRecommendationCacheByUserId } from '../jobs/jobs-recommendation-cache';
+import { MembershipsService } from '../memberships/memberships.service';
 import {
   GLOBAL_VERTICAL_SPACING_TEMPLATE_CODE,
   GLOBAL_VERTICAL_SPACING_TEMPLATE_DESCRIPTION,
@@ -33,10 +34,10 @@ import {
 } from '../resume/resume-template-config';
 import { StorageService } from '../storage/storage.service';
 import {
-  CAREER_JOURNEY_CONTENT_HTML,
-  CAREER_JOURNEY_CONTENT_SLUG,
-  CAREER_JOURNEY_CONTENT_TITLE,
-} from '../memberships/career-journey-content';
+  HTML_CONTENT_LOCATIONS,
+  getHtmlContentLocationDefinition,
+  type HtmlContentLocationDefinition,
+} from '../memberships/html-content-locations';
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
@@ -52,6 +53,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly normalizationService: JobsNormalizationService,
     private readonly storageService: StorageService,
+    private readonly membershipsService: MembershipsService,
   ) {}
 
   async getOverview() {
@@ -65,7 +67,7 @@ export class AdminService {
       jobsThirtyDays,
       userTotal,
       usersSevenDays,
-      activeMembers,
+      membershipRows,
       membershipContentCount,
       serviceProductCount,
       orderCount,
@@ -81,7 +83,17 @@ export class AdminService {
       this.prisma.jobAnnouncement.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
       this.prisma.user.count(),
       this.prisma.user.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
-      this.prisma.userMembership.count({ where: { endAt: { gt: now } } }),
+      this.prisma.userMembership.findMany({
+        select: {
+          memberLevel: true,
+          startAt: true,
+          endAt: true,
+          standardStartAt: true,
+          standardEndAt: true,
+          superStartAt: true,
+          superEndAt: true,
+        },
+      }),
       this.prisma.membershipRichTextContent.count(),
       this.prisma.serviceProduct.count(),
       this.prisma.serviceOrder.count(),
@@ -119,11 +131,11 @@ export class AdminService {
         { label: '招聘公告总数', value: jobTotal, helper: `近7天新增 ${jobsSevenDays}` },
         { label: '近30天新增岗位', value: jobsThirtyDays, helper: '用于观察岗位更新频率' },
         { label: '注册用户总数', value: userTotal, helper: `近7天新增 ${usersSevenDays}` },
-        { label: '有效会员数', value: activeMembers, helper: 'endAt 晚于当前时间' },
+        { label: '有效会员数', value: membershipRows.filter((item) => resolveMembershipState(item, now).isMember).length, helper: '按标准/超级双轨有效期实时计算' },
         { label: '会员权益内容数', value: membershipContentCount, helper: '可在后台富文本维护' },
         { label: '服务商品数', value: serviceProductCount, helper: '含上下架商品' },
         { label: '服务订单数', value: orderCount, helper: `订单总额 ${this.toCurrencyNumber(orderAmount._sum.amount)}` },
-        { label: '累计分销金额', value: this.toCurrencyNumber(commissionAmount._sum.commissionMoney), helper: `钱包余额 ${this.toCurrencyNumber(walletAmount._sum.availableBalance)}` },
+        { label: '累计激励金金额', value: this.toCurrencyNumber(commissionAmount._sum.commissionMoney), helper: `激励金余额 ${this.toCurrencyNumber(walletAmount._sum.availableBalance)}` },
       ],
       latestJobs: latestJobs.map((item) => ({
         id: item.id,
@@ -199,7 +211,7 @@ export class AdminService {
   async getUsers(query: Record<string, string | undefined>) {
     const pagination = this.getPagination(query);
     const where = this.buildUsersWhere(query);
-    const [list, total, permissionMaps] = await Promise.all([
+    const [rawList, permissionMaps] = await Promise.all([
       this.prisma.user.findMany({
         where,
         include: {
@@ -210,18 +222,26 @@ export class AdminService {
           inviter: { select: { id: true, phone: true, myInviteCode: true } },
         },
         orderBy: { createdAt: 'desc' },
-        skip: pagination.skip,
-        take: pagination.limit,
       }),
-      this.prisma.user.count({ where }),
       getMemberRolePermissionMaps(this.prisma),
     ]);
 
     const now = new Date();
+    const filteredList = rawList.filter((item) => {
+      const isMember = resolveMembershipState(item.membership, now).isMember;
+      if (query.membershipStatus === 'member') {
+        return isMember;
+      }
+      if (query.membershipStatus === 'non-member') {
+        return !isMember;
+      }
+      return true;
+    });
+    const list = filteredList.slice(pagination.skip, pagination.skip + pagination.limit);
 
     return {
       list: list.map((item) => this.toAdminUserItem(item, permissionMaps.effectivePermissionMap, now)),
-      pagination: this.toPagination(total, pagination),
+      pagination: this.toPagination(filteredList.length, pagination),
     };
   }
 
@@ -387,34 +407,37 @@ export class AdminService {
         },
       };
     }
-    if (query.status === 'active') {
-      where.endAt = { gte: now };
-    }
-    if (query.status === 'expired') {
-      where.endAt = { lt: now };
-    }
     const memberLevel = this.readOptionalString(query.memberLevel);
-    if (memberLevel) {
-      where.memberLevel = parseMemberLevelInput(memberLevel);
-    }
 
-    const [list, total, permissionMaps] = await Promise.all([
+    const [rawList, permissionMaps] = await Promise.all([
       this.prisma.userMembership.findMany({
         where,
         include: {
           user: { select: { id: true, phone: true, myInviteCode: true } },
         },
         orderBy: { endAt: 'asc' },
-        skip: pagination.skip,
-        take: pagination.limit,
       }),
-      this.prisma.userMembership.count({ where }),
       getMemberRolePermissionMaps(this.prisma),
     ]);
+    const filteredList = rawList.filter((item) => {
+      const resolved = resolveMembershipState(item, now);
+      const displayLevel = resolved.activeLevel ?? normalizeStoredMemberLevel(item.memberLevel) ?? 'standard';
+      if (query.status === 'active' && !resolved.isMember) {
+        return false;
+      }
+      if (query.status === 'expired' && resolved.isMember) {
+        return false;
+      }
+      if (memberLevel && displayLevel !== parseMemberLevelInput(memberLevel)) {
+        return false;
+      }
+      return true;
+    });
+    const list = filteredList.slice(pagination.skip, pagination.skip + pagination.limit);
 
     return {
       list: list.map((item) => this.toAdminMembershipItem(item, item.user.phone, item.user.myInviteCode, permissionMaps.effectivePermissionMap, now)),
-      pagination: this.toPagination(total, pagination),
+      pagination: this.toPagination(filteredList.length, pagination),
     };
   }
 
@@ -422,7 +445,12 @@ export class AdminService {
     const user = await this.resolveMembershipUser(body);
     const days = this.readOptionalNumber(body.days) ?? 180;
     const memberLevel = parseMemberLevelInput(body.memberLevel, 'standard');
-    const membership = await this.openMembership(user.id, days, memberLevel);
+    const membership = await this.membershipsService.grantMembershipDaysWithTx(this.prisma, user.id, days, {
+      memberLevel,
+      sourceType: 'manual',
+      sourceRemark: `后台开通 ${getMemberLevelLabel(memberLevel)} ${days} 天`,
+      allowDowngrade: true,
+    });
     invalidateJobsRecommendationCacheByUserId(user.id);
     const permissionMaps = await getMemberRolePermissionMaps(this.prisma);
     return this.toAdminMembershipItem(membership, user.phone, user.myInviteCode, permissionMaps.effectivePermissionMap);
@@ -445,24 +473,32 @@ export class AdminService {
       : parseMemberLevelInput(body.memberLevel, 'standard');
 
     if (days && body.startAt === undefined && body.endAt === undefined && body.remainingDays === undefined) {
-      const renewed = await this.openMembership(membership.userId, days, nextMemberLevel);
+      const renewed = await this.membershipsService.grantMembershipDaysWithTx(this.prisma, membership.userId, days, {
+        memberLevel: nextMemberLevel,
+        sourceType: 'manual',
+        sourceRemark: `后台补发 ${getMemberLevelLabel(nextMemberLevel)} ${days} 天`,
+        allowDowngrade: true,
+      });
       invalidateJobsRecommendationCacheByUserId(membership.userId);
       const permissionMaps = await getMemberRolePermissionMaps(this.prisma);
       return this.toAdminMembershipItem(renewed, membership.user.phone, membership.user.myInviteCode, permissionMaps.effectivePermissionMap);
     }
 
-    const startAt = this.readOptionalDate(body.startAt) ?? membership.startAt;
-    const endAt = this.readOptionalDate(body.endAt) ?? membership.endAt;
-    const remainingDays = this.readOptionalNumber(body.remainingDays) ?? this.calculateRemainingDays(endAt);
+    const currentWindow = this.readMembershipWindowByLevel(membership, nextMemberLevel);
+    const startAt = this.readOptionalDate(body.startAt) ?? currentWindow.startAt ?? membership.startAt;
+    const endAt = this.readOptionalDate(body.endAt) ?? currentWindow.endAt ?? membership.endAt;
+    const remainingDays = this.readOptionalNumber(body.remainingDays)
+      ?? this.calculateWindowRemainingDays(startAt, endAt);
 
     const updated = await this.prisma.userMembership.update({
       where: { id },
-      data: {
+      data: this.buildManualMembershipUpdate(membership, {
         memberLevel: nextMemberLevel,
         startAt,
         endAt,
         remainingDays,
-      },
+        sourceRemark: `后台手动调整 ${getMemberLevelLabel(nextMemberLevel)} 会员时效`,
+      }),
     });
     invalidateJobsRecommendationCacheByUserId(membership.userId);
     const permissionMaps = await getMemberRolePermissionMaps(this.prisma);
@@ -550,23 +586,44 @@ export class AdminService {
   }
 
   async getCareerJourneyContent() {
-    return this.hydrateRichTextContent(await this.ensureCareerJourneyContent());
+    return this.getHtmlContentByLocation('career-journey');
   }
 
   async updateCareerJourneyContent(body: Record<string, unknown>) {
-    const existing = await this.ensureCareerJourneyContent();
+    return this.updateHtmlContentByLocation('career-journey', body);
+  }
+
+  getHtmlContentPositions() {
+    return HTML_CONTENT_LOCATIONS.map((location) => ({
+      code: location.code,
+      label: location.label,
+      description: location.description,
+      slug: location.slug,
+      uploadScene: location.uploadScene,
+    }));
+  }
+
+  async getHtmlContentByLocation(locationCode: string) {
+    const location = this.readHtmlContentLocation(locationCode);
+    const content = await this.ensureHtmlContentByLocation(location);
+    return this.toAdminHtmlContentItem(content, location);
+  }
+
+  async updateHtmlContentByLocation(locationCode: string, body: Record<string, unknown>) {
+    const location = this.readHtmlContentLocation(locationCode);
+    const existing = await this.ensureHtmlContentByLocation(location);
     const saved = await this.prisma.membershipRichTextContent.update({
       where: { id: existing.id },
       data: {
-        slug: CAREER_JOURNEY_CONTENT_SLUG,
-        title: CAREER_JOURNEY_CONTENT_TITLE,
+        slug: location.slug,
+        title: location.title,
         htmlContent: this.normalizeStoredHtml(body.htmlContent, '富文本内容不能为空'),
         status: 'published',
         publishedAt: new Date(),
         version: { increment: 1 },
       },
     });
-    return this.hydrateRichTextContent(saved);
+    return this.toAdminHtmlContentItem(saved, location);
   }
 
   async getMemberPermissionCatalog() {
@@ -575,7 +632,7 @@ export class AdminService {
 
   async getMemberRoles() {
     const now = new Date();
-    const [roles, permissionMaps, userTotal, activeStandardCount, activeSuperCount] = await Promise.all([
+    const [roles, permissionMaps, userTotal, memberships] = await Promise.all([
       this.prisma.memberRole.findMany({
         include: {
           permissions: {
@@ -588,9 +645,20 @@ export class AdminService {
       }),
       getMemberRolePermissionMaps(this.prisma),
       this.prisma.user.count(),
-      this.prisma.userMembership.count({ where: { endAt: { gte: now }, memberLevel: 'standard' } }),
-      this.prisma.userMembership.count({ where: { endAt: { gte: now }, memberLevel: 'super' } }),
+      this.prisma.userMembership.findMany({
+        select: {
+          memberLevel: true,
+          startAt: true,
+          endAt: true,
+          standardStartAt: true,
+          standardEndAt: true,
+          superStartAt: true,
+          superEndAt: true,
+        },
+      }),
     ]);
+    const activeStandardCount = memberships.filter((item) => resolveMembershipState(item, now).activeLevel === 'standard').length;
+    const activeSuperCount = memberships.filter((item) => resolveMembershipState(item, now).activeLevel === 'super').length;
 
     const roleMap = new Map(roles.map((item) => [item.code, item]));
     const freeUserCount = Math.max(userTotal - activeStandardCount - activeSuperCount, 0);
@@ -968,7 +1036,7 @@ export class AdminService {
     return this.prisma.commissionConfig.update({
       where: { id: targetId },
       data: {
-        oneLevelRate: this.readRequiredNumber(body.oneLevelRate, '一级分销比例不能为空'),
+        oneLevelRate: this.readRequiredNumber(body.oneLevelRate, '一级激励金比例不能为空'),
       },
     });
   }
@@ -1021,7 +1089,6 @@ export class AdminService {
 
   private buildUsersWhere(query: Record<string, string | undefined>): Prisma.UserWhereInput {
     const keyword = query.keyword?.trim();
-    const now = new Date();
     const and: Prisma.UserWhereInput[] = [];
 
     if (keyword) {
@@ -1030,18 +1097,6 @@ export class AdminService {
           { phone: { contains: keyword } },
           { myInviteCode: { contains: keyword } },
           { profile: { is: { name: { contains: keyword } } } },
-        ],
-      });
-    }
-
-    if (query.membershipStatus === 'member') {
-      and.push({ membership: { is: { endAt: { gte: now } } } });
-    }
-    if (query.membershipStatus === 'non-member') {
-      and.push({
-        OR: [
-          { membership: { is: null } },
-          { membership: { is: { endAt: { lt: now } } } },
         ],
       });
     }
@@ -1147,6 +1202,8 @@ export class AdminService {
     now: Date = new Date(),
   ) {
     const access = buildMemberAccessSnapshot(item.membership, effectivePermissionMap, now);
+    const displayWindow = item.membership ? this.readDisplayedMembershipWindow(item.membership, now) : null;
+    const resolved = resolveMembershipState(item.membership, now);
 
     return {
       id: item.id,
@@ -1171,14 +1228,16 @@ export class AdminService {
       membership: item.membership
         ? {
             id: item.membership.id,
-            memberLevel: normalizeStoredMemberLevel(item.membership.memberLevel) ?? 'standard',
-            memberLevelLabel: getMemberLevelLabel(item.membership.memberLevel),
+            memberLevel: resolved.activeLevel ?? normalizeStoredMemberLevel(item.membership.memberLevel) ?? 'standard',
+            memberLevelLabel: getMemberLevelLabel(resolved.activeLevel ?? item.membership.memberLevel),
             memberRoleCode: access.memberRoleCode,
             memberRoleName: access.memberRoleName,
-            startAt: item.membership.startAt,
-            endAt: item.membership.endAt,
-            remainingDays: access.isMember ? access.membershipRemainingDays : getMembershipRemainingDays(item.membership.endAt, now),
-            isActive: isMembershipActive(item.membership.endAt, now),
+            startAt: resolved.activeStartAt ?? displayWindow?.startAt ?? item.membership.startAt,
+            endAt: resolved.activeEndAt ?? displayWindow?.endAt ?? item.membership.endAt,
+            remainingDays: access.isMember
+              ? access.membershipRemainingDays
+              : this.calculateWindowRemainingDays(displayWindow?.startAt, displayWindow?.endAt, now),
+            isActive: resolved.isMember,
           }
         : null,
       wallet: item.wallet
@@ -1199,20 +1258,25 @@ export class AdminService {
     now: Date = new Date(),
   ) {
     const access = buildMemberAccessSnapshot(item, effectivePermissionMap, now);
+    const displayWindow = this.readDisplayedMembershipWindow(item, now);
+    const resolved = resolveMembershipState(item, now);
+    const displayLevel = resolved.activeLevel ?? normalizeStoredMemberLevel(item.memberLevel) ?? 'standard';
 
     return {
       id: item.id,
       userId: item.userId,
       userPhone,
       inviteCode,
-      memberLevel: normalizeStoredMemberLevel(item.memberLevel) ?? 'standard',
-      memberLevelLabel: getMemberLevelLabel(item.memberLevel),
+      memberLevel: displayLevel,
+      memberLevelLabel: getMemberLevelLabel(displayLevel),
       memberRoleCode: access.memberRoleCode,
       memberRoleName: access.memberRoleName,
-      startAt: item.startAt,
-      endAt: item.endAt,
-      remainingDays: access.isMember ? access.membershipRemainingDays : getMembershipRemainingDays(item.endAt, now),
-      isActive: isMembershipActive(item.endAt, now),
+      startAt: displayWindow.startAt ?? item.startAt,
+      endAt: displayWindow.endAt ?? item.endAt,
+      remainingDays: access.isMember
+        ? access.membershipRemainingDays
+        : this.calculateWindowRemainingDays(displayWindow.startAt, displayWindow.endAt, now),
+      isActive: resolved.isMember,
       sourceType: item.sourceType,
       sourceRemark: item.sourceRemark,
       createdAt: item.createdAt,
@@ -1317,43 +1381,122 @@ export class AdminService {
     return user;
   }
 
-  private async openMembership(userId: string, days: number, memberLevel: MemberLevel) {
-    const current = await this.prisma.userMembership.findUnique({ where: { userId } });
-    const now = new Date();
-    const currentActive = current ? isMembershipActive(current.endAt, now) : false;
-    const startAt = current && currentActive ? current.startAt : now;
-    const endBase = current && currentActive ? current.endAt : now;
-    const endAt = new Date(endBase.getTime() + days * DAY_IN_MS);
-    const remainingDays = this.calculateRemainingDays(endAt, now);
-    const currentMemberLevel = normalizeStoredMemberLevel(current?.memberLevel);
-    const nextMemberLevel = currentActive && currentMemberLevel === 'super' && memberLevel === 'standard'
-      ? 'super'
-      : memberLevel;
-
-    return this.prisma.userMembership.upsert({
-      where: { userId },
-      update: {
-        memberLevel: nextMemberLevel,
-        startAt,
-        endAt,
-        remainingDays,
-        sourceType: 'manual',
-        sourceRemark: `后台开通 ${getMemberLevelLabel(nextMemberLevel)} ${days} 天`,
-      },
-      create: {
-        userId,
-        memberLevel: nextMemberLevel,
-        startAt,
-        endAt,
-        remainingDays,
-        sourceType: 'manual',
-        sourceRemark: `后台开通 ${getMemberLevelLabel(nextMemberLevel)} ${days} 天`,
-      },
-    });
-  }
-
   private calculateRemainingDays(endAt: Date, now: Date = new Date()) {
     return getMembershipRemainingDays(endAt, now);
+  }
+
+  private calculateWindowRemainingDays(startAt?: Date | null, endAt?: Date | null, now: Date = new Date()) {
+    if (!startAt || !endAt) {
+      return 0;
+    }
+    if (startAt.getTime() > now.getTime()) {
+      return Math.max(Math.ceil((endAt.getTime() - startAt.getTime()) / DAY_IN_MS), 0);
+    }
+    return getMembershipRemainingDays(endAt, now);
+  }
+
+  private readDisplayedMembershipWindow(
+    membership: {
+      memberLevel?: string | null;
+      startAt?: Date | null;
+      endAt?: Date | null;
+      standardStartAt?: Date | null;
+      standardEndAt?: Date | null;
+      superStartAt?: Date | null;
+      superEndAt?: Date | null;
+    },
+    now: Date,
+  ) {
+    const resolved = resolveMembershipState(membership, now);
+    const standardWindow = this.readMembershipWindowByLevel(membership, 'standard');
+    const superWindow = this.readMembershipWindowByLevel(membership, 'super');
+    if (resolved.activeLevel === 'super') {
+      return superWindow;
+    }
+    if (resolved.activeLevel === 'standard') {
+      return standardWindow;
+    }
+    if (superWindow.startAt || superWindow.endAt) {
+      return superWindow;
+    }
+    return standardWindow;
+  }
+
+  private readMembershipWindowByLevel(
+    membership: {
+      memberLevel?: string | null;
+      startAt?: Date | null;
+      endAt?: Date | null;
+      standardStartAt?: Date | null;
+      standardEndAt?: Date | null;
+      superStartAt?: Date | null;
+      superEndAt?: Date | null;
+    },
+    memberLevel: MemberLevel,
+  ) {
+    const fallbackLevel = normalizeStoredMemberLevel(membership.memberLevel);
+    if (memberLevel === 'super') {
+      return {
+        startAt: membership.superStartAt ?? (fallbackLevel === 'super' ? membership.startAt ?? null : null),
+        endAt: membership.superEndAt ?? (fallbackLevel === 'super' ? membership.endAt ?? null : null),
+      };
+    }
+    return {
+      startAt: membership.standardStartAt ?? (fallbackLevel === 'standard' ? membership.startAt ?? null : null),
+      endAt: membership.standardEndAt ?? (fallbackLevel === 'standard' ? membership.endAt ?? null : null),
+    };
+  }
+
+  private buildManualMembershipUpdate(
+    membership: {
+      memberLevel?: string | null;
+      startAt: Date;
+      endAt: Date;
+      standardStartAt?: Date | null;
+      standardEndAt?: Date | null;
+      superStartAt?: Date | null;
+      superEndAt?: Date | null;
+      sourceType?: string | null;
+      openedByAdminId?: string | null;
+    },
+    options: {
+      memberLevel: MemberLevel;
+      startAt: Date;
+      endAt: Date;
+      remainingDays: number;
+      sourceRemark: string;
+    },
+  ): Prisma.UserMembershipUpdateInput {
+    const standardWindow = this.readMembershipWindowByLevel(membership, 'standard');
+    const superWindow = this.readMembershipWindowByLevel(membership, 'super');
+    const nextStandard = options.memberLevel === 'standard' ? { startAt: options.startAt, endAt: options.endAt } : standardWindow;
+    const nextSuper = options.memberLevel === 'super' ? { startAt: options.startAt, endAt: options.endAt } : superWindow;
+    const now = new Date();
+    const draft = {
+      memberLevel: options.memberLevel,
+      startAt: options.startAt,
+      endAt: options.endAt,
+      standardStartAt: nextStandard.startAt,
+      standardEndAt: nextStandard.endAt,
+      superStartAt: nextSuper.startAt,
+      superEndAt: nextSuper.endAt,
+    };
+    const resolved = resolveMembershipState(draft, now);
+    const displayWindow = this.readDisplayedMembershipWindow(draft, now);
+
+    return {
+      memberLevel: resolved.activeLevel ?? options.memberLevel,
+      startAt: resolved.activeStartAt ?? displayWindow.startAt ?? options.startAt,
+      endAt: resolved.activeEndAt ?? displayWindow.endAt ?? options.endAt,
+      standardStartAt: nextStandard.startAt,
+      standardEndAt: nextStandard.endAt,
+      superStartAt: nextSuper.startAt,
+      superEndAt: nextSuper.endAt,
+      remainingDays: options.remainingDays,
+      sourceType: membership.sourceType ?? 'manual',
+      sourceRemark: options.sourceRemark,
+      openedByAdminId: membership.openedByAdminId ?? null,
+    };
   }
 
   private async ensureCommissionConfig() {
@@ -1395,9 +1538,17 @@ export class AdminService {
     }
   }
 
-  private async ensureCareerJourneyContent() {
+  private readHtmlContentLocation(locationCode: string) {
+    try {
+      return getHtmlContentLocationDefinition(locationCode);
+    } catch {
+      throw new BadRequestException('无效的 HTML 内容展示位置');
+    }
+  }
+
+  private async ensureHtmlContentByLocation(location: HtmlContentLocationDefinition) {
     const existing = await this.prisma.membershipRichTextContent.findFirst({
-      where: { slug: CAREER_JOURNEY_CONTENT_SLUG },
+      where: { slug: location.slug },
       orderBy: [{ version: 'desc' }, { updatedAt: 'desc' }],
     });
 
@@ -1407,9 +1558,9 @@ export class AdminService {
 
     return this.prisma.membershipRichTextContent.create({
       data: {
-        slug: CAREER_JOURNEY_CONTENT_SLUG,
-        title: CAREER_JOURNEY_CONTENT_TITLE,
-        htmlContent: CAREER_JOURNEY_CONTENT_HTML,
+        slug: location.slug,
+        title: location.title,
+        htmlContent: location.defaultHtml,
         status: 'published',
         version: 1,
         publishedAt: new Date(),
@@ -1486,6 +1637,30 @@ export class AdminService {
       htmlContent: htmlPayload.html,
       previewHtml: htmlPayload.previewHtml,
       assetUrls: htmlPayload.assetUrls,
+    };
+  }
+
+  private async toAdminHtmlContentItem(
+    item: {
+      id: string;
+      slug: string;
+      title: string;
+      htmlContent: string;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+    location?: HtmlContentLocationDefinition,
+  ) {
+    const hydrated = await this.hydrateRichTextContent(item);
+    const resolvedLocation =
+      location ?? HTML_CONTENT_LOCATIONS.find((candidate) => candidate.slug === hydrated.slug) ?? null;
+
+    return {
+      ...hydrated,
+      locationCode: resolvedLocation?.code ?? null,
+      locationLabel: resolvedLocation?.label ?? hydrated.title,
+      locationDescription: resolvedLocation?.description ?? '',
+      uploadScene: resolvedLocation?.uploadScene ?? 'membership-content-image',
     };
   }
 

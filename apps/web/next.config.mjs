@@ -1,11 +1,3 @@
-import { config as loadEnv } from 'dotenv';
-import { resolve } from 'path';
-import { fileURLToPath } from 'url';
-
-const configDir = fileURLToPath(new URL('.', import.meta.url));
-const rootEnvPath = resolve(configDir, '../../.env');
-loadEnv({ path: rootEnvPath });
-
 const nextConfig = {
   output: 'standalone',
   transpilePackages: ['zustand'],

@@ -208,7 +208,7 @@ export class StorageService {
   async createSignedDownloadUrl(
     objectKey: string,
     fileName: string,
-    mimeType = 'application/octet-stream',
+    _mimeType = 'application/octet-stream',
     expiresSeconds = env.ossSignExpireSeconds,
   ) {
     const normalizedObjectKey = this.extractObjectKeyFromValue(objectKey);
@@ -221,7 +221,6 @@ export class StorageService {
       method: 'GET',
       expires: this.normalizeExpireSeconds(expiresSeconds),
       response: {
-        'content-type': mimeType,
         'content-disposition': this.buildAttachmentDisposition(fileName),
       },
     });

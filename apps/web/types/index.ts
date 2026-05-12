@@ -142,6 +142,23 @@ export interface CheckoutOrder {
     name: string;
     productType: string;
   };
+  wallet?: {
+    availableBalance: number;
+    frozenBalance: number;
+    totalEarn: number;
+    reservedBalance: number;
+    deductibleBalance: number;
+  } | null;
+  pricing: {
+    useBalance: boolean;
+    originalAmount: number;
+    memberDiscountAmount: number;
+    discountedAmount: number;
+    maxDeductibleAmount: number;
+    incentiveDeductRate: number;
+    deductibleAmount: number;
+    payableAmount: number;
+  };
   wechatCodeUrl?: string | null;
   wechatH5Url?: string | null;
   wechatTransactionId?: string | null;
@@ -257,6 +274,8 @@ export interface CareerJourneyContent {
   htmlContent: string;
   updatedAt: string;
 }
+
+export type HtmlContentLocationCode = 'membership-benefits' | 'career-journey';
 
 export interface AdminPagination {
   page: number;
@@ -408,6 +427,29 @@ export interface AdminCareerJourneyContentItem {
   assetUrls?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AdminHtmlContentPosition {
+  code: HtmlContentLocationCode;
+  label: string;
+  description: string;
+  slug: string;
+  uploadScene: 'membership-content-image' | 'career-journey-content-image';
+}
+
+export interface AdminHtmlContentItem {
+  id: string;
+  slug: string;
+  title: string;
+  htmlContent: string;
+  previewHtml?: string;
+  assetUrls?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  locationCode: HtmlContentLocationCode | null;
+  locationLabel: string;
+  locationDescription: string;
+  uploadScene: 'membership-content-image' | 'career-journey-content-image';
 }
 
 export interface AdminServiceProductItem {

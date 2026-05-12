@@ -41,13 +41,34 @@ export interface MemberAccessSnapshot {
   membershipRemainingDays: number;
 }
 
+export interface ResolvedMembershipState {
+  isMember: boolean;
+  activeLevel: MemberLevel | null;
+  activeRoleCode: MemberRoleCode;
+  activeStartAt: Date | null;
+  activeEndAt: Date | null;
+  remainingDays: number;
+  standardStartAt: Date | null;
+  standardEndAt: Date | null;
+  superStartAt: Date | null;
+  superEndAt: Date | null;
+}
+
 export interface MemberRolePermissionMaps {
   directPermissionMap: Record<MemberRoleCode, MemberPermissionKey[]>;
   effectivePermissionMap: Record<MemberRoleCode, MemberPermissionKey[]>;
 }
 
 type PrismaLike = PrismaService | Prisma.TransactionClient;
-type MembershipLike = { endAt?: Date | null; memberLevel?: string | null } | null | undefined;
+type MembershipLike = {
+  startAt?: Date | null;
+  endAt?: Date | null;
+  memberLevel?: string | null;
+  standardStartAt?: Date | null;
+  standardEndAt?: Date | null;
+  superStartAt?: Date | null;
+  superEndAt?: Date | null;
+} | null | undefined;
 
 export const MEMBER_PERMISSION_CATALOG: MemberPermissionCatalogItem[] = [
   { key: 'jobs:list:view', name: '招聘公告列表访问权限', group: 'jobs', description: '控制是否能获取招聘公告列表数据' },
@@ -156,11 +177,65 @@ export function getMemberRoleCodeByLevel(memberLevel?: string | null): Exclude<M
 }
 
 export function deriveMemberRoleCode(membership?: MembershipLike, now: Date = new Date()): MemberRoleCode {
-  if (!membership || !isMembershipActive(membership.endAt, now)) {
-    return 'FREE_USER';
+  return resolveMembershipState(membership, now).activeRoleCode;
+}
+
+function isMembershipWindowActive(startAt?: Date | null, endAt?: Date | null, now: Date = new Date()) {
+  if (!startAt || !endAt) {
+    return false;
+  }
+  return startAt.getTime() <= now.getTime() && isMembershipActive(endAt, now);
+}
+
+export function resolveMembershipState(membership?: MembershipLike, now: Date = new Date()): ResolvedMembershipState {
+  const fallbackLevel = normalizeStoredMemberLevel(membership?.memberLevel);
+  const standardStartAt = membership?.standardStartAt ?? (fallbackLevel === 'standard' ? membership?.startAt ?? null : null);
+  const standardEndAt = membership?.standardEndAt ?? (fallbackLevel === 'standard' ? membership?.endAt ?? null : null);
+  const superStartAt = membership?.superStartAt ?? (fallbackLevel === 'super' ? membership?.startAt ?? null : null);
+  const superEndAt = membership?.superEndAt ?? (fallbackLevel === 'super' ? membership?.endAt ?? null : null);
+
+  if (isMembershipWindowActive(superStartAt, superEndAt, now)) {
+    return {
+      isMember: true,
+      activeLevel: 'super',
+      activeRoleCode: 'SUPER_MEMBER',
+      activeStartAt: superStartAt ?? membership?.startAt ?? now,
+      activeEndAt: superEndAt,
+      remainingDays: getMembershipRemainingDays(superEndAt, now),
+      standardStartAt: standardStartAt ?? null,
+      standardEndAt: standardEndAt ?? null,
+      superStartAt: superStartAt ?? null,
+      superEndAt: superEndAt ?? null,
+    };
   }
 
-  return getMemberRoleCodeByLevel(membership.memberLevel);
+  if (isMembershipWindowActive(standardStartAt, standardEndAt, now)) {
+    return {
+      isMember: true,
+      activeLevel: 'standard',
+      activeRoleCode: 'STANDARD_MEMBER',
+      activeStartAt: standardStartAt ?? membership?.startAt ?? now,
+      activeEndAt: standardEndAt,
+      remainingDays: getMembershipRemainingDays(standardEndAt, now),
+      standardStartAt: standardStartAt ?? null,
+      standardEndAt: standardEndAt ?? null,
+      superStartAt: superStartAt ?? null,
+      superEndAt: superEndAt ?? null,
+    };
+  }
+
+  return {
+    isMember: false,
+    activeLevel: null,
+    activeRoleCode: 'FREE_USER',
+    activeStartAt: null,
+    activeEndAt: null,
+    remainingDays: 0,
+    standardStartAt: standardStartAt ?? null,
+    standardEndAt: standardEndAt ?? null,
+    superStartAt: superStartAt ?? null,
+    superEndAt: superEndAt ?? null,
+  };
 }
 
 export async function ensureMemberRoleSetup(prisma: PrismaLike) {
@@ -239,9 +314,10 @@ export function buildMemberAccessSnapshot(
   effectivePermissionMap: Record<MemberRoleCode, MemberPermissionKey[]>,
   now: Date = new Date(),
 ): MemberAccessSnapshot {
-  const memberRoleCode = deriveMemberRoleCode(membership, now);
-  const isMember = memberRoleCode !== 'FREE_USER';
-  const memberLevel = isMember ? normalizeStoredMemberLevel(membership?.memberLevel) ?? 'standard' : null;
+  const resolved = resolveMembershipState(membership, now);
+  const memberRoleCode = resolved.activeRoleCode;
+  const isMember = resolved.isMember;
+  const memberLevel = resolved.activeLevel;
 
   return {
     isMember,
@@ -250,7 +326,7 @@ export function buildMemberAccessSnapshot(
     memberRoleCode,
     memberRoleName: getMemberRoleName(memberRoleCode),
     permissionKeys: [...(effectivePermissionMap[memberRoleCode] || [])],
-    membershipRemainingDays: isMember ? getMembershipRemainingDays(membership?.endAt ?? null, now) : 0,
+    membershipRemainingDays: resolved.remainingDays,
   };
 }
 
@@ -259,8 +335,13 @@ export async function getUserMemberAccess(prisma: PrismaLike, userId: string, no
     prisma.userMembership.findUnique({
       where: { userId },
       select: {
+        startAt: true,
         endAt: true,
         memberLevel: true,
+        standardStartAt: true,
+        standardEndAt: true,
+        superStartAt: true,
+        superEndAt: true,
       },
     }),
     getMemberRolePermissionMaps(prisma),

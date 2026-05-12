@@ -6,22 +6,14 @@ import {
   getMemberRolePermissionMaps,
   normalizeStoredMemberLevel,
   parseMemberLevelInput,
+  resolveMembershipState,
   type MemberLevel,
 } from '../../common/utils/member-access';
 import { getMembershipRemainingDays, isMembershipActive, MEMBERSHIP_DAY_IN_MS } from '../../common/utils/membership-time';
 import { PrismaService } from '../../prisma.service';
 import { invalidateJobsRecommendationCacheByUserId } from '../jobs/jobs-recommendation-cache';
 import { StorageService } from '../storage/storage.service';
-import {
-  MEMBERSHIP_BENEFITS_CONTENT_HTML,
-  MEMBERSHIP_BENEFITS_CONTENT_SLUG,
-  MEMBERSHIP_BENEFITS_CONTENT_TITLE,
-} from './membership-benefits-content';
-import {
-  CAREER_JOURNEY_CONTENT_HTML,
-  CAREER_JOURNEY_CONTENT_SLUG,
-  CAREER_JOURNEY_CONTENT_TITLE,
-} from './career-journey-content';
+import { getHtmlContentLocationDefinition } from './html-content-locations';
 
 @Injectable()
 export class MembershipsService {
@@ -37,14 +29,14 @@ export class MembershipsService {
     ]);
     const now = new Date();
     const access = buildMemberAccessSnapshot(membership, permissionMaps.effectivePermissionMap, now);
+    const currentMembership = this.buildCurrentMembershipPayload(membership, now);
 
     return {
       ...access,
-      membership: access.isMember && membership
+      membership: currentMembership
         ? {
-            ...membership,
-            memberLevel: normalizeStoredMemberLevel(membership.memberLevel) ?? 'standard',
-            memberLevelLabel: getMemberLevelLabel(membership.memberLevel),
+            ...currentMembership,
+            memberLevelLabel: access.memberLevelLabel,
             memberRoleCode: access.memberRoleCode,
             memberRoleName: access.memberRoleName,
             remainingDays: access.membershipRemainingDays,
@@ -84,21 +76,23 @@ export class MembershipsService {
     }
     const memberLevel = parseMemberLevelInput(body?.memberLevel, 'standard');
 
-    const membership = await this.applyMembershipWithTx(this.prisma, userId, days, {
+    const membership = await this.grantMembershipDaysWithTx(this.prisma, userId, days, {
       memberLevel,
       sourceType: 'manual',
       sourceRemark: `前台开通 ${getMemberLevelLabel(memberLevel)} ${days} 天`,
     });
 
+    const now = new Date();
     const permissionMaps = await getMemberRolePermissionMaps(this.prisma);
-    const access = buildMemberAccessSnapshot(membership, permissionMaps.effectivePermissionMap);
+    const access = buildMemberAccessSnapshot(membership, permissionMaps.effectivePermissionMap, now);
+    const resolved = resolveMembershipState(membership, now);
     invalidateJobsRecommendationCacheByUserId(userId);
 
     return {
-      endAt: membership.endAt,
+      endAt: resolved.activeEndAt,
       remainingDays: access.membershipRemainingDays,
       isMember: access.isMember,
-      memberLevel,
+      memberLevel: resolved.activeLevel ?? memberLevel,
       memberLevelLabel: access.memberLevelLabel,
       memberRoleCode: access.memberRoleCode,
       memberRoleName: access.memberRoleName,
@@ -148,7 +142,7 @@ export class MembershipsService {
       }
 
       const memberLevel = normalizeStoredMemberLevel(redeemCode.batch.memberLevel) ?? 'standard';
-      const membership = await this.applyMembershipWithTx(tx, userId, redeemCode.batch.grantDays, {
+      const membership = await this.grantMembershipDaysWithTx(tx, userId, redeemCode.batch.grantDays, {
         memberLevel,
         sourceType: 'redeem_code',
         sourceRemark: `兑换码 ${normalizedCode}`,
@@ -184,15 +178,16 @@ export class MembershipsService {
 
       const permissionMaps = await getMemberRolePermissionMaps(tx);
       const access = buildMemberAccessSnapshot(membership, permissionMaps.effectivePermissionMap, now);
+      const resolved = resolveMembershipState(membership, now);
 
       return {
         code: normalizedCode,
         cardType: redeemCode.batch.cardType,
         grantDays: redeemCode.batch.grantDays,
-        endAt: membership.endAt,
+        endAt: resolved.activeEndAt,
         remainingDays: access.membershipRemainingDays,
         isMember: access.isMember,
-        memberLevel,
+        memberLevel: resolved.activeLevel ?? memberLevel,
         memberLevelLabel: access.memberLevelLabel,
         memberRoleCode: access.memberRoleCode,
         memberRoleName: access.memberRoleName,
@@ -205,18 +200,20 @@ export class MembershipsService {
   }
 
   async getBenefitsContent() {
+    const location = getHtmlContentLocationDefinition('membership-benefits');
     return this.hydrateRichTextContent(await this.ensurePublishedRichTextContent({
-      slug: MEMBERSHIP_BENEFITS_CONTENT_SLUG,
-      title: MEMBERSHIP_BENEFITS_CONTENT_TITLE,
-      htmlContent: MEMBERSHIP_BENEFITS_CONTENT_HTML,
+      slug: location.slug,
+      title: location.title,
+      htmlContent: location.defaultHtml,
     }));
   }
 
   async getCareerJourneyContent() {
+    const location = getHtmlContentLocationDefinition('career-journey');
     return this.hydrateRichTextContent(await this.ensurePublishedRichTextContent({
-      slug: CAREER_JOURNEY_CONTENT_SLUG,
-      title: CAREER_JOURNEY_CONTENT_TITLE,
-      htmlContent: CAREER_JOURNEY_CONTENT_HTML,
+      slug: location.slug,
+      title: location.title,
+      htmlContent: location.defaultHtml,
     }));
   }
 
@@ -270,7 +267,7 @@ export class MembershipsService {
       throw new BadRequestException('会员订单缺少有效会员时长');
     }
 
-    const membership = await this.applyMembershipWithTx(tx, userId, options.grantDays, {
+    const membership = await this.grantMembershipDaysWithTx(tx, userId, options.grantDays, {
       memberLevel: options.memberLevel,
       sourceType: 'payment',
       sourceRemark: `微信支付订单 ${options.orderNo}`,
@@ -279,7 +276,7 @@ export class MembershipsService {
     return membership;
   }
 
-  private async applyMembershipWithTx(
+  async grantMembershipDaysWithTx(
     tx: Prisma.TransactionClient | PrismaService,
     userId: string,
     days: number,
@@ -293,23 +290,49 @@ export class MembershipsService {
   ) {
     const current = await tx.userMembership.findUnique({ where: { userId } });
     const now = new Date();
-    const currentActive = current ? isMembershipActive(current.endAt, now) : false;
-    const startAt = current && currentActive ? current.startAt : now;
-    const endBase = current && currentActive ? current.endAt : now;
-    const endAt = new Date(endBase.getTime() + days * MEMBERSHIP_DAY_IN_MS);
-    const remainingDays = getMembershipRemainingDays(endAt, now);
-    const currentMemberLevel = normalizeStoredMemberLevel(current?.memberLevel);
-    const requestedMemberLevel = options?.memberLevel ?? currentMemberLevel ?? 'standard';
-    const nextMemberLevel = currentActive && currentMemberLevel === 'super' && requestedMemberLevel === 'standard' && !options?.allowDowngrade
-      ? 'super'
-      : requestedMemberLevel;
+    const requestedMemberLevel = options?.memberLevel ?? normalizeStoredMemberLevel(current?.memberLevel) ?? 'standard';
+    const activeSuperEndAt = current?.superEndAt && isMembershipActive(current.superEndAt, now) ? current.superEndAt : null;
+    const nextStandard = this.extendMembershipWindow({
+      now,
+      currentStartAt: current?.standardStartAt ?? null,
+      currentEndAt: current?.standardEndAt ?? null,
+      delayUntil: requestedMemberLevel === 'standard' ? activeSuperEndAt : null,
+      grantDays: requestedMemberLevel === 'standard' ? days : 0,
+    });
+    const nextSuper = this.extendMembershipWindow({
+      now,
+      currentStartAt: current?.superStartAt ?? null,
+      currentEndAt: current?.superEndAt ?? null,
+      delayUntil: null,
+      grantDays: requestedMemberLevel === 'super' ? days : 0,
+    });
+    const draftMembership = {
+      startAt: current?.startAt ?? now,
+      endAt: current?.endAt ?? now,
+      memberLevel: current?.memberLevel ?? requestedMemberLevel,
+      standardStartAt: nextStandard.startAt,
+      standardEndAt: nextStandard.endAt,
+      superStartAt: nextSuper.startAt,
+      superEndAt: nextSuper.endAt,
+    };
+    const resolved = resolveMembershipState(draftMembership, now);
+    const fallbackLevel = requestedMemberLevel === 'super'
+      ? (nextSuper.endAt ? 'super' : resolved.activeLevel ?? 'standard')
+      : (resolved.activeLevel ?? 'standard');
+    const legacyStartAt = resolved.activeStartAt ?? draftMembership.standardStartAt ?? draftMembership.superStartAt ?? now;
+    const legacyEndAt = resolved.activeEndAt ?? draftMembership.standardEndAt ?? draftMembership.superEndAt ?? now;
+    const remainingDays = getMembershipRemainingDays(legacyEndAt, now);
 
     return tx.userMembership.upsert({
       where: { userId },
       update: {
-        memberLevel: nextMemberLevel,
-        startAt,
-        endAt,
+        memberLevel: fallbackLevel,
+        startAt: legacyStartAt,
+        endAt: legacyEndAt,
+        standardStartAt: nextStandard.startAt,
+        standardEndAt: nextStandard.endAt,
+        superStartAt: nextSuper.startAt,
+        superEndAt: nextSuper.endAt,
         remainingDays,
         sourceType: options?.sourceType ?? current?.sourceType ?? 'manual',
         sourceRemark: options?.sourceRemark,
@@ -317,14 +340,79 @@ export class MembershipsService {
       },
       create: {
         userId,
-        memberLevel: nextMemberLevel,
-        startAt,
-        endAt,
+        memberLevel: fallbackLevel,
+        startAt: legacyStartAt,
+        endAt: legacyEndAt,
+        standardStartAt: nextStandard.startAt,
+        standardEndAt: nextStandard.endAt,
+        superStartAt: nextSuper.startAt,
+        superEndAt: nextSuper.endAt,
         remainingDays,
         sourceType: options?.sourceType ?? 'manual',
         sourceRemark: options?.sourceRemark,
         openedByAdminId: options?.openedByAdminId ?? null,
       },
     });
+  }
+
+  private extendMembershipWindow(options: {
+    now: Date;
+    currentStartAt?: Date | null;
+    currentEndAt?: Date | null;
+    delayUntil?: Date | null;
+    grantDays: number;
+  }) {
+    if (options.grantDays <= 0) {
+      return {
+        startAt: options.currentStartAt ?? null,
+        endAt: options.currentEndAt ?? null,
+      };
+    }
+
+    const baseStartAt = options.delayUntil && options.delayUntil.getTime() > options.now.getTime()
+      ? options.delayUntil
+      : options.now;
+    const hasExistingFutureWindow = Boolean(options.currentEndAt && options.currentEndAt.getTime() > baseStartAt.getTime());
+    const startAt = hasExistingFutureWindow
+      ? options.currentStartAt ?? baseStartAt
+      : baseStartAt;
+    const endBase = hasExistingFutureWindow
+      ? options.currentEndAt!
+      : baseStartAt;
+    const endAt = new Date(endBase.getTime() + options.grantDays * MEMBERSHIP_DAY_IN_MS);
+
+    return { startAt, endAt };
+  }
+
+  private buildCurrentMembershipPayload(
+    membership: {
+      id: string;
+      memberLevel?: string | null;
+      standardStartAt?: Date | null;
+      standardEndAt?: Date | null;
+      superStartAt?: Date | null;
+      superEndAt?: Date | null;
+    } | null,
+    now: Date,
+  ) {
+    if (!membership) {
+      return null;
+    }
+
+    const resolved = resolveMembershipState(membership, now);
+    if (!resolved.isMember || !resolved.activeLevel || !resolved.activeStartAt || !resolved.activeEndAt) {
+      return null;
+    }
+
+    return {
+      id: membership.id,
+      memberLevel: resolved.activeLevel,
+      startAt: resolved.activeStartAt,
+      endAt: resolved.activeEndAt,
+      standardStartAt: resolved.standardStartAt,
+      standardEndAt: resolved.standardEndAt,
+      superStartAt: resolved.superStartAt,
+      superEndAt: resolved.superEndAt,
+    };
   }
 }

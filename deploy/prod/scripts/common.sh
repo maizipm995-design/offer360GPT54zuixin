@@ -2,10 +2,12 @@
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
-COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.prod.yml}"
+DEFAULT_COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+COMPOSE_FILE="${COMPOSE_FILE:-$DEFAULT_COMPOSE_FILE}"
 ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env}"
 STATE_FILE="${STATE_FILE:-$ROOT_DIR/runtime/release-state.env}"
-ACTIVE_UPSTREAM_FILE="${ACTIVE_UPSTREAM_FILE:-$ROOT_DIR/runtime/nginx/active-upstream.conf}"
+
+DOCKER_BIN="${DOCKER_BIN:-docker}"
 
 ensure_commands() {
   local missing=0
@@ -20,8 +22,23 @@ ensure_commands() {
   fi
 }
 
+docker_cmd() {
+  if "$DOCKER_BIN" version >/dev/null 2>&1; then
+    "$DOCKER_BIN" "$@"
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo -n "$DOCKER_BIN" version >/dev/null 2>&1; then
+    sudo "$DOCKER_BIN" "$@"
+    return 0
+  fi
+
+  echo "当前用户无法直接执行 docker，请先确认 Docker 已安装，或为当前用户授予 docker 权限。"
+  exit 1
+}
+
 compose_cmd() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  docker_cmd compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
 load_env() {
@@ -38,22 +55,16 @@ load_env() {
 }
 
 ensure_runtime_layout() {
-  mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$ACTIVE_UPSTREAM_FILE")"
+  mkdir -p "$(dirname "$STATE_FILE")"
 
   if [ ! -f "$STATE_FILE" ]; then
     cat >"$STATE_FILE" <<'EOF'
-ACTIVE_SLOT=blue
-BLUE_IMAGE_TAG=bootstrap
-GREEN_IMAGE_TAG=bootstrap
+CURRENT_APP_IMAGE_TAG=
+PREVIOUS_APP_IMAGE_TAG=
 LAST_DEPLOYED_TAG=
 LAST_DEPLOYED_AT=
+LAST_ARCHIVE_PATH=
 LAST_ROLLED_BACK_AT=
-EOF
-  fi
-
-  if [ ! -f "$ACTIVE_UPSTREAM_FILE" ]; then
-    cat >"$ACTIVE_UPSTREAM_FILE" <<'EOF'
-server 127.0.0.1:3001 max_fails=3 fail_timeout=10s;
 EOF
   fi
 }
@@ -67,56 +78,14 @@ load_state() {
   set +a
 }
 
-other_slot() {
-  if [ "${1:-blue}" = "blue" ]; then
-    echo "green"
-  else
-    echo "blue"
-  fi
-}
-
-image_tag_for_slot() {
-  if [ "${1:-blue}" = "blue" ]; then
-    echo "${BLUE_IMAGE_TAG:-bootstrap}"
-  else
-    echo "${GREEN_IMAGE_TAG:-bootstrap}"
-  fi
-}
-
-web_port_for_slot() {
-  if [ "${1:-blue}" = "blue" ]; then
-    echo "${BLUE_WEB_HOST_PORT:-3001}"
-  else
-    echo "${GREEN_WEB_HOST_PORT:-3002}"
-  fi
-}
-
-api_port_for_slot() {
-  if [ "${1:-blue}" = "blue" ]; then
-    echo "${BLUE_API_HOST_PORT:-4001}"
-  else
-    echo "${GREEN_API_HOST_PORT:-4002}"
-  fi
-}
-
-render_active_upstream() {
-  local slot="${1:-blue}"
-  local web_port
-  web_port="$(web_port_for_slot "$slot")"
-
-  cat >"$ACTIVE_UPSTREAM_FILE" <<EOF
-server 127.0.0.1:${web_port} max_fails=3 fail_timeout=10s;
-EOF
-}
-
 write_state() {
   cat >"$STATE_FILE" <<EOF
-ACTIVE_SLOT=${ACTIVE_SLOT}
-BLUE_IMAGE_TAG=${BLUE_IMAGE_TAG}
-GREEN_IMAGE_TAG=${GREEN_IMAGE_TAG}
-LAST_DEPLOYED_TAG=${LAST_DEPLOYED_TAG:-}
-LAST_DEPLOYED_AT=${LAST_DEPLOYED_AT:-}
-LAST_ROLLED_BACK_AT=${LAST_ROLLED_BACK_AT:-}
+CURRENT_APP_IMAGE_TAG="${CURRENT_APP_IMAGE_TAG:-}"
+PREVIOUS_APP_IMAGE_TAG="${PREVIOUS_APP_IMAGE_TAG:-}"
+LAST_DEPLOYED_TAG="${LAST_DEPLOYED_TAG:-}"
+LAST_DEPLOYED_AT="${LAST_DEPLOYED_AT:-}"
+LAST_ARCHIVE_PATH="${LAST_ARCHIVE_PATH:-}"
+LAST_ROLLED_BACK_AT="${LAST_ROLLED_BACK_AT:-}"
 EOF
 }
 

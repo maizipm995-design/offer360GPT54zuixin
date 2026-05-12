@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, User } from '@prisma/client';
+import { User } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma.service';
 
-const milestones = [3, 5, 10];
+const milestones = [3, 5, 8];
 const INVITE_TRACE_EXPIRE_DAYS = 7;
 
 @Injectable()
@@ -11,7 +11,7 @@ export class InvitationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOverview(userId: string) {
-    const [user, invitees, redirectLink] = await Promise.all([
+    const [user, invitees, redirectLink, rewardLogs] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: userId }, include: { wallet: true } }),
       this.prisma.user.findMany({
         where: { parentUid: userId },
@@ -19,27 +19,32 @@ export class InvitationsService {
         orderBy: { createdAt: 'desc' },
       }),
       this.ensureRedirectLink(userId),
+      this.prisma.inviteRewardLog.findMany({
+        where: { inviterUid: userId },
+        orderBy: { milestone: 'asc' },
+      }),
     ]);
 
     const inviteCount = invitees.length;
-    const reachedMilestones = milestones.filter((item) => inviteCount >= item).length;
-    const nextMilestone = milestones.find((item) => item > inviteCount) ?? milestones[milestones.length - 1];
+    const reachedMilestones = rewardLogs.length;
+    const nextMilestone = milestones.find((item) => item > inviteCount) ?? null;
 
     return {
       inviteCode: user?.myInviteCode,
       shareText: `我在用 offer360 找校招工作，全网校招信息一键聚合，还有内推资源！你也来看看吧，登录链接为【${redirectLink ? `https://offer360.cn/invite/${redirectLink.randomKey}` : 'https://offer360.cn'}】`,
       rules: [
-        '邀请 3 人成功注册，赠送 10 天会员',
-        '邀请 5 人成功注册，赠送 20 天会员',
-        '邀请 10 人成功注册，赠送 30 天会员',
+        '累计邀请满 3 人，额外赠送标准会员 10 天',
+        '累计邀请满 5 人，在原有奖励基础上再加赠标准会员 15 天',
+        '累计邀请满 8 人，再加赠标准会员 30 天',
         '邀请奖励自动发放，无需手动领取',
-        '被邀请人注册时填写邀请码才能绑定邀请关系',
+        '邀请关系由系统静默绑定，不影响好友正常注册流程',
+        '激励金仅限站内下单抵扣使用，永久不可提现',
       ],
       stats: {
         inviteCount,
         nextMilestone,
         rewardedTimes: reachedMilestones,
-        distanceToNext: Math.max(nextMilestone - inviteCount, 0),
+        distanceToNext: nextMilestone ? Math.max(nextMilestone - inviteCount, 0) : 0,
         wallet: user?.wallet
           ? {
               availableBalance: Number(user.wallet.availableBalance),
@@ -49,8 +54,10 @@ export class InvitationsService {
       },
       progress: {
         current: inviteCount,
-        target: nextMilestone,
-        text: `距离下一个奖励还需邀请 ${Math.max(nextMilestone - inviteCount, 0)} 人`,
+        target: nextMilestone ?? milestones[milestones.length - 1],
+        text: nextMilestone
+          ? `距离下一个奖励还需邀请 ${Math.max(nextMilestone - inviteCount, 0)} 人`
+          : '已解锁全部邀请奖励',
       },
       records: invitees.map((item, index) => ({
         id: item.id,
@@ -104,7 +111,7 @@ export class InvitationsService {
       },
       heroTitle: `${inviterName} 邀请你一起使用 offer360`,
       heroDescription: '校招岗位聚合、求职服务、会员权益和邀请增长能力已打通，注册后即可绑定邀请关系并继续体验完整链路。',
-      benefits: ['注册即建立邀请关系', '后续下单可进入分销结算链路', '个人中心可查看奖励进度与邀请记录'],
+      benefits: ['注册即建立邀请关系', '后续下单可进入激励金结算链路', '个人中心可查看奖励进度与邀请记录'],
     };
   }
 

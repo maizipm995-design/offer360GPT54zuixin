@@ -55,12 +55,18 @@ const STEP_TITLE: Record<AuthStep, string> = {
   'reset-password': '重置密码',
 };
 
-function buildRedirectHref(basePath: string, inviteCode: string) {
-  if (!inviteCode) {
+function buildRedirectHref(basePath: string, inviteToken: string, inviteCode: string) {
+  if (!inviteToken && !inviteCode) {
     return basePath;
   }
 
-  const searchParams = new URLSearchParams({ inviteCode });
+  const searchParams = new URLSearchParams();
+  if (inviteToken) {
+    searchParams.set('inviteToken', inviteToken);
+  }
+  if (inviteCode) {
+    searchParams.set('inviteCode', inviteCode);
+  }
   return `${basePath}?${searchParams.toString()}`;
 }
 
@@ -69,6 +75,7 @@ function UnifiedAuthPageContent() {
   const searchParams = useSearchParams();
   const setAuth = useAuthStore((state) => state.setAuth);
   const redirectPath = useMemo(() => searchParams.get('redirect') || '/personal-center', [searchParams]);
+  const inviteToken = useMemo(() => (searchParams.get('inviteToken') || '').trim().toUpperCase(), [searchParams]);
   const inviteCode = useMemo(() => (searchParams.get('inviteCode') || '').trim().toUpperCase(), [searchParams]);
   const [step, setStep] = useState<AuthStep>('phone');
   const [phone, setPhone] = useState('');
@@ -253,6 +260,7 @@ function UnifiedAuthPageContent() {
         body: JSON.stringify({
           phone: phone.trim(),
           password: password.trim(),
+          inviteToken: inviteToken || undefined,
           inviteCode: inviteCode || undefined,
           verificationCode: verificationCode.trim(),
         }),
@@ -393,14 +401,9 @@ function UnifiedAuthPageContent() {
                 </Button>
               </div>
             </div>
-            {inviteCode ? (
-              <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-700">
-                邀请码：<span className="font-semibold">{inviteCode}</span>
-              </div>
-            ) : null}
             <div className="flex items-center justify-between text-sm text-slate-500">
               <button type="button" className="hover:text-brand" onClick={resetToPhoneStep}>重输号码</button>
-              <Link href={buildRedirectHref('/login', inviteCode)} className="font-medium text-brand hover:underline">已有账号去登录</Link>
+              <Link href={buildRedirectHref('/login', inviteToken, inviteCode)} className="font-medium text-brand hover:underline">已有账号去登录</Link>
             </div>
             <Button className="w-full" type="submit" disabled={loading || verificationCode.trim().length < 4 || phone.trim().length !== 11}>
               {authButtonText}
@@ -414,11 +417,6 @@ function UnifiedAuthPageContent() {
               <label className="mb-2 block text-sm font-medium text-ink">登录密码</label>
               <Input type="text" placeholder="请设置 8-32 位登录密码" value={password} onChange={(event) => setPassword(event.target.value)} />
             </div>
-            {inviteCode ? (
-              <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-700">
-                邀请码：<span className="font-semibold">{inviteCode}</span>
-              </div>
-            ) : null}
             <div className="flex items-center justify-between text-sm text-slate-500">
               <button type="button" className="hover:text-brand" onClick={() => setStep('register-code')}>返回验证码校验</button>
               <button type="button" className="hover:text-brand" onClick={resetToPhoneStep}>重输号码</button>

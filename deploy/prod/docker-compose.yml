@@ -37,6 +37,7 @@ x-api-env: &api-env
 
 x-web-env: &web-env
   NODE_ENV: production
+  WEB_APP_BASE_URL: ${WEB_APP_BASE_URL}
   NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
   NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS: ${NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS:-localhost}
   PORT: 3000
@@ -60,15 +61,13 @@ x-wechat-env: &wechat-env
 services:
   mysql:
     image: mysql:8.0
-    command: --default-authentication-plugin=mysql_native_password
     restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
-    ports:
-      - "127.0.0.1:${MYSQL_PORT_HOST:-3306}:3306"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s
@@ -80,8 +79,6 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    ports:
-      - "127.0.0.1:${REDIS_PORT_HOST:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -97,36 +94,14 @@ services:
       ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
     volumes:
       - es_data:/usr/share/elasticsearch/data
-    ports:
-      - "127.0.0.1:${ELASTICSEARCH_PORT_HOST:-9200}:9200"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9200 >/dev/null 2>&1"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-
-  gateway:
-    image: nginx:1.27-alpine
-    restart: unless-stopped
-    environment:
-      SERVER_NAME: ${SERVER_NAME:-_}
-      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
-      WEBHOOK_PORT: ${WEBHOOK_PORT:-19090}
-    volumes:
-      - ./nginx/offer360.conf:/etc/nginx/templates/default.conf.template:ro
-      - ./runtime/nginx:/etc/nginx/conf.d/upstreams:rw
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "${GATEWAY_HTTP_PORT:-18080}:80"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/__gateway_health >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200 >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 20
 
   migrator:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-api:${MIGRATION_IMAGE_TAG:-bootstrap}
+    image: offer360-api:${APP_IMAGE_TAG:-latest}
     working_dir: /app
     profiles: ["ops"]
     environment:
@@ -141,23 +116,22 @@ services:
     command: ["npm", "run", "prisma:migrate:deploy", "--workspace", "@offer360/api"]
     restart: "no"
 
-  wechat-pay-gateway-blue:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-wechat-pay-gateway:${BLUE_IMAGE_TAG:-bootstrap}
+  wechat-pay-gateway:
+    image: offer360-wechat-pay-gateway:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       <<: *wechat-env
     volumes:
+      # Host certs can live in different directories, but the container path stays fixed.
       - ${WECHAT_PAY_CERTS_HOST_PATH:-/opt/offer360/certs}:/app/.config/certs:ro
-    ports:
-      - "127.0.0.1:${BLUE_WECHAT_PAY_GATEWAY_HOST_PORT:-15001}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/ >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/healthz >/dev/null 2>&1"]
       interval: 15s
       timeout: 5s
       retries: 20
 
-  api-blue:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-api:${BLUE_IMAGE_TAG:-bootstrap}
+  api:
+    image: offer360-api:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       mysql:
@@ -166,85 +140,30 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
-      wechat-pay-gateway-blue:
+      wechat-pay-gateway:
         condition: service_healthy
     environment:
       <<: *api-env
-      WECHAT_PAY_GATEWAY_URL: http://wechat-pay-gateway-blue:8080
+      WECHAT_PAY_GATEWAY_URL: http://wechat-pay-gateway:8080
     ports:
-      - "127.0.0.1:${BLUE_API_HOST_PORT:-4001}:4000"
+      - "127.0.0.1:${API_PORT_HOST:-4000}:4000"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:4000/healthz >/dev/null 2>&1"]
       interval: 15s
       timeout: 5s
       retries: 20
 
-  web-blue:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-web:${BLUE_IMAGE_TAG:-bootstrap}
+  web:
+    image: offer360-web:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
-      api-blue:
+      api:
         condition: service_healthy
     environment:
       <<: *web-env
-      INTERNAL_API_BASE_URL: http://api-blue:4000/api
+      INTERNAL_API_BASE_URL: http://api:4000/api
     ports:
-      - "127.0.0.1:${BLUE_WEB_HOST_PORT:-3001}:3000"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/healthz >/dev/null 2>&1"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-
-  wechat-pay-gateway-green:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-wechat-pay-gateway:${GREEN_IMAGE_TAG:-bootstrap}
-    restart: unless-stopped
-    environment:
-      <<: *wechat-env
-    volumes:
-      - ${WECHAT_PAY_CERTS_HOST_PATH:-/opt/offer360/certs}:/app/.config/certs:ro
-    ports:
-      - "127.0.0.1:${GREEN_WECHAT_PAY_GATEWAY_HOST_PORT:-15002}:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/ >/dev/null 2>&1"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-
-  api-green:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-api:${GREEN_IMAGE_TAG:-bootstrap}
-    restart: unless-stopped
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
-      wechat-pay-gateway-green:
-        condition: service_healthy
-    environment:
-      <<: *api-env
-      WECHAT_PAY_GATEWAY_URL: http://wechat-pay-gateway-green:8080
-    ports:
-      - "127.0.0.1:${GREEN_API_HOST_PORT:-4002}:4000"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:4000/healthz >/dev/null 2>&1"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-
-  web-green:
-    image: ${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/offer360-web:${GREEN_IMAGE_TAG:-bootstrap}
-    restart: unless-stopped
-    depends_on:
-      api-green:
-        condition: service_healthy
-    environment:
-      <<: *web-env
-      INTERNAL_API_BASE_URL: http://api-green:4000/api
-    ports:
-      - "127.0.0.1:${GREEN_WEB_HOST_PORT:-3002}:3000"
+      - "127.0.0.1:${WEB_PORT_HOST:-3000}:3000"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/healthz >/dev/null 2>&1"]
       interval: 15s

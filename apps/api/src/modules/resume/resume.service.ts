@@ -49,29 +49,23 @@ export class ResumeService implements OnModuleDestroy {
   }
 
   async getList(userId: string) {
-    const [access, list, user, templateBundle] = await Promise.all([
+    const [access, list, templateBundle] = await Promise.all([
       getUserMemberAccess(this.prisma, userId),
       this.prisma.resumeDraft.findMany({
         where: { userId },
         orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
       }),
-      this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { resumePdfExportCount: true },
-      }),
       getResumeTemplateConfigsBundle(this.prisma),
     ]);
-    const pdfDownloadLimit = this.getPdfDownloadLimit(access.memberRoleCode);
-    const pdfDownloadCount = user?.resumePdfExportCount ?? 0;
 
     return {
       limit: this.getDraftLimit(access.memberRoleCode),
       total: list.length,
       memberRoleCode: access.memberRoleCode,
       memberRoleName: access.memberRoleName,
-      pdfDownloadCount,
-      pdfDownloadLimit,
-      pdfDownloadLimitReached: pdfDownloadLimit !== null && pdfDownloadCount >= pdfDownloadLimit,
+      pdfDownloadCount: 0,
+      pdfDownloadLimit: null,
+      pdfDownloadLimitReached: false,
       list: list.map((item) => this.normalizeDraft(item, templateBundle.globalVerticalSpacing)),
     };
   }
@@ -171,20 +165,6 @@ export class ResumeService implements OnModuleDestroy {
 
   async exportPdf(userId: string, id: string) {
     const draft = await this.ensureOwnedDraft(userId, id);
-    const access = await getUserMemberAccess(this.prisma, userId);
-    const pdfDownloadLimit = this.getPdfDownloadLimit(access.memberRoleCode);
-
-    if (pdfDownloadLimit !== null) {
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { resumePdfExportCount: true },
-      });
-      const pdfDownloadCount = user?.resumePdfExportCount ?? 0;
-      if (pdfDownloadCount >= pdfDownloadLimit) {
-        throw new BadRequestException(this.buildPdfDownloadUpgradeMessage());
-      }
-    }
-
     const printUrl = await this.buildPrintUrl(userId, draft.id);
     const browser = await this.getBrowser();
     const page = await browser.newPage();
@@ -199,26 +179,6 @@ export class ResumeService implements OnModuleDestroy {
         preferCSSPageSize: true,
         margin: { top: '0', right: '0', bottom: '0', left: '0' },
       });
-
-      if (pdfDownloadLimit !== null) {
-        const updated = await this.prisma.user.updateMany({
-          where: {
-            id: userId,
-            resumePdfExportCount: {
-              lt: pdfDownloadLimit,
-            },
-          },
-          data: {
-            resumePdfExportCount: {
-              increment: 1,
-            },
-          },
-        });
-
-        if (!updated.count) {
-          throw new BadRequestException(this.buildPdfDownloadUpgradeMessage());
-        }
-      }
 
       const filename = `${this.normalizeFilename(draft.title)}.pdf`;
       const uploaded = await this.storageService.uploadBuffer({
@@ -269,14 +229,6 @@ export class ResumeService implements OnModuleDestroy {
 
   private getDraftLimit(roleCode: MemberRoleCode) {
     return roleCode === 'SUPER_MEMBER' ? 5 : 1;
-  }
-
-  private getPdfDownloadLimit(roleCode: MemberRoleCode) {
-    return roleCode === 'SUPER_MEMBER' ? null : 1;
-  }
-
-  private buildPdfDownloadUpgradeMessage() {
-    return '普通用户和标准会员仅支持下载 1 次简历，请开通超级会员继续下载';
   }
 
   private buildDraftTitle(title: string | undefined, count: number) {

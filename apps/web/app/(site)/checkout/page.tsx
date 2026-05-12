@@ -71,6 +71,7 @@ function CheckoutPageClient() {
   const [closing, setClosing] = useState(false);
   const [message, setMessage] = useState('');
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [useBalance, setUseBalance] = useState(false);
   const orderNo = useMemo(() => searchParams.get('orderNo')?.trim() ?? '', [searchParams]);
   const productId = useMemo(() => searchParams.get('productId')?.trim() ?? '', [searchParams]);
   const oauthReady = searchParams.get('oauth') === '1';
@@ -222,6 +223,13 @@ function CheckoutPageClient() {
       .catch(() => setQrCodeDataUrl(''));
   }, [order?.wechatCodeUrl]);
 
+  useEffect(() => {
+    if (!order) {
+      return;
+    }
+    setUseBalance(Boolean(order.pricing?.useBalance));
+  }, [order?.id, order?.pricing?.useBalance]);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (wxReturned && order?.payStatus === 'unpaid') {
@@ -311,6 +319,7 @@ function CheckoutPageClient() {
           body: JSON.stringify({
             userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
             returnPath: `/checkout?orderNo=${encodeURIComponent(orderNo)}`,
+            useBalance,
           }),
         },
         token,
@@ -395,8 +404,8 @@ function CheckoutPageClient() {
               <p className="mt-2 text-lg font-semibold text-ink">{order.title}</p>
             </div>
             <div>
-              <p className="text-sm text-muted">支付金额</p>
-              <p className="mt-2 text-3xl font-black text-brand">{formatCurrency(order.amount)}</p>
+              <p className="text-sm text-muted">订单原价</p>
+              <p className="mt-2 text-3xl font-black text-brand">{formatCurrency(order.pricing.originalAmount)}</p>
             </div>
             <div>
               <p className="text-sm text-muted">订单类型</p>
@@ -409,10 +418,73 @@ function CheckoutPageClient() {
           </div>
 
           <div className="mt-6 rounded-3xl border border-slate-200 p-5">
+            <h2 className="text-lg font-bold text-ink">激励金抵扣</h2>
+            <div className="mt-4 flex flex-col gap-4 rounded-2xl bg-slate-50 p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand"
+                  checked={useBalance}
+                  onChange={(event) => setUseBalance(event.target.checked)}
+                  disabled={order.payStatus !== 'unpaid'}
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink">是否使用激励金抵扣</p>
+                  <p className="mt-1 text-sm text-muted">当前订单最高可用激励金：{formatCurrency(order.wallet?.deductibleBalance ?? 0)}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    激励金不可提现，仅限站内下单抵扣使用；当前订单按
+                    {Math.round((order.pricing.incentiveDeductRate ?? 0) * 100)}%
+                    上限自动校验。
+                  </p>
+                </div>
+              </label>
+
+              <div className="grid gap-3 text-sm text-slate-600">
+                <div className="flex items-center justify-between gap-3">
+                  <span>订单原价</span>
+                  <span className="font-semibold text-ink">{formatCurrency(order.pricing.originalAmount)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>会员折扣</span>
+                  <span className="font-semibold text-brand">
+                    -{formatCurrency(order.pricing.memberDiscountAmount)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>折后金额</span>
+                  <span className="font-semibold text-ink">{formatCurrency(order.pricing.discountedAmount)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>激励金抵扣</span>
+                  <span className="font-semibold text-brand">
+                    -{formatCurrency(useBalance ? (order.wallet?.deductibleBalance ?? 0) : 0)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
+                  <span className="font-medium text-ink">剩余待支付</span>
+                  <span className="text-lg font-bold text-ink">
+                    {formatCurrency(
+                      useBalance
+                        ? Math.max(order.pricing.discountedAmount - (order.wallet?.deductibleBalance ?? 0), 0)
+                        : order.pricing.discountedAmount,
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-3xl border border-slate-200 p-5">
             <h2 className="text-lg font-bold text-ink">支付操作</h2>
             <div className="mt-4 flex flex-wrap gap-3">
               {order.payStatus === 'unpaid' ? (
-                <Button onClick={handlePreparePayment} disabled={preparing}>{preparing ? '正在发起支付...' : '立即支付'}</Button>
+                <Button onClick={handlePreparePayment} disabled={preparing}>
+                  {preparing
+                    ? '正在发起支付...'
+                    : useBalance && Math.max(order.pricing.discountedAmount - (order.wallet?.deductibleBalance ?? 0), 0) <= 0
+                      ? '确认使用激励金支付'
+                      : '立即支付'}
+                </Button>
               ) : null}
               {order.payStatus === 'unpaid' ? (
                 <Button variant="secondary" onClick={() => void loadOrder(true)}>刷新状态</Button>

@@ -2,6 +2,7 @@
 
 import {
   type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -14,7 +15,6 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import OSS from 'ali-oss';
 import {
   ArrowLeft,
   AlignCenter,
@@ -40,9 +40,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { downloadFilePayload } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { uploadFileToOss as sharedUploadFileToOss } from '@/lib/oss';
 import { cn, formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { showToast } from '@/store/toast-store';
+import { MemberAccessDialog } from '@/components/membership/member-access-dialog';
 import { ResumeDocument } from './resume-document';
 import { getRichTextPlainText } from './resume-rich-text';
 import { ResumeRichTextEditor } from './resume-rich-text-editor';
@@ -96,6 +98,12 @@ const REDIRECT_PATH = '/resume-optimizer';
 const PREVIEW_BASE_WIDTH = 794;
 const PREVIEW_BASE_HEIGHT = 1123;
 const FLOATING_PANEL_OFFSET = 12;
+const AVATAR_CROP_VIEWPORT_WIDTH = 288;
+const AVATAR_CROP_VIEWPORT_HEIGHT = 384;
+const AVATAR_CROP_OUTPUT_WIDTH = 900;
+const AVATAR_CROP_OUTPUT_HEIGHT = 1200;
+const AVATAR_CROP_MIN_ZOOM = 1;
+const AVATAR_CROP_MAX_ZOOM = 3;
 const AUTO_FIT_LIMITS = {
   fontSize: 12,
   spacingScale: 0.8,
@@ -146,16 +154,25 @@ type ToolbarPanel = 'font' | 'fontSize' | 'spacingScale' | 'pageMargin' | 'theme
 const DRAFT_COUNT_COPY: Record<ResumeDraftListResponse['memberRoleCode'], { limit: number; upgradeHint: string }> = {
   FREE_USER: {
     limit: 1,
-    upgradeHint: '普通用户最多创建 1 份简历，开通超级会员可扩展到 5 份。',
+    upgradeHint: '当前账号已创建 1 份简历，如需新建第 2 份，请先开通超级会员。',
   },
   STANDARD_MEMBER: {
     limit: 1,
-    upgradeHint: '标准会员最多创建 1 份简历，升级超级会员可扩展到 5 份。',
+    upgradeHint: '当前账号已创建 1 份简历，如需继续新建，请升级超级会员。',
   },
   SUPER_MEMBER: {
     limit: 5,
     upgradeHint: '超级会员最多可创建 5 份简历。',
   },
+};
+type AvatarCropState = {
+  file: File;
+  sourceUrl: string;
+  imageWidth: number;
+  imageHeight: number;
+  zoom: number;
+  offsetX: number;
+  offsetY: number;
 };
 const SUPPORTED_SECTION_IDS = [
   'personal',
@@ -490,15 +507,8 @@ export function ResumeEditorPageClient() {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [openDrawers, setOpenDrawers] = useState<Record<string, boolean>>({});
-  const [downloadQuota, setDownloadQuota] = useState<{
-    count: number;
-    limit: number | null;
-    reached: boolean;
-  }>({
-    count: 0,
-    limit: null,
-    reached: false,
-  });
+  const [createLimitPromptOpen, setCreateLimitPromptOpen] = useState(false);
+  const [memberAccessMessage, setMemberAccessMessage] = useState('');
 
   const templateConfigMap = useMemo(
     () => new Map(templateConfigs.map((item) => [item.templateCode, item])),
@@ -599,11 +609,6 @@ export function ResumeEditorPageClient() {
       total: response.total,
       memberRoleCode: response.memberRoleCode,
       memberRoleName: response.memberRoleName,
-    });
-    setDownloadQuota({
-      count: response.pdfDownloadCount,
-      limit: response.pdfDownloadLimit,
-      reached: response.pdfDownloadLimitReached,
     });
     return response;
   }, [token]);
@@ -956,9 +961,10 @@ export function ResumeEditorPageClient() {
     }
 
     if (draftList.length >= draftListMeta.limit) {
-      showToast(DRAFT_COUNT_COPY[draftListMeta.memberRoleCode].upgradeHint);
       if (draftListMeta.memberRoleCode !== 'SUPER_MEMBER') {
-        router.push('/membership');
+        setCreateLimitPromptOpen(true);
+      } else {
+        showToast(DRAFT_COUNT_COPY[draftListMeta.memberRoleCode].upgradeHint);
       }
       return;
     }
@@ -1078,12 +1084,6 @@ export function ResumeEditorPageClient() {
       return;
     }
 
-    if (downloadQuota.limit !== null && downloadQuota.reached) {
-      showToast('普通用户和标准会员仅支持下载 1 次简历，请开通超级会员继续下载');
-      router.push('/membership');
-      return;
-    }
-
     setExportingPdf(true);
     showToast('正在生成 PDF，请稍候...');
 
@@ -1101,28 +1101,13 @@ export function ResumeEditorPageClient() {
         token,
       );
       downloadFilePayload(payload);
-      setDownloadQuota((prev) => {
-        if (prev.limit === null) {
-          return prev;
-        }
-        const nextCount = prev.count + 1;
-        return {
-          count: nextCount,
-          limit: prev.limit,
-          reached: nextCount >= prev.limit,
-        };
-      });
       showToast('PDF 简历已开始下载', 'success');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'PDF 导出失败';
-      showToast(message);
-      if (message.includes('开通超级会员')) {
-        router.push('/membership');
-      }
+      showToast(error instanceof Error ? error.message : 'PDF 导出失败');
     } finally {
       setExportingPdf(false);
     }
-  }, [downloadQuota.limit, downloadQuota.reached, draftId, exportingPdf, persistCurrentDraft, token, router]);
+  }, [draftId, exportingPdf, persistCurrentDraft, token, router]);
 
   const renderToolbarPanel = (panel: Exclude<ToolbarPanel, null>, anchorRef: RefObject<HTMLDivElement>) =>
     activeToolbarPanel === panel ? (
@@ -1147,6 +1132,7 @@ export function ResumeEditorPageClient() {
         onUpdateLayoutItem={updateLayoutItem}
         onApplyTemplate={applyTemplateStyle}
         onExportPdf={() => void handleExportPdf()}
+        setMemberAccessMessage={setMemberAccessMessage}
       />
     ) : null;
 
@@ -1218,7 +1204,7 @@ export function ResumeEditorPageClient() {
           <div className="flex h-full min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => router.push('/jobs')}
+              onClick={() => router.push('/')}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-[#F2F5F9] hover:text-slate-900"
               aria-label="返回主页"
             >
@@ -1468,6 +1454,42 @@ export function ResumeEditorPageClient() {
           </aside>
         </section>
       </section>
+      {createLimitPromptOpen ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <h3 className="text-xl font-semibold text-slate-900">继续创建新简历需要开通会员</h3>
+            <p className="mt-3 text-sm leading-6 text-slate-500">{DRAFT_COUNT_COPY[draftListMeta.memberRoleCode].upgradeHint}</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setCreateLimitPromptOpen(false)}
+                className="inline-flex h-10 items-center justify-center rounded-xl border border-[#D8DEE8] px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                关闭
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateLimitPromptOpen(false);
+                  router.push('/membership');
+                }}
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-dark"
+              >
+                去开通会员
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <MemberAccessDialog
+        open={Boolean(memberAccessMessage)}
+        message={memberAccessMessage}
+        onClose={() => setMemberAccessMessage('')}
+        onConfirm={() => {
+          setMemberAccessMessage('');
+          router.push('/membership');
+        }}
+      />
     </main>
   );
 }
@@ -1493,6 +1515,7 @@ function ResumeToolbarPanel({
   onUpdateLayoutItem,
   onApplyTemplate,
   onExportPdf,
+  setMemberAccessMessage,
 }: {
   anchorRef: RefObject<HTMLDivElement>;
   panel: Exclude<ToolbarPanel, null>;
@@ -1514,6 +1537,7 @@ function ResumeToolbarPanel({
   onUpdateLayoutItem: (sectionId: ResumeSectionId, updates: Partial<ResumeLayoutItem>) => void;
   onApplyTemplate: (templateCode: ResumeTemplateCode | string) => void;
   onExportPdf: () => void;
+  setMemberAccessMessage: Dispatch<SetStateAction<string>>;
 }) {
   if (panel === 'templateStyle') {
     return (
@@ -1588,7 +1612,7 @@ function ResumeToolbarPanel({
         <DarkPanelSection title="翻译">
           <DarkOptionButton label="中译英" description="生成英文简历草稿" onClick={() => showToast('翻译能力即将接入 AI 服务')} />
           <DarkOptionButton label="英译中" description="还原中文求职表达" onClick={() => showToast('翻译能力即将接入 AI 服务')} />
-          <DarkOptionButton label={`专业术语优化 ${PREMIUM_BADGE}`} description="会员功能" onClick={() => showToast('该功能需要开通会员')} />
+          <DarkOptionButton label={`专业术语优化 ${PREMIUM_BADGE}`} description="会员功能" onClick={() => setMemberAccessMessage('该功能需要开通会员')} />
         </DarkPanelSection>
       </FloatingPanel>
     );
@@ -1599,7 +1623,7 @@ function ResumeToolbarPanel({
       <FloatingPanel anchorRef={anchorRef} align="right" className="w-[300px] max-w-[calc(100vw-32px)]" onClose={onClose}>
         <DarkPanelSection title="下载">
           <DarkOptionButton label="普通 PDF" description="免费权益，可能带水印" onClick={onExportPdf} />
-          <DarkOptionButton label={`无水印 PDF ${PREMIUM_BADGE}`} description="会员权益" onClick={() => showToast('无水印下载需要开通会员')} />
+          <DarkOptionButton label={`无水印 PDF ${PREMIUM_BADGE}`} description="会员权益" onClick={() => setMemberAccessMessage('无水印下载需要开通会员')} />
         </DarkPanelSection>
       </FloatingPanel>
     );
@@ -3156,7 +3180,17 @@ function ImageUploadField({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [avatarCropState, setAvatarCropState] = useState<AvatarCropState | null>(null);
   const isAvatarScene = scene === OSS_IMAGE_UPLOAD_SCENES.avatar;
+
+  const closeAvatarCropModal = useCallback(() => {
+    setAvatarCropState((current) => {
+      if (current) {
+        URL.revokeObjectURL(current.sourceUrl);
+      }
+      return null;
+    });
+  }, []);
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -3171,7 +3205,7 @@ function ImageUploadField({
       return;
     }
 
-    if (file.size > 2 * 1024 * 1024) {
+    if (!isAvatarScene && file.size > 2 * 1024 * 1024) {
       showToast('图片大小请控制在 2MB 以内');
       return;
     }
@@ -3179,16 +3213,16 @@ function ImageUploadField({
     try {
       if (isAvatarScene) {
         const { width, height } = await readImageDimensions(file);
-        imageMeta = { width, height };
-        const portraitRatio = height / width;
-        if (width < 295 || height < 413) {
-          showToast('头像尺寸过小，请上传不低于 295×413 像素的一寸证件照');
-          return;
-        }
-        if (portraitRatio < 1.3 || portraitRatio > 1.5) {
-          showToast('头像比例不符合要求，请上传接近一寸照比例（295×413，约 1:1.4）的竖版照片');
-          return;
-        }
+        setAvatarCropState({
+          file,
+          sourceUrl: URL.createObjectURL(file),
+          imageWidth: width,
+          imageHeight: height,
+          zoom: AVATAR_CROP_MIN_ZOOM,
+          offsetX: 0,
+          offsetY: 0,
+        });
+        return;
       }
 
       if (!token) {
@@ -3198,7 +3232,7 @@ function ImageUploadField({
 
       setUploading(true);
       const session = await requestOssUploadSession({ token, scene, file, bizId, imageMeta });
-      const uploadedPreviewUrl = await uploadFileToOss(session, file);
+      const { signedUrl: uploadedPreviewUrl } = await sharedUploadFileToOss(session, file);
       onChange({
         objectKey: session.objectKey,
         previewUrl: uploadedPreviewUrl,
@@ -3224,6 +3258,57 @@ function ImageUploadField({
       setUploading(false);
     }
   };
+
+  const handleAvatarCropConfirm = useCallback(async () => {
+    if (!avatarCropState) {
+      return;
+    }
+    if (!token) {
+      showToast('请先登录后再上传图片');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const croppedFile = await buildCroppedAvatarFile(avatarCropState);
+      const imageMeta = {
+        width: AVATAR_CROP_OUTPUT_WIDTH,
+        height: AVATAR_CROP_OUTPUT_HEIGHT,
+      };
+      const session = await requestOssUploadSession({
+        token,
+        scene,
+        file: croppedFile,
+        bizId,
+        imageMeta,
+      });
+      const { signedUrl: uploadedPreviewUrl } = await sharedUploadFileToOss(session, croppedFile);
+      onChange({
+        objectKey: session.objectKey,
+        previewUrl: uploadedPreviewUrl,
+      });
+      closeAvatarCropModal();
+      showToast('头像上传成功', 'success');
+    } catch (error) {
+      let errorMessage = error instanceof Error ? error.message : '图片上传失败';
+      if (errorMessage.includes('OSS 暂未完成环境配置')) {
+        errorMessage = `上传环境未配置完成：${errorMessage.replace(/^.*?(OSS 暂未完成环境配置)/, '$1')}`;
+      } else if (errorMessage.includes('SignatureDoesNotMatch')) {
+        errorMessage = 'OSS 签名不匹配：请检查 STS 凭证、地域、Bucket 与 Endpoint 配置是否一致';
+      } else if (errorMessage.includes('AccessDenied')) {
+        errorMessage = 'OSS 权限不足：请检查 RAM 角色、Bucket 写入权限及 STS 授权策略';
+      } else if (errorMessage.includes('InvalidAccessKeyId') || errorMessage.includes('SecurityToken')) {
+        errorMessage = 'OSS 认证信息无效：请检查 AccessKey、STS 临时凭证和过期时间';
+      } else if (errorMessage.includes('etag of expose-headers')) {
+        errorMessage = 'OSS 跨域配置错误：请在阿里云后台将 ETag 加入“暴露 Headers (Expose Headers)”中';
+      } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network Error')) {
+        errorMessage = '网络或跨域错误：请检查 OSS 跨域配置的“来源”是否包含 http://localhost:13000';
+      }
+      showToast(errorMessage);
+    } finally {
+      setUploading(false);
+    }
+  }, [avatarCropState, bizId, closeAvatarCropModal, onChange, scene, token]);
 
   const displayValue = previewUrl || (isDirectPreviewValue(value) ? value : '');
 
@@ -3258,7 +3343,7 @@ function ImageUploadField({
         ) : null}
       </div>
       {isAvatarScene ? (
-        <p className="text-xs leading-5 text-slate-500">建议上传一寸证件照比例头像，推荐尺寸不低于 295×413 像素，系统会按居中裁剪展示。</p>
+        <p className="text-xs leading-5 text-slate-500">支持任意尺寸和比例原图，确认裁剪后将按 3:4 标准头像上传。</p>
       ) : null}
       <div
         className="flex items-center justify-center overflow-hidden rounded-2xl border border-[#E5E6EB] bg-[#F9FAFB] shadow-sm"
@@ -3272,8 +3357,237 @@ function ImageUploadField({
           <img src={displayValue} alt="上传预览" className="h-full w-full object-cover" style={{ objectPosition: isAvatarScene ? 'center top' : 'center' }} />
         </>) : <ImageIcon className="h-6 w-6 text-slate-400" aria-hidden="true" />}
       </div>
+      {isAvatarScene && avatarCropState ? (
+        <AvatarCropModal
+          cropState={avatarCropState}
+          uploading={uploading}
+          onChange={setAvatarCropState}
+          onCancel={closeAvatarCropModal}
+          onConfirm={() => void handleAvatarCropConfirm()}
+        />
+      ) : null}
     </div>
   );
+}
+
+function AvatarCropModal({
+  cropState,
+  uploading,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  cropState: AvatarCropState;
+  uploading: boolean;
+  onChange: Dispatch<SetStateAction<AvatarCropState | null>>;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+  const cropBounds = getAvatarCropBounds(cropState);
+
+  const updateCropState = useCallback(
+    (updater: (current: AvatarCropState) => AvatarCropState) => {
+      onChange((current) => (current ? clampAvatarCropState(updater(current)) : current));
+    },
+    [onChange],
+  );
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      offsetX: cropState.offsetX,
+      offsetY: cropState.offsetY,
+    };
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) {
+      return;
+    }
+    const nextOffsetX = dragStartRef.current.offsetX + event.clientX - dragStartRef.current.x;
+    const nextOffsetY = dragStartRef.current.offsetY + event.clientY - dragStartRef.current.y;
+    updateCropState((current) => ({
+      ...current,
+      offsetX: nextOffsetX,
+      offsetY: nextOffsetY,
+    }));
+  };
+
+  const stopDragging = () => {
+    dragStartRef.current = null;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 px-4 py-6">
+      <div className="w-full max-w-3xl rounded-[28px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.28)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-semibold text-slate-900">裁剪头像</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500">请将头像调整到 3:4 裁剪框内，确认后仅上传裁剪成品。</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={uploading}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E6EB] text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="关闭裁剪弹窗"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-center">
+          <div className="flex flex-1 justify-center">
+            <div
+              className="relative overflow-hidden rounded-[24px] bg-[#0F172A]"
+              style={{
+                width: `${AVATAR_CROP_VIEWPORT_WIDTH}px`,
+                height: `${AVATAR_CROP_VIEWPORT_HEIGHT}px`,
+              }}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={stopDragging}
+              onPointerLeave={stopDragging}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={cropState.sourceUrl}
+                alt="头像裁剪预览"
+                draggable={false}
+                className="pointer-events-none absolute select-none"
+                style={{
+                  width: `${cropBounds.width}px`,
+                  height: `${cropBounds.height}px`,
+                  left: `${cropBounds.left}px`,
+                  top: `${cropBounds.top}px`,
+                }}
+              />
+              <div className="pointer-events-none absolute inset-0 border border-white/80 shadow-[inset_0_0_0_9999px_rgba(15,23,42,0.24)]" />
+            </div>
+          </div>
+
+          <div className="w-full lg:w-[280px]">
+            <div className="rounded-2xl bg-[#F8FAFC] p-4">
+              <p className="text-sm font-medium text-slate-900">缩放图片</p>
+              <input
+                type="range"
+                min={AVATAR_CROP_MIN_ZOOM}
+                max={AVATAR_CROP_MAX_ZOOM}
+                step="0.01"
+                value={cropState.zoom}
+                onChange={(event) =>
+                  updateCropState((current) => ({
+                    ...current,
+                    zoom: Number(event.target.value),
+                  }))
+                }
+                className="mt-4 w-full accent-brand"
+              />
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                <span>缩小</span>
+                <span>{Math.round(cropState.zoom * 100)}%</span>
+                <span>放大</span>
+              </div>
+              <p className="mt-4 text-xs leading-5 text-slate-500">拖动图片调整位置，系统会输出统一 3:4 的标准头像成品。</p>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={uploading}
+                className="inline-flex h-10 items-center justify-center rounded-xl border border-[#D8DEE8] px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={uploading}
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {uploading ? '上传中...' : '确认并上传'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function clampAvatarCropState(state: AvatarCropState) {
+  const bounds = getAvatarCropBounds(state);
+  const maxOffsetX = Math.max((bounds.width - AVATAR_CROP_VIEWPORT_WIDTH) / 2, 0);
+  const maxOffsetY = Math.max((bounds.height - AVATAR_CROP_VIEWPORT_HEIGHT) / 2, 0);
+  return {
+    ...state,
+    zoom: Math.min(Math.max(state.zoom, AVATAR_CROP_MIN_ZOOM), AVATAR_CROP_MAX_ZOOM),
+    offsetX: Math.min(Math.max(state.offsetX, -maxOffsetX), maxOffsetX),
+    offsetY: Math.min(Math.max(state.offsetY, -maxOffsetY), maxOffsetY),
+  };
+}
+
+function getAvatarCropBounds(state: AvatarCropState) {
+  const baseScale = Math.max(
+    AVATAR_CROP_VIEWPORT_WIDTH / state.imageWidth,
+    AVATAR_CROP_VIEWPORT_HEIGHT / state.imageHeight,
+  );
+  const scale = baseScale * state.zoom;
+  const width = state.imageWidth * scale;
+  const height = state.imageHeight * scale;
+  const left = (AVATAR_CROP_VIEWPORT_WIDTH - width) / 2 + state.offsetX;
+  const top = (AVATAR_CROP_VIEWPORT_HEIGHT - height) / 2 + state.offsetY;
+  return { width, height, left, top };
+}
+
+async function buildCroppedAvatarFile(state: AvatarCropState) {
+  const image = await loadImageElement(state.sourceUrl);
+  const bounds = getAvatarCropBounds(state);
+  const canvas = document.createElement('canvas');
+  canvas.width = AVATAR_CROP_OUTPUT_WIDTH;
+  canvas.height = AVATAR_CROP_OUTPUT_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('浏览器暂不支持头像裁剪，请更换浏览器后重试');
+  }
+
+  context.fillStyle = '#FFFFFF';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const scaleX = canvas.width / AVATAR_CROP_VIEWPORT_WIDTH;
+  const scaleY = canvas.height / AVATAR_CROP_VIEWPORT_HEIGHT;
+  context.drawImage(
+    image,
+    bounds.left * scaleX,
+    bounds.top * scaleY,
+    bounds.width * scaleX,
+    bounds.height * scaleY,
+  );
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((result) => {
+      if (!result) {
+        reject(new Error('头像裁剪失败，请重新调整后再试'));
+        return;
+      }
+      resolve(result);
+    }, 'image/jpeg', 0.92);
+  });
+
+  const fileBaseName = state.file.name.replace(/\.[^.]+$/, '') || 'resume-avatar';
+  return new File([blob], `${fileBaseName}-cropped.jpg`, { type: 'image/jpeg' });
+}
+
+async function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('无法读取图片内容，请更换图片后重试'));
+    image.src = src;
+  });
 }
 
 async function readImageDimensions(file: File) {
@@ -3591,27 +3905,6 @@ async function requestOssUploadSession({
     },
     token,
   );
-}
-
-async function uploadFileToOss(session: OssUploadSessionPayload, file: File) {
-  const normalizedEndpoint = session.endpoint.trim();
-  const client = new OSS({
-    region: session.region,
-    bucket: session.bucket,
-    endpoint: normalizedEndpoint || undefined,
-    accessKeyId: session.credentials.accessKeyId,
-    accessKeySecret: session.credentials.accessKeySecret,
-    stsToken: session.credentials.securityToken,
-    secure: true,
-  });
-
-  await client.put(session.objectKey, file, {
-    headers: {
-      'Content-Type': file.type,
-    },
-  });
-
-  return session.signedUrl || '';
 }
 
 function isDirectPreviewValue(value: string) {

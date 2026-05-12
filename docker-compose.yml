@@ -71,7 +71,8 @@ services:
       WECHAT_PAY_REFUND_NOTIFY_URL: ${WECHAT_PAY_REFUND_NOTIFY_URL:-}
       WECHAT_PAY_CALLBACK_BASE_URL: ${WECHAT_PAY_CALLBACK_BASE_URL:-}
     volumes:
-      - ./.config/certs:/app/.config/certs:ro
+      # Host certs can live in different directories, but the container path stays fixed.
+      - ${WECHAT_PAY_CERTS_HOST_PATH:-./.config/certs}:/app/.config/certs:ro
     ports:
       - '${WECHAT_PAY_GATEWAY_HOST_PORT:-15000}:8080'
 
@@ -97,6 +98,9 @@ services:
       ELASTICSEARCH_NODE: http://elasticsearch:9200
       API_PORT: 4000
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      AUTH_CODE_TTL_MINUTES: ${AUTH_CODE_TTL_MINUTES:-5}
+      AUTH_CODE_LENGTH: ${AUTH_CODE_LENGTH:-6}
+      AUTH_CODE_SECRET: ${AUTH_CODE_SECRET}
       JWT_SECRET: ${JWT_SECRET}
       OSS_REGION: ${OSS_REGION:-}
       OSS_ENDPOINT: ${OSS_ENDPOINT:-}
@@ -134,6 +138,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      WEB_APP_BASE_URL: ${WEB_APP_BASE_URL:-http://localhost:3000}
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000/api}
       INTERNAL_API_BASE_URL: http://api:4000/api
       NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS: ${NEXT_SERVER_ACTIONS_ALLOWED_ORIGINS:-localhost:3000,127.0.0.1:3000}
