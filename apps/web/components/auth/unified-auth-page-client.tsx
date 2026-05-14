@@ -29,6 +29,8 @@ interface SendAuthCodeResult {
   reused: boolean;
   sent: boolean;
   cooldownSeconds: number;
+  deliveryMode?: 'aliyun' | 'mock';
+  debugCode?: string;
 }
 
 interface VerifyAuthCodeResult {
@@ -74,7 +76,7 @@ function UnifiedAuthPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setAuth = useAuthStore((state) => state.setAuth);
-  const redirectPath = useMemo(() => searchParams.get('redirect') || '/personal-center', [searchParams]);
+  const redirectPath = useMemo(() => searchParams.get('redirect') || '/', [searchParams]);
   const inviteToken = useMemo(() => (searchParams.get('inviteToken') || '').trim().toUpperCase(), [searchParams]);
   const inviteCode = useMemo(() => (searchParams.get('inviteCode') || '').trim().toUpperCase(), [searchParams]);
   const [step, setStep] = useState<AuthStep>('phone');
@@ -141,16 +143,23 @@ function UnifiedAuthPageContent() {
         body: JSON.stringify({ phone: phone.trim(), business }),
       });
       startCooldown(result.cooldownSeconds || 60);
-      setMessage('验证码已发送，请注意查收。');
+      if (result.deliveryMode === 'mock' && result.debugCode) {
+        setMessage(`开发环境未接短信通道，本次验证码：${result.debugCode}`);
+      } else {
+        setMessage('验证码已发送，请注意查收。');
+      }
       return result;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '验证码发送失败，请稍后重试');
+      throw error;
     } finally {
       setSendingCode(false);
     }
   };
 
-  const finishAuth = (result: AuthActionResult) => {
+  const finishAuth = (result: AuthActionResult, fallbackPath = redirectPath) => {
     setAuth(result);
-    router.replace(redirectPath);
+    router.replace(searchParams.get('redirect') || fallbackPath);
   };
 
   const handleIdentify = async (targetPhone?: string) => {
@@ -265,7 +274,7 @@ function UnifiedAuthPageContent() {
           verificationCode: verificationCode.trim(),
         }),
       });
-      finishAuth(result);
+      finishAuth(result, '/');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '注册失败，请稍后重试');
     } finally {

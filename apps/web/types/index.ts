@@ -23,8 +23,6 @@ export interface JobItem {
   companyName: string;
   jobName?: string | null;
   positionNames: string;
-  jobCategory?: string | null;
-  positionCategory?: string | null;
   workLocation?: string | null;
   degreeRequirement?: string | null;
   enterpriseNature?: string | null;
@@ -79,6 +77,21 @@ export interface JobFilters {
   enterpriseNatureOptions: string[];
   recruitmentTypeOptions: string[];
   jobTypeOptions?: string[];
+}
+
+export type JobSearchSuggestionField = 'general' | 'location' | 'job' | 'company';
+
+export interface JobSearchSuggestionItem {
+  value: string;
+  label: string;
+  domain: 'LOCATION' | 'JOB_TITLE' | 'COMPANY' | 'MAJOR' | 'DEGREE';
+  domainLabel: string;
+  matchText: string;
+  relatedKeywords: string[];
+}
+
+export interface JobSearchSuggestionResponse {
+  list: JobSearchSuggestionItem[];
 }
 
 export interface ServiceItem {
@@ -232,6 +245,8 @@ export interface PersonalOverview {
   id: string;
   phone: string;
   inviteCode: string;
+  needsProfileOnboarding: boolean;
+  profileOnboardingRequired: boolean;
   isMember: boolean;
   memberLevel?: MemberLevel | null;
   memberLevelLabel?: string;
@@ -330,7 +345,7 @@ export interface AdminJobItem {
   degreeRequirement?: string | null;
   workLocation?: string | null;
   jobName?: string | null;
-  jobCategory?: string | null;
+  majorRequirement?: string | null;
   recruitmentType?: string | null;
   deadlineAt?: string | null;
   announcementUrl?: string | null;
@@ -342,6 +357,34 @@ export interface AdminJobItem {
   entryDate?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AdminJobDeduplicationGroup {
+  companyFullName: string;
+  workLocation: string;
+  jobName: string;
+  announcementUrl: string;
+  deliveryUrl: string;
+  keepRecord: AdminJobItem;
+  removeRecords: AdminJobItem[];
+  duplicateCount: number;
+}
+
+export interface AdminJobDeduplicationPreview {
+  scannedCount: number;
+  duplicateGroupCount: number;
+  duplicateRecordCount: number;
+  pendingDeleteCount: number;
+  groups: AdminJobDeduplicationGroup[];
+}
+
+export interface AdminJobDeduplicationExecuteResult {
+  scannedCount: number;
+  duplicateGroupCount: number;
+  duplicateRecordCount: number;
+  keptCount: number;
+  deletedCount: number;
+  groups: AdminJobDeduplicationGroup[];
 }
 
 export interface AdminUserItem {
@@ -524,6 +567,56 @@ export interface AdminResumeTemplateConfigItem {
 export interface AdminResumeTemplateConfigsResponse {
   templates: AdminResumeTemplateConfigItem[];
   globalVerticalSpacing: AdminResumeVerticalSpacingConfig;
+}
+
+export interface AdminAiModelConfigItem {
+  id: string;
+  code: string;
+  provider: 'volcengine-ark';
+  configName: string;
+  baseUrl: string;
+  apiKeyMask?: string | null;
+  modelName: string;
+  endpointType: 'responses';
+  timeoutMs: number;
+  maxOutputTokens?: number | null;
+  temperature?: number | null;
+  topP?: number | null;
+  systemPrompt?: string | null;
+  globalPromptTemplate?: string | null;
+  entryPromptTemplate?: string | null;
+  professionalPromptTemplate?: string | null;
+  enabled: boolean;
+  isDefault: boolean;
+  remark?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminAiModelConfigTestResult {
+  success: boolean;
+  modelName: string;
+  latencyMs: number;
+  previewText: string;
+}
+
+export interface AdminResumeAiLogItem {
+  id: string;
+  userId: string;
+  resumeId: string;
+  provider: string;
+  modelName: string;
+  optimizeType: string;
+  sectionId: string;
+  entryId: string;
+  status: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  latencyMs?: number | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AdminOrderItem {

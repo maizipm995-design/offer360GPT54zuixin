@@ -20,6 +20,8 @@ import {
   Users,
 } from 'lucide-react';
 import { MemberAccessDialog } from '@/components/membership/member-access-dialog';
+import { KeywordSuggestionDropdown, useKeywordSuggestions } from '@/components/common/keyword-suggestion-dropdown';
+import { ProfileOnboardingModal } from '@/components/jobs/profile-onboarding-modal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -29,7 +31,7 @@ import { clientFetch } from '@/lib/api';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { showToast, useGlobalToast } from '@/store/toast-store';
-import { AuthUser, JobFilters, JobItem, JobListResponse, JobStats, MemberPermissionKey, ServiceItem } from '@/types';
+import { AuthUser, JobFilters, JobItem, JobListResponse, JobSearchSuggestionItem, JobStats, MemberPermissionKey, ServiceItem } from '@/types';
 
 interface Props {
   initialStats: JobStats;
@@ -265,8 +267,8 @@ function getDisplayJobName(job: JobItem) {
   return job.jobName?.trim() || '暂无岗位名称';
 }
 
-function getDisplayJobCategory(job: JobItem) {
-  return job.jobCategory?.trim() || '暂无岗位类别';
+function getDisplayMajorRequirement(job: JobItem) {
+  return job.majorRequirement?.trim() || '暂无专业需求';
 }
 
 function MembershipPromoCard({ onUpgrade, user }: { onUpgrade: () => void; user: AuthUser | null }) {
@@ -484,6 +486,7 @@ function MobileActionGrid({
 
 function JobRow({
   job,
+  mounted,
   onViewAnnouncement,
   onDeliver,
   onProgress,
@@ -491,14 +494,15 @@ function JobRow({
   progressOptions,
 }: {
   job: JobItem;
+  mounted: boolean;
   onViewAnnouncement: (job: JobItem) => void;
   onDeliver: (job: JobItem) => void;
   onProgress: (jobId: string, status: string) => void;
   onReferral: (jobId: string) => void;
   progressOptions: string[];
 }) {
-  const updatedToday = isUpdatedToday(getDisplayUpdateDate(job));
-  const deadlineSoon = isDeadlineSoon(job.deadlineAt);
+  const updatedToday = mounted && isUpdatedToday(getDisplayUpdateDate(job));
+  const deadlineSoon = mounted && isDeadlineSoon(job.deadlineAt);
 
   return (
     <div className="relative grid gap-3 border-b border-[#F3F4F6] px-4 py-4 text-sm transition hover:bg-[#FFF7ED] last:border-b-0 md:grid-cols-[88px_1.02fr_0.6fr_1.15fr_1.5fr_1.5fr_104px_160px] md:items-center md:gap-4 before:absolute before:left-0 before:top-0 before:h-full before:w-1.5 before:rounded-r before:bg-[#FF8002]">
@@ -543,7 +547,7 @@ function JobRow({
 
       <div className="min-w-0">
         <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#9CA3AF] md:hidden">专业需求</p>
-        <HoverPreviewText label="专业需求" text={getDisplayJobCategory(job)} className="text-sm text-[#666666]" lines={4} />
+        <HoverPreviewText label="专业需求" text={getDisplayMajorRequirement(job)} className="text-sm text-[#666666]" lines={4} />
       </div>
 
       <div className="min-w-0">
@@ -574,6 +578,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   const searchParams = useSearchParams();
   const loaderRef = useRef<HTMLDivElement | null>(null);
   const { token, user } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
   const [filters, setFilters] = useState<FiltersState>(initialFilterState);
   const [tab, setTab] = useState<'all' | 'recommended'>('all');
   const [view, setView] = useState<'list' | 'card'>('card');
@@ -586,6 +591,8 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   const [activeClipboardModal, setActiveClipboardModal] = useState<ClipboardModalState | null>(null);
   const [copyingClipboardValue, setCopyingClipboardValue] = useState(false);
   const [memberAccessMessage, setMemberAccessMessage] = useState('');
+  const [generalSuggestionOpen, setGeneralSuggestionOpen] = useState(false);
+  const [citySuggestionOpen, setCitySuggestionOpen] = useState(false);
 
   // 用于追踪上一次应用到 API 的过滤条件，避免重复请求和无限循环
   const lastAppliedRef = useRef<{ filters: string; tab: string }>({
@@ -595,6 +602,18 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   const isFirstRender = useRef(true);
 
   useGlobalToast(message, setMessage);
+  const generalKeywordSuggestions = useKeywordSuggestions({
+    keyword: filters.generalKeyword,
+    field: 'general',
+    token,
+    enabled: generalSuggestionOpen,
+  });
+  const cityKeywordSuggestions = useKeywordSuggestions({
+    keyword: filters.cityKeyword,
+    field: 'location',
+    token,
+    enabled: citySuggestionOpen,
+  });
 
   const progressOptions = useMemo(() => ['全部', '已投递', '已笔试', '已面试', '已录用', '已拒绝', '已取消', '其他'], []);
 
@@ -630,6 +649,10 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     ],
     [initialStats],
   );
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -1031,6 +1054,15 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     }
   };
 
+  const applyKeywordSuggestion = (field: 'generalKeyword' | 'cityKeyword', item: JobSearchSuggestionItem) => {
+    setFilters((prev) => ({ ...prev, [field]: item.value }));
+    if (field === 'generalKeyword') {
+      setGeneralSuggestionOpen(false);
+      return;
+    }
+    setCitySuggestionOpen(false);
+  };
+
   const selectedFilterTags = useMemo<FilterTag[]>(() => {
     const tags: FilterTag[] = [];
 
@@ -1184,7 +1216,9 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   );
 
   return (
-    <main className="mx-auto w-full px-3 py-4 sm:px-4 lg:px-6 lg:py-6 xl:w-[90vw] xl:max-w-none">
+    <>
+      <ProfileOnboardingModal token={token} />
+      <main className="mx-auto w-full px-3 py-4 sm:px-4 lg:px-6 lg:py-6 xl:w-[90vw] xl:max-w-none">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,8.5fr)_minmax(220px,1.5fr)] xl:items-start">
         <div className="min-w-0 space-y-4">
           <section className="grid grid-cols-4 gap-2 min-w-0 md:gap-3">
@@ -1217,12 +1251,20 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                 <span className={filterLabelClass}>通用搜索</span>
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    className="h-10 pl-9"
-                    placeholder="搜索公司 / 岗位 / 岗位类别等关键词"
-                    value={filters.generalKeyword}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, generalKeyword: e.target.value }))}
-                  />
+                  <div className="relative" onFocus={() => setGeneralSuggestionOpen(true)} onBlur={() => window.setTimeout(() => setGeneralSuggestionOpen(false), 120)}>
+                    <Input
+                      className="h-10 pl-9"
+                      placeholder="搜索公司 / 岗位 / 岗位类别等关键词"
+                      value={filters.generalKeyword}
+                      onChange={(e) => setFilters((prev) => ({ ...prev, generalKeyword: e.target.value }))}
+                    />
+                    <KeywordSuggestionDropdown
+                      visible={generalSuggestionOpen && Boolean(filters.generalKeyword.trim())}
+                      loading={generalKeywordSuggestions.loading}
+                      suggestions={generalKeywordSuggestions.suggestions}
+                      onSelect={(item) => applyKeywordSuggestion('generalKeyword', item)}
+                    />
+                  </div>
                 </div>
               </label>
 
@@ -1230,12 +1272,20 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                 <span className={filterLabelClass}>城市</span>
                 <div className="relative">
                   <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    className="h-10 pl-9"
-                    placeholder="输入城市，如：北京 / 上海"
-                    value={filters.cityKeyword}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, cityKeyword: e.target.value }))}
-                  />
+                  <div className="relative" onFocus={() => setCitySuggestionOpen(true)} onBlur={() => window.setTimeout(() => setCitySuggestionOpen(false), 120)}>
+                    <Input
+                      className="h-10 pl-9"
+                      placeholder="输入城市，如：北京 / 上海"
+                      value={filters.cityKeyword}
+                      onChange={(e) => setFilters((prev) => ({ ...prev, cityKeyword: e.target.value }))}
+                    />
+                    <KeywordSuggestionDropdown
+                      visible={citySuggestionOpen && Boolean(filters.cityKeyword.trim())}
+                      loading={cityKeywordSuggestions.loading}
+                      suggestions={cityKeywordSuggestions.suggestions}
+                      onSelect={(item) => applyKeywordSuggestion('cityKeyword', item)}
+                    />
+                  </div>
                 </div>
               </label>
 
@@ -1262,12 +1312,20 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                   <span className={filterLabelClass}>通用搜索</span>
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      className="h-10 pl-9"
-                      placeholder="搜索关键词"
-                      value={filters.generalKeyword}
-                      onChange={(e) => setFilters((prev) => ({ ...prev, generalKeyword: e.target.value }))}
-                    />
+                    <div className="relative" onFocus={() => setGeneralSuggestionOpen(true)} onBlur={() => window.setTimeout(() => setGeneralSuggestionOpen(false), 120)}>
+                      <Input
+                        className="h-10 pl-9"
+                        placeholder="搜索关键词"
+                        value={filters.generalKeyword}
+                        onChange={(e) => setFilters((prev) => ({ ...prev, generalKeyword: e.target.value }))}
+                      />
+                      <KeywordSuggestionDropdown
+                        visible={generalSuggestionOpen && Boolean(filters.generalKeyword.trim())}
+                        loading={generalKeywordSuggestions.loading}
+                        suggestions={generalKeywordSuggestions.suggestions}
+                        onSelect={(item) => applyKeywordSuggestion('generalKeyword', item)}
+                      />
+                    </div>
                   </div>
                 </label>
 
@@ -1275,12 +1333,20 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                   <span className={filterLabelClass}>城市</span>
                   <div className="relative">
                     <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      className="h-10 pl-9"
-                      placeholder="输入城市"
-                      value={filters.cityKeyword}
-                      onChange={(e) => setFilters((prev) => ({ ...prev, cityKeyword: e.target.value }))}
-                    />
+                    <div className="relative" onFocus={() => setCitySuggestionOpen(true)} onBlur={() => window.setTimeout(() => setCitySuggestionOpen(false), 120)}>
+                      <Input
+                        className="h-10 pl-9"
+                        placeholder="输入城市"
+                        value={filters.cityKeyword}
+                        onChange={(e) => setFilters((prev) => ({ ...prev, cityKeyword: e.target.value }))}
+                      />
+                      <KeywordSuggestionDropdown
+                        visible={citySuggestionOpen && Boolean(filters.cityKeyword.trim())}
+                        loading={cityKeywordSuggestions.loading}
+                        suggestions={cityKeywordSuggestions.suggestions}
+                        onSelect={(item) => applyKeywordSuggestion('cityKeyword', item)}
+                      />
+                    </div>
                   </div>
                 </label>
               </div>
@@ -1361,7 +1427,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
             {renderFilterTagRow()}
           </Card>
 
-          <MembershipPromoCard onUpgrade={() => router.push('/membership')} user={user} />
+          <MembershipPromoCard onUpgrade={() => router.push('/membership')} user={mounted ? user : null} />
 
           <section className="overflow-hidden rounded-xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
             <div className="border-b border-[#F3F4F6] px-3 py-3 sm:px-4">
@@ -1432,6 +1498,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                     <JobRow
                       key={job.id}
                       job={job}
+                      mounted={mounted}
                       onViewAnnouncement={handleViewAnnouncement}
                       onDeliver={handleDeliver}
                       onProgress={handleProgress}
@@ -1444,7 +1511,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
             ) : (
               <div className="grid gap-3 bg-white p-3 md:grid-cols-2 xl:grid-cols-3">
                 {jobs.map((job) => {
-                  const updatedToday = isUpdatedToday(getDisplayUpdateDate(job));
+                  const updatedToday = mounted && isUpdatedToday(getDisplayUpdateDate(job));
 
                   return (
                     <Card key={job.id} className="rounded-xl border border-slate-100 p-3 shadow-none transition hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
@@ -1542,15 +1609,16 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
           </Card>
         </div>
       ) : null}
-      <MemberAccessDialog
-        open={Boolean(memberAccessMessage)}
-        message={memberAccessMessage}
-        onClose={() => setMemberAccessMessage('')}
-        onConfirm={() => {
-          setMemberAccessMessage('');
-          router.push('/membership');
-        }}
-      />
-    </main>
+        <MemberAccessDialog
+          open={Boolean(memberAccessMessage)}
+          message={memberAccessMessage}
+          onClose={() => setMemberAccessMessage('')}
+          onConfirm={() => {
+            setMemberAccessMessage('');
+            router.push('/membership');
+          }}
+        />
+      </main>
+    </>
   );
 }

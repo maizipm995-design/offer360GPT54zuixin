@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import {
   buildMemberAccessSnapshot,
@@ -45,6 +46,10 @@ export class UsersService {
           intentionCompany: Array.isArray(user.preference.intentionCompany) ? user.preference.intentionCompany as string[] : [],
         }
       : null;
+    const profileOnboardingRequired = !user.profile?.name?.trim()
+      || !preference?.intentionCity?.length
+      || !preference?.intentionJob?.length
+      || !preference?.intentionCompany?.length;
     const [permissionMaps, normalizedPreference, normalizedProfile] = await Promise.all([
       getMemberRolePermissionMaps(this.prisma),
       preference ? this.buildNormalizedPreferencePayload(preference) : Promise.resolve(null),
@@ -62,6 +67,8 @@ export class UsersService {
       id: user.id,
       phone: user.phone,
       inviteCode: user.myInviteCode,
+      needsProfileOnboarding: profileOnboardingRequired,
+      profileOnboardingRequired,
       profile: user.profile,
       normalizedProfile,
       preference,
@@ -82,6 +89,24 @@ export class UsersService {
           }
         : null,
     };
+  }
+
+  async consumeProfileOnboarding(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('用户不存在');
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { needsProfileOnboarding: false } as Prisma.UserUncheckedUpdateInput,
+    });
+
+    return { consumed: true };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
@@ -126,24 +151,22 @@ export class UsersService {
   }
 
   async updatePreferences(userId: string, dto: UpdatePreferencesDto) {
-    const [intentionCity, intentionJob, intentionCompany] = await Promise.all([
-      this.normalizationService.normalizePreferencesForStorage('LOCATION', this.sanitizePreferenceValues(dto.intentionCity ?? [])),
-      this.normalizationService.normalizePreferencesForStorage('JOB_TITLE', this.sanitizePreferenceValues(dto.intentionJob ?? [])),
-      this.normalizationService.normalizePreferencesForStorage('COMPANY', this.sanitizePreferenceValues(dto.intentionCompany ?? [])),
-    ]);
+    const intentionCity = this.sanitizePreferenceValues(dto.intentionCity ?? []);
+    const intentionJob = this.sanitizePreferenceValues(dto.intentionJob ?? []);
+    const intentionCompany = this.sanitizePreferenceValues(dto.intentionCompany ?? []);
 
     const result = await this.prisma.userJobPreferenceTag.upsert({
       where: { userId },
       update: {
-        intentionCity: intentionCity ?? [],
-        intentionJob: intentionJob ?? [],
-        intentionCompany: intentionCompany ?? [],
+        intentionCity,
+        intentionJob,
+        intentionCompany,
       },
       create: {
         userId,
-        intentionCity: intentionCity ?? [],
-        intentionJob: intentionJob ?? [],
-        intentionCompany: intentionCompany ?? [],
+        intentionCity,
+        intentionJob,
+        intentionCompany,
       },
     });
     invalidateJobsRecommendationCacheByUserId(userId);
