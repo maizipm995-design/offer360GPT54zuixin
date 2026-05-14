@@ -15,16 +15,16 @@ model JobAnnouncement {
   degreeRequirement  String?           @map("degree_requirement") @db.VarChar(50)
   workLocation       String?           @map("work_location") @db.LongText
   jobName            String?           @map("job_name") @db.Text
-  jobCategory        String?           @map("job_category") @db.Text
+  majorRequirement   String?           @map("major_requirement") @db.Text
   recruitmentType    String?           @map("recruitment_type") @db.VarChar(50)
-  deadlineAt         String?           @map("deadline_at") @db.Text
+  deadlineAt         String?           @map("deadline_at") @db.VarChar(20)
   announcementUrl    String?           @map("announcement_url") @db.Text
   deliveryUrl        String?           @map("delivery_url") @db.Text
-  graduationSession  String?           @map("graduation_session") @db.LongText
-  referralCode       String?           @map("referral_code") @db.Text
+  graduationSession  String?           @map("graduation_session") @db.VarChar(50)
+  referralCode       String?           @map("referral_code") @db.VarChar(255)
   announcementTitle  String?           @map("announcement_title") @db.VarChar(255)
   industry           String?           @db.VarChar(100)
-  entryDate          String?           @map("entry_date") @db.Text
+  entryDate          String?           @map("entry_date") @db.VarChar(20)
   accessClickCount   Int               @default(0) @map("access_click_count")
   deliveryMarkCount  Int               @default(0) @map("delivery_mark_count")
   lastAccessAt       DateTime?         @map("last_access_at") @db.DateTime(0)
@@ -56,6 +56,7 @@ model User {
   wechatOpenId      String?                @unique @map("wechat_open_id") @db.VarChar(64)
   createdAt         DateTime               @default(now()) @map("created_at") @db.DateTime(0)
   lastLoginAt       DateTime?              @map("last_login_at") @db.DateTime(0)
+  needsProfileOnboarding Boolean           @default(false) @map("needs_profile_onboarding")
   resumePdfExportCount Int                 @default(0) @map("resume_pdf_export_count")
   profile           UserProfile?
   preference        UserJobPreferenceTag?
@@ -73,6 +74,7 @@ model User {
   bindLogsOut       InvBindLog[]           @relation("BindInviter")
   bindLogsIn        InvBindLog[]           @relation("BindInvitee")
   inviteRewards     InviteRewardLog[]      @relation("InviteRewardInviter")
+  resumeAiOptimizationLogs ResumeAiOptimizationLog[]
 
   @@index([parentUid], map: "idx_users_parent_uid")
   @@index([status], map: "idx_users_status")
@@ -163,10 +165,90 @@ model ResumeDraft {
   createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aiOptimizationLogs ResumeAiOptimizationLog[]
+  aiSuggestions   ResumeAiSuggestion[]
 
   @@index([userId, updatedAt], map: "idx_resume_drafts_user_updated_at")
   @@index([status], map: "idx_resume_drafts_status")
   @@map("resume_drafts")
+}
+
+model AiModelConfig {
+  id                   String   @id @default(uuid()) @db.Char(36)
+  code                 String   @unique(map: "uk_ai_model_config_code") @db.VarChar(50)
+  provider             String   @db.VarChar(30)
+  configName           String   @map("config_name") @db.VarChar(80)
+  baseUrl              String   @map("base_url") @db.VarChar(255)
+  apiKeyEncrypted      String   @map("api_key_encrypted") @db.Text
+  apiKeyMask           String?  @map("api_key_mask") @db.VarChar(80)
+  modelName            String   @map("model_name") @db.VarChar(100)
+  endpointType         String   @default("responses") @map("endpoint_type") @db.VarChar(30)
+  timeoutMs            Int      @default(15000) @map("timeout_ms")
+  maxOutputTokens      Int?     @map("max_output_tokens")
+  temperature          Decimal? @db.Decimal(4, 2)
+  topP                 Decimal? @map("top_p") @db.Decimal(4, 2)
+  systemPrompt               String?  @map("system_prompt") @db.LongText
+  globalPromptTemplate       String?  @map("global_prompt_template") @db.LongText
+  entryPromptTemplate        String?  @map("entry_prompt_template") @db.LongText
+  professionalPromptTemplate String?  @map("professional_prompt_template") @db.LongText
+  assessmentPromptTemplate   String?  @map("assessment_prompt_template") @db.LongText
+  enabled                    Boolean  @default(true)
+  isDefault                  Boolean  @default(false) @map("is_default")
+  remark                     String?  @db.VarChar(255)
+  createdAt                  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt                  DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@index([provider, enabled], map: "idx_ai_model_configs_provider_enabled")
+  @@index([isDefault], map: "idx_ai_model_configs_is_default")
+  @@map("ai_model_configs")
+}
+
+model ResumeAiOptimizationLog {
+  id              String     @id @default(uuid()) @db.Char(36)
+  userId          String     @map("user_id") @db.Char(36)
+  resumeId        String     @map("resume_id") @db.Char(36)
+  provider        String     @db.VarChar(30)
+  modelName       String     @map("model_name") @db.VarChar(100)
+  optimizeType    String     @map("optimize_type") @db.VarChar(20)
+  sectionId       String     @map("section_id") @db.VarChar(50)
+  entryId         String     @map("entry_id") @db.VarChar(50)
+  status          String     @default("processing") @db.VarChar(20)
+  requestPayload  Json?      @map("request_payload")
+  responsePayload Json?      @map("response_payload")
+  beforeContent   Json?      @map("before_content")
+  afterContent    Json?      @map("after_content")
+  responseText    String?    @map("response_text") @db.LongText
+  errorCode       String?    @map("error_code") @db.VarChar(50)
+  errorMessage    String?    @map("error_message") @db.VarChar(255)
+  inputTokens     Int?       @map("input_tokens")
+  outputTokens    Int?       @map("output_tokens")
+  latencyMs       Int?       @map("latency_ms")
+  createdAt       DateTime   @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.DateTime(0)
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeDraft     ResumeDraft @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], map: "idx_resume_ai_logs_user_created")
+  @@index([resumeId, createdAt], map: "idx_resume_ai_logs_resume_created")
+  @@index([status, createdAt], map: "idx_resume_ai_logs_status_created")
+  @@index([sectionId, entryId], map: "idx_resume_ai_logs_section_entry")
+  @@map("resume_ai_optimization_logs")
+}
+
+model ResumeAiSuggestion {
+  id         String     @id @default(uuid()) @db.Char(36)
+  resumeId   String     @map("resume_id") @db.Char(36)
+  sectionId  String     @map("section_id") @db.VarChar(50)
+  entryId    String     @map("entry_id") @db.VarChar(50)
+  suggestions Json      @map("suggestions")
+  contentHash String    @map("content_hash") @db.VarChar(64)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.DateTime(0)
+  resumeDraft ResumeDraft @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@unique([resumeId, sectionId, entryId], map: "uk_resume_ai_suggestions_resume_section_entry")
+  @@index([resumeId, updatedAt], map: "idx_resume_ai_suggestions_resume_updated")
+  @@map("resume_ai_suggestions")
 }
 
 model ResumeTemplateConfig {
