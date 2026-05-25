@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery, downloadCsv } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminOrderItem, AdminOrderListResponse } from '@/types';
@@ -76,7 +77,7 @@ export default function AdminOrdersPage() {
       const result = await clientFetch<AdminOrderListResponse>(`/admin/orders?${buildQuery({ ...nextFilters, page, limit: 10 })}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '订单数据加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('订单数据'));
     } finally {
       setLoading(false);
     }
@@ -109,7 +110,7 @@ export default function AdminOrdersPage() {
   const handleUpdateStatus = async () => {
     if (!selectedOrder) return;
     if (selectedOrder.payStatus === 'refund_pending') {
-      setMessage('退款处理中订单请先同步微信状态，再决定是否继续人工处理。');
+      setMessage('退款处理中订单请先同步微信状态，再继续处理');
       return;
     }
     try {
@@ -126,7 +127,7 @@ export default function AdminOrdersPage() {
       await loadData(data.pagination.page, filters);
       setSelectedId(result.id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '订单状态更新失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.statusUpdateFailed('订单'));
     } finally {
       setSaving(false);
     }
@@ -143,7 +144,7 @@ export default function AdminOrdersPage() {
       await loadData(data.pagination.page, filters);
       setSelectedId(result.id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '同步微信状态失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.operationFailed('订单状态同步'));
     } finally {
       setSingleReconciling(false);
     }
@@ -162,7 +163,7 @@ export default function AdminOrdersPage() {
       setMessage(`已补偿最近 ${result.scanned} 笔异常订单，其中 ${result.changed} 笔状态发生变化。`);
       await loadData(data.pagination.page, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '批量补偿失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.operationFailed('异常订单补偿'));
     } finally {
       setBatchReconciling(false);
     }

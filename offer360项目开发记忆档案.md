@@ -1,5 +1,5 @@
 # offer360项目开发记忆档案
-> 版本：v1.1 | 更新时间：2026-05-11 | 状态：开发中 | 唯一官方交接文档
+> 版本：v1.6 | 更新时间：2026-05-20 | 状态：开发中 | 唯一官方交接文档
 
 ---
 
@@ -100,6 +100,34 @@
   2. 统一调用 `lib/oss.ts` 中的共享上传逻辑。
   3. 优化 `lib/oss.ts` 中的 `shouldUseOssCname` 函数，支持更鲁棒的 CNAME 自动识别逻辑（非 `*.aliyuncs.com` 均视为 CNAME）。
 - **产出**：解决了简历编辑器图片上传故障，提升了 OSS 上传组件的复用性与健壮性。
+
+### 第19轮：云服务器数据库参考数据同步（标准化词典 + 服务商品）
+- **用户需求**：检查标准化词典数据表与求职服务商品数据表，并统一同步到云服务器数据库；商品实际售价为 499/599/699 等，原价为实际售价的 130% 向上取整。
+- **核心动作**：
+  1. 新增仅同步“标准化词典（normalization_terms / normalization_aliases / location_hierarchies）+ 服务商品（service_products）”的脚本 `apps/api/prisma/sync-reference-tables.ts`，避免使用 `seed.ts` 导致演示账号/示例招聘公告污染线上库。
+  2. 同步时强制按 `Math.ceil(price * 1.3)` 计算 originalPrice，保证价格逻辑一致。
+  3. 在云服务器上复用正在运行的 API 容器环境执行同步脚本（避免因缺失 .env 导致 DATABASE_URL 不一致）。
+- **产出**：云服务器数据库已完成参考数据同步；service_products 价格与 original_price 计算规则校验通过。
+  - **补充**：用户目标为“一次性同步”，已移除便捷 npm script 入口，并为脚本增加显式确认开关（需设置 `CONFIRM_SYNC_REFERENCE_TABLES=YES` 才能运行），防止误触发重复写入。
+
+### 第20轮：简历优化“全文一键优化”改造为异步任务模式
+- **用户需求**：简历优化页面的“全文一键优化”不能继续让前端长时间等待，需要改成异步任务提交 + 状态轮询模式。
+- **核心动作**：
+  1. 复用 `resume_ai_optimization_logs` 作为任务持久化载体，不新增独立任务表；`POST /me/resume-drafts/:id/ai-optimize` 改为仅提交任务，新增 `GET /me/resume-drafts/:id/ai-optimize/tasks/:taskId` 查询状态。
+  2. 后端将全文优化执行从请求链路中剥离，改为后台任务执行，并增加超时失效处理，避免旧 `processing` 任务卡死。
+  3. 为防止异步结果覆盖用户在任务期间的新修改，全文优化落库时按字段做冲突检查，只对“提交任务时未被再次修改”的字段应用 AI 结果。
+  4. 前端按钮改为“提交任务后轮询完成状态”，任务完成后自动刷新简历；全局 AI 撤回不再沿用旧同步逻辑，避免错误回滚异步期间的新内容。
+- **产出**：全文 AI 优化已从同步等待改为异步任务模式，显著降低前端阻塞风险，并补上异步场景下的覆盖冲突保护。
+
+### 第21轮：面试逐字稿页面改造成异步任务 + 生成记录模式
+- **用户需求**：面试逐字稿页面需支持全局导航入口、结构化简历/本地附件二选一提交、调用外部工作流生成 Word 下载结果，并在“生成记录”中持续查看状态与下载入口。
+- **核心动作**：
+  1. 在 `apps/api` 新增 `InterviewTranscriptTask` 持久化模型与迁移文件，任务表仅保存公司/岗位/面试类型、简历来源方式、生成状态、下载结果，不保存简历正文或附件内容。
+  2. 新增 `interview-transcripts` Nest 模块，将工作流执行从前端同步等待改为“提交任务即返回 + 服务端后台异步处理 + 轮询查询状态”；其中“通用综合面试”在服务端自动映射为工作流要求的 `通用综合面`。
+  3. 本地上传附件继续采用临时文件直传工作流方式，生成完成或失败后立即删除临时文件；结构化简历 JSON 仅在内存中透传，不落库。
+  4. 前端 `interview-transcript-page-client.tsx` 改为调用新 API：提交后本地仅保存任务 ID，页面重新进入后通过任务 ID 批量查询生成记录，并对“生成中”任务自动轮询刷新状态。
+  5. 清理旧的 Next 同步工作流路由实现，避免两套逐字稿链路并存导致行为分叉。
+- **产出**：面试逐字稿功能已具备真实异步任务能力，符合“提交后 5-10 分钟在生成记录查看结果”的业务形态，同时满足“简历数据只用于本次生成、完成即清理”的约束。
 
 ---
 
@@ -227,6 +255,17 @@ apps/web/components
 5. **兑换码规则**：兑换码状态变更必须记录操作人，已使用/过期兑换码不可再次使用
 6. **支付规则**：订单支付成功后必须校验订单状态，避免重复支付，必须记录支付回调日志
 7. **交接规则**：后续开发必须以本记忆档案为唯一权威依据，历史对话仅作辅助参考，修改本档案需同步更新版本号
+8. **AI配置规则**：后台`ai_model_configs`当前仅有1条默认启用配置`resume_optimizer_default`；运行时真实消费的提示词字段只有`systemPrompt`、`globalPromptTemplate`、`entryPromptTemplate`。其中`globalPromptTemplate`并非只用于“全局优化”，还同时服务`resume_section_optimize`与`resume_translate`；`remark`仅用于后台说明，不参与模型调用，允许作为配置用途说明补全
+9. **AI优化规则**：局部条目优化与单字段优化禁止再用“内容过短不优化”拦截；短内容必须优先做基于事实的扩写与润色。优化时优先使用用户求职意向，若未填写则从经历`roleName`、项目角色、校内角色、专业等直接信号推断优化方向；AI请求禁止传输手机号、邮箱，且全局优化需压缩空字段、提高`maxOutputTokens`与容错，避免模型返回截断导致前端长时间转圈
+10. **AI会员与撤回规则**：普通用户不可用任何AI优化；标准会员可用“全文一键AI优化”但不可用单段/二次深度优化；超级会员可用全部。任意AI优化完成后必须提供“撤回还原”，一键恢复到优化前内容。AI评估建议链路与实际优化链路必须彻底拆分：保存内容后自动生成2-3条建议（免费）；点击建议触发二次深度优化时再做会员校验，并把建议方向传给后端作为selectedSuggestion参与优化
+11. **2026-05-17 生产部署记忆**：生产服务器`175.24.133.232`当前发布标签已更新为`20260517-171703`，发布仍走`/opt/offer360/deploy/prod/scripts/deploy-release.sh`离线包模式；宝塔面板旧入口`/6e6e0272`已失效，实际执行应优先走仓库内现成 PEM 密钥的`ssh/scp`通道
+12. **2026-05-17 定向数据同步规则**：本次仅同步`ai_model_configs`与`service_products`两张表，线上同步前应先在`/opt/offer360/deploy/prod/runtime/manual-sync-backups`生成目标表备份；线上当前校验结果为`ai_model_configs=1`、`service_products=9`
+13. **2026-05-17 导库坑点**：跨环境导出这两张表时，禁止使用不带列名的`INSERT/REPLACE ... VALUES (...)`，否则在字段顺序不一致时会写坏`ai_model_configs.professional_prompt_template`与`assessment_prompt_template`；必须使用`mysqldump --complete-insert --replace`或手写带列名 SQL
+14. **2026-05-17 展示校验记忆**：公网`https://www.offer360.cn`已正常切到新标签；`/api/proxy/service-products`当前返回7条`productType=service`商品，详情接口如`service-background-training`、`service-written-test-companion`可正常返回非空`detailHtml`
+15. **2026-05-18 标准化词典同步记忆**：标准化词典中心当前生产同步范围只包含`normalization_terms`、`normalization_aliases`、`location_hierarchies`三张表，不包含`service_products`等其他参考数据；本地开发库当前基线为`terms=411`、`aliases=478`、`hierarchies=289`
+16. **2026-05-18 标准化词典验收口径**：同步后不能只看总数，必须同时校验`normalization_terms`按`domain`分布一致；当前基线为`COMPANY=23`、`DEGREE=5`、`JOB_TITLE=39`、`LOCATION=320`、`MAJOR=24`，且`normalization_aliases`、`location_hierarchies`当前均应全部为`active`
+17. **2026-05-18 标准化词典回滚路径**：本次云端同步前备份已落在`/opt/offer360/deploy/prod/runtime/manual-sync-backups/normalization-before-*.sql`；后续若再同步该模块，必须先备份再导入，并继续使用`mysqldump --complete-insert --replace`避免跨环境字段顺序风险
+18. **2026-05-18 求职服务页文案规则**：`/services`首屏第一屏文案必须站在用户价值与营销表达角度书写，禁止出现“页面数据来自商品库”“前后端同步”“已上架几款商品”这类研发/后台视角描述；当前定稿主标题为“求职这条路，不该只靠你一个人硬扛”，且首行“求职服务”标签已删除，主标题颜色改为主题色`text-brand`，副文案强调从简历精修到求职陪跑的全链路陪伴感与结果导向
 
 ---
 

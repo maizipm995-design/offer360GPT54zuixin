@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DEGREE_OPTIONS } from '@offer360/shared';
+import { KeywordSuggestionDropdown, useKeywordSuggestions } from '@/components/common/keyword-suggestion-dropdown';
+import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { clientFetch } from '@/lib/api';
+import { COMMON_TOAST_COPY } from '@/lib/toast-copy';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { useGlobalToast } from '@/store/toast-store';
@@ -17,6 +20,7 @@ import {
   PersonalOverview,
   PersonalPreferenceSummary,
   PersonalProfileSummary,
+  type JobSearchSuggestionItem,
 } from '@/types';
 
 interface InvitationData {
@@ -99,18 +103,10 @@ function buildPreferenceForm(
   normalizedPreference?: PersonalPreferenceSummary | null,
 ): PreferenceFormState {
   return {
-    intentionCity: normalizedPreference?.intentionCity ?? preference?.intentionCity ?? [],
-    intentionJob: normalizedPreference?.intentionJob ?? preference?.intentionJob ?? [],
-    intentionCompany: normalizedPreference?.intentionCompany ?? preference?.intentionCompany ?? [],
+    intentionCity: preference?.intentionCity ?? normalizedPreference?.intentionCity ?? [],
+    intentionJob: preference?.intentionJob ?? normalizedPreference?.intentionJob ?? [],
+    intentionCompany: preference?.intentionCompany ?? normalizedPreference?.intentionCompany ?? [],
   };
-}
-
-function areStringArraysEqual(left: string[], right: string[]) {
-  return left.length === right.length && left.every((item, index) => item === right[index]);
-}
-
-function hasCanonicalizedPreference(submitted: PreferenceFormState, saved: PreferenceFormState) {
-  return (Object.keys(saved) as PreferenceKey[]).some((key) => !areStringArraysEqual(submitted[key], saved[key]));
 }
 
 function isValidPhone(phone: string) {
@@ -139,6 +135,7 @@ export function PersonalCenterClient() {
   const [profileForm, setProfileForm] = useState<ProfileFormState>(defaultProfileForm);
   const [preferenceForm, setPreferenceForm] = useState<PreferenceFormState>(defaultPreferenceForm);
   const [tagInput, setTagInput] = useState<Record<PreferenceKey, string>>({ intentionCity: '', intentionJob: '', intentionCompany: '' });
+  const [activeSuggestionField, setActiveSuggestionField] = useState<PreferenceKey | null>(null);
   const refs = {
     membership: useRef<HTMLDivElement | null>(null),
     profile: useRef<HTMLDivElement | null>(null),
@@ -149,6 +146,24 @@ export function PersonalCenterClient() {
   const [activeSection, setActiveSection] = useState('membership');
 
   useGlobalToast(message, setMessage);
+  const citySuggestions = useKeywordSuggestions({
+    keyword: tagInput.intentionCity,
+    field: 'location',
+    token,
+    enabled: activeSuggestionField === 'intentionCity',
+  });
+  const jobSuggestions = useKeywordSuggestions({
+    keyword: tagInput.intentionJob,
+    field: 'job',
+    token,
+    enabled: activeSuggestionField === 'intentionJob',
+  });
+  const companySuggestions = useKeywordSuggestions({
+    keyword: tagInput.intentionCompany,
+    field: 'company',
+    token,
+    enabled: activeSuggestionField === 'intentionCompany',
+  });
 
   useEffect(() => {
     if (!token) return;
@@ -220,6 +235,7 @@ export function PersonalCenterClient() {
           <h1 className="text-2xl font-bold text-ink">请先登录后查看个人中心</h1>
           <Button className="mt-6" onClick={() => router.push('/login')}>前往登录</Button>
         </Card>
+        <SiteBeianFooter className="pb-0 pt-8" />
       </main>
     );
   }
@@ -236,7 +252,6 @@ export function PersonalCenterClient() {
         degree: savedProfile.degree,
         major: savedProfile.major,
       });
-      const wasCanonicalized = nextProfileForm.degree !== profileForm.degree || nextProfileForm.major !== profileForm.major;
 
       setProfileForm(nextProfileForm);
       setOverview((prev) => (prev
@@ -250,9 +265,9 @@ export function PersonalCenterClient() {
           }
         : prev));
       updateUser({ name: savedProfile.name || user?.name || '' });
-      setMessage(wasCanonicalized ? '个人信息已自动标准化并保存' : '个人信息已自动保存');
+      setMessage(COMMON_TOAST_COPY.saved);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '保存失败');
+      setMessage(error instanceof Error ? error.message : COMMON_TOAST_COPY.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -266,7 +281,6 @@ export function PersonalCenterClient() {
         token,
       );
       const nextPreferenceForm = buildPreferenceForm(savedPreference, savedPreference.normalizedPreference);
-      const wasCanonicalized = hasCanonicalizedPreference(next, nextPreferenceForm);
 
       setPreferenceForm(nextPreferenceForm);
       setOverview((prev) => (prev
@@ -280,27 +294,28 @@ export function PersonalCenterClient() {
             normalizedPreference: savedPreference.normalizedPreference ?? nextPreferenceForm,
           }
         : prev));
-      setMessage(wasCanonicalized ? '求职意向已自动标准化并保存' : '求职意向已自动保存');
+      setMessage(COMMON_TOAST_COPY.saved);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '保存失败');
+      setMessage(error instanceof Error ? error.message : COMMON_TOAST_COPY.saveFailed);
     }
   };
 
-  const addTag = (key: PreferenceKey) => {
-    const value = tagInput[key].trim();
+  const addTag = (key: PreferenceKey, preferredValue?: string) => {
+    const value = (preferredValue ?? tagInput[key]).trim();
     if (!value) return;
     const list = preferenceForm[key];
     if (list.length >= 5) {
-      setMessage('最多添加 5 个标签');
+      setMessage(COMMON_TOAST_COPY.maxFiveItems);
       return;
     }
     if (list.includes(value)) {
-      setMessage('该标签已存在，无需重复添加');
+      setMessage(COMMON_TOAST_COPY.duplicateItem);
       return;
     }
     const next = { ...preferenceForm, [key]: [...list, value] };
     setPreferenceForm(next);
     setTagInput((prev) => ({ ...prev, [key]: '' }));
+    setActiveSuggestionField(null);
     void savePreferences(next);
   };
 
@@ -308,6 +323,20 @@ export function PersonalCenterClient() {
     const next = { ...preferenceForm, [key]: preferenceForm[key].filter((item) => item !== value) };
     setPreferenceForm(next);
     void savePreferences(next);
+  };
+
+  const resolveSuggestionState = (key: PreferenceKey) => {
+    if (key === 'intentionCity') {
+      return citySuggestions;
+    }
+    if (key === 'intentionJob') {
+      return jobSuggestions;
+    }
+    return companySuggestions;
+  };
+
+  const applyPreferenceSuggestion = (key: PreferenceKey, item: JobSearchSuggestionItem) => {
+    addTag(key, item.value);
   };
 
   const openPhoneModal = () => {
@@ -336,7 +365,7 @@ export function PersonalCenterClient() {
 
   const handleSendPhoneCode = async () => {
     if (!isValidPhone(phoneForm.phone)) {
-      setMessage('请输入正确的新手机号');
+      setMessage(COMMON_TOAST_COPY.invalidPhone);
       return;
     }
 
@@ -344,9 +373,9 @@ export function PersonalCenterClient() {
       setPhoneSendingCode(true);
       const result = await sendPersonalCode('update_phone', phoneForm.phone);
       setPhoneCountdown(result.cooldownSeconds || 60);
-      setMessage('验证码已发送，请注意查收。');
+      setMessage(COMMON_TOAST_COPY.verificationCodeSent);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '验证码发送失败');
+      setMessage(error instanceof Error ? error.message : COMMON_TOAST_COPY.verificationCodeFailed);
     } finally {
       setPhoneSendingCode(false);
     }
@@ -362,9 +391,9 @@ export function PersonalCenterClient() {
       setPasswordSendingCode(true);
       const result = await sendPersonalCode('reset_password', passwordForm.phone);
       setPasswordCountdown(result.cooldownSeconds || 60);
-      setMessage('验证码已发送，请注意查收。');
+      setMessage(COMMON_TOAST_COPY.verificationCodeSent);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '验证码发送失败');
+      setMessage(error instanceof Error ? error.message : COMMON_TOAST_COPY.verificationCodeFailed);
     } finally {
       setPasswordSendingCode(false);
     }
@@ -373,7 +402,7 @@ export function PersonalCenterClient() {
   const updatePhone = async () => {
     const nextPhone = phoneForm.phone.trim();
     if (!isValidPhone(nextPhone)) {
-      setMessage('请输入正确的新手机号');
+      setMessage(COMMON_TOAST_COPY.invalidPhone);
       return;
     }
     if (nextPhone === (overview?.phone || '').trim()) {
@@ -381,7 +410,7 @@ export function PersonalCenterClient() {
       return;
     }
     if (phoneForm.code.trim().length < 4) {
-      setMessage('请输入收到的验证码');
+      setMessage(COMMON_TOAST_COPY.enterVerificationCode);
       return;
     }
 
@@ -408,7 +437,7 @@ export function PersonalCenterClient() {
       return;
     }
     if (passwordForm.code.trim().length < 4) {
-      setMessage('请输入收到的验证码');
+      setMessage(COMMON_TOAST_COPY.enterVerificationCode);
       return;
     }
     if (passwordForm.newPassword.trim().length < 8) {
@@ -437,7 +466,7 @@ export function PersonalCenterClient() {
   const copyInvite = async () => {
     if (!invitation) return;
     await navigator.clipboard.writeText(invitation.shareText);
-    setMessage('邀请文案已复制，快去分享给好友吧');
+    setMessage(COMMON_TOAST_COPY.copySuccess);
   };
 
   const getOrderStatusText = (order: PersonalOrderItem) => {
@@ -573,18 +602,28 @@ export function PersonalCenterClient() {
               ] as const).map(([title, key, tip]) => (
                 <div key={key}>
                   <label className="mb-2 block text-sm font-medium text-ink">{title}</label>
-                  <Input
-                    value={tagInput[key]}
-                    placeholder={tip}
-                    onChange={(e) => setTagInput((prev) => ({ ...prev, [key]: e.target.value }))}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        addTag(key);
-                      }
-                    }}
-                  />
-                  <p className="mt-2 text-xs text-muted">保存后系统会自动收敛为标准词，并直接用于专属推荐。</p>
+                  <div className="relative">
+                    <Input
+                      value={tagInput[key]}
+                      placeholder={tip}
+                      onChange={(e) => setTagInput((prev) => ({ ...prev, [key]: e.target.value }))}
+                      onFocus={() => setActiveSuggestionField(key)}
+                      onBlur={() => window.setTimeout(() => setActiveSuggestionField((current) => (current === key ? null : current)), 120)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addTag(key);
+                        }
+                      }}
+                    />
+                    <KeywordSuggestionDropdown
+                      visible={activeSuggestionField === key && Boolean(tagInput[key].trim())}
+                      loading={resolveSuggestionState(key).loading}
+                      suggestions={resolveSuggestionState(key).suggestions}
+                      onSelect={(item) => applyPreferenceSuggestion(key, item)}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-muted">系统只提供建议词供你选择，不会自动替换；保存后会保留你的原始输入，并同步用于标准词并行匹配。</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {preferenceForm[key].map((item) => (
                       <button
@@ -808,6 +847,7 @@ export function PersonalCenterClient() {
           </Card>
         </div>
       ) : null}
+      <SiteBeianFooter className="pb-0 pt-8" />
     </main>
   );
 }

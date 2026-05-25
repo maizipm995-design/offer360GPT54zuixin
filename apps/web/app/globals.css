@@ -121,6 +121,103 @@ body {
   margin-top: 0;
 }
 
+.service-rich-content {
+  color: #334155;
+}
+
+.service-rich-content > section {
+  margin-top: 1.25rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 1.5rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.service-rich-content > section:first-child {
+  margin-top: 0;
+  border-color: rgba(249, 115, 22, 0.18);
+  background:
+    radial-gradient(circle at top right, rgba(251, 191, 36, 0.12), transparent 28%),
+    linear-gradient(135deg, #fff7ed 0%, #ffffff 52%, #f8fafc 100%);
+}
+
+.service-rich-content > section:last-child {
+  background: #f8fafc;
+}
+
+.service-rich-content h2,
+.service-rich-content h3 {
+  letter-spacing: -0.01em;
+}
+
+.service-rich-content h2 {
+  margin-top: 0;
+  font-size: 1.625rem;
+  line-height: 1.35;
+}
+
+.service-rich-content h3 {
+  margin-top: 0;
+  margin-bottom: 0.9rem;
+  padding-left: 0.875rem;
+  border-left: 4px solid #f97316;
+  font-size: 1.2rem;
+  line-height: 1.45;
+}
+
+.service-rich-content p {
+  color: #475569;
+  line-height: 1.95;
+}
+
+.service-rich-content p:last-child,
+.service-rich-content ul:last-child,
+.service-rich-content ol:last-child {
+  margin-bottom: 0;
+}
+
+.service-rich-content strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.service-rich-content ul,
+.service-rich-content ol {
+  margin-top: 1rem;
+  margin-bottom: 0;
+  padding-left: 1.35rem;
+}
+
+.service-rich-content li {
+  color: #475569;
+  line-height: 1.9;
+}
+
+.service-rich-content li + li {
+  margin-top: 0.65rem;
+}
+
+.service-rich-content ul li::marker,
+.service-rich-content ol li::marker {
+  color: #f97316;
+  font-weight: 700;
+}
+
+@media (min-width: 1024px) {
+  .service-rich-content > section {
+    padding: 1.75rem 1.875rem;
+  }
+
+  .service-rich-content h2 {
+    font-size: 1.875rem;
+  }
+
+  .service-rich-content h3 {
+    font-size: 1.3rem;
+  }
+}
+
 @media (min-width: 768px) {
   .membership-rich-content .membership-rich-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));

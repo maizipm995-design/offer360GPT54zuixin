@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { SitePageSkeleton } from '@/components/layout/site-page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { clientFetch } from '@/lib/api';
@@ -22,6 +23,11 @@ function WechatOauthCallbackPageClient() {
   const code = searchParams.get('code')?.trim() ?? '';
   const orderNo = searchParams.get('orderNo')?.trim() || searchParams.get('state')?.trim() || '';
   const authError = searchParams.get('errcode') || searchParams.get('error') || '';
+
+  useEffect(() => {
+    router.prefetch('/personal-center');
+    router.prefetch('/checkout');
+  }, [router]);
 
   useEffect(() => {
     if (!token) {
@@ -70,7 +76,7 @@ function WechatOauthCallbackPageClient() {
 
 export default function WechatOauthCallbackPage() {
   return (
-    <Suspense fallback={<main className="mx-auto max-w-[720px] px-4 py-10 lg:px-8">正在处理支付...</main>}>
+    <Suspense fallback={<SitePageSkeleton compact />}>
       <WechatOauthCallbackPageClient />
     </Suspense>
   );

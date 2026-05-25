@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { requestAdminOssUploadSession, uploadFileToOss } from '@/lib/oss';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
@@ -62,7 +63,7 @@ export default function AdminServiceProductsPage() {
       const result = await clientFetch<AdminListResponse<AdminServiceProductItem>>(`/admin/service-products?${buildQuery({ ...nextFilters, page, limit: 10 })}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '服务商品加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('服务商品'));
     } finally {
       setLoading(false);
     }
@@ -116,11 +117,11 @@ export default function AdminServiceProductsPage() {
       const result = selectedId
         ? await clientFetch<AdminServiceProductItem>(`/admin/service-products/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await clientFetch<AdminServiceProductItem>('/admin/service-products', { method: 'POST', body: JSON.stringify(payload) });
-      setMessage(selectedId ? '服务商品已更新' : '服务商品已创建');
+      setMessage(selectedId ? ADMIN_TOAST_COPY.updated('服务商品') : ADMIN_TOAST_COPY.created('服务商品'));
       fillForm(result);
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '服务商品保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('服务商品'));
     } finally {
       setSaving(false);
     }
@@ -131,11 +132,11 @@ export default function AdminServiceProductsPage() {
     if (!window.confirm('确认删除当前服务商品吗？')) return;
     try {
       await clientFetch(`/admin/service-products/${selectedId}`, { method: 'DELETE' });
-      setMessage('服务商品已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('服务商品'));
       resetForm();
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '服务商品删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('服务商品'));
     }
   };
 
@@ -159,9 +160,9 @@ export default function AdminServiceProductsPage() {
         detailHtml: appendHtmlImage(prev.detailHtml, uploaded.objectReference, file.name),
         detailPreviewHtml: appendHtmlImage(prev.detailPreviewHtml || prev.detailHtml, uploaded.signedUrl || uploaded.objectReference, file.name),
       }));
-      setMessage('详情图片已上传并插入 HTML');
+      setMessage(ADMIN_TOAST_COPY.imageInserted('详情图片'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '详情图片上传失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.uploadFailed('详情图片'));
     } finally {
       setUploadingDetailImage(false);
     }
@@ -187,9 +188,9 @@ export default function AdminServiceProductsPage() {
         orderServiceImageUrl: uploaded.objectReference,
         orderServiceImagePreviewUrl: uploaded.signedUrl || uploaded.objectReference,
       }));
-      setMessage('订单服务配图已上传');
+      setMessage(ADMIN_TOAST_COPY.uploadDone('订单服务配图'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '订单服务配图上传失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.uploadFailed('订单服务配图'));
     } finally {
       setUploadingOrderGuideImage(false);
     }

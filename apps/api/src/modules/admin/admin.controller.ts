@@ -1,16 +1,23 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RequireAdminPermissions } from './decorators/require-admin-permissions.decorator';
+import { TestAiModelConfigDto } from './dto/test-ai-model-config.dto';
+import { UpdateAiModelConfigStatusDto } from './dto/update-ai-model-config-status.dto';
+import { UpsertAiModelConfigDto } from './dto/upsert-ai-model-config.dto';
 import { AdminJwtAuthGuard } from './guards/admin-jwt-auth.guard';
 import { AdminPermissionGuard } from './guards/admin-permission.guard';
 import { AdminService } from './admin.service';
+import { ResumeAiAdminService } from '../resume-ai/resume-ai-admin.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
 @UseGuards(AdminJwtAuthGuard, AdminPermissionGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly resumeAiAdminService: ResumeAiAdminService,
+  ) {}
 
   @Get('overview')
   @RequireAdminPermissions('dashboard:view')
@@ -40,6 +47,18 @@ export class AdminController {
   @RequireAdminPermissions('admin:job:manage')
   deleteJob(@Param('id') id: string) {
     return this.adminService.deleteJob(id);
+  }
+
+  @Get('jobs/deduplication/preview')
+  @RequireAdminPermissions('admin:job:manage')
+  getJobsDeduplicationPreview() {
+    return this.adminService.getJobsDeduplicationPreview();
+  }
+
+  @Post('jobs/deduplication/execute')
+  @RequireAdminPermissions('admin:job:manage')
+  executeJobsDeduplication() {
+    return this.adminService.executeJobsDeduplication();
   }
 
   @Get('jobs-recommendation-config')
@@ -238,5 +257,41 @@ export class AdminController {
   @RequireAdminPermissions('admin:commission:manage')
   updateCommissionConfig(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.adminService.updateCommissionConfig(Number(id), body);
+  }
+
+  @Get('ai-model-configs')
+  @RequireAdminPermissions('admin:ai:manage')
+  getAiModelConfigs() {
+    return this.resumeAiAdminService.getAiModelConfigs();
+  }
+
+  @Post('ai-model-configs')
+  @RequireAdminPermissions('admin:ai:manage')
+  createAiModelConfig(@Body() dto: UpsertAiModelConfigDto) {
+    return this.resumeAiAdminService.createAiModelConfig(dto);
+  }
+
+  @Patch('ai-model-configs/:id')
+  @RequireAdminPermissions('admin:ai:manage')
+  updateAiModelConfig(@Param('id') id: string, @Body() dto: UpsertAiModelConfigDto) {
+    return this.resumeAiAdminService.updateAiModelConfig(id, dto);
+  }
+
+  @Patch('ai-model-configs/:id/status')
+  @RequireAdminPermissions('admin:ai:manage')
+  updateAiModelConfigStatus(@Param('id') id: string, @Body() dto: UpdateAiModelConfigStatusDto) {
+    return this.resumeAiAdminService.updateAiModelConfigStatus(id, dto);
+  }
+
+  @Post('ai-model-configs/:id/test')
+  @RequireAdminPermissions('admin:ai:manage')
+  testAiModelConfig(@Param('id') id: string, @Body() dto: TestAiModelConfigDto) {
+    return this.resumeAiAdminService.testAiModelConfig(id, dto);
+  }
+
+  @Get('resume-ai-logs')
+  @RequireAdminPermissions('admin:ai:manage')
+  getResumeAiLogs(@Query() query: Record<string, string | undefined>) {
+    return this.resumeAiAdminService.getResumeAiLogs(query);
   }
 }

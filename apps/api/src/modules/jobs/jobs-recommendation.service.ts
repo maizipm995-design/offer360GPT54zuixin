@@ -35,7 +35,13 @@ import type {
   RecommendationReasonItem,
   RecommendationScoreResult,
 } from './jobs-recommendation.types';
-import { buildJobKeywordText, buildJobSupplementText, buildLegacyJobCard } from './job-announcement-view';
+import {
+  buildJobKeywordText,
+  buildJobSupplementText,
+  buildLegacyJobCard,
+  resolveValidAnnouncementUrl,
+  resolveValidDeliveryTarget,
+} from './job-announcement-view';
 import { isWithinDays, isWithinHours, parseJsonArray, subDays } from './jobs.utils';
 
 type RecommendedJobPayload = Prisma.JobAnnouncementGetPayload<{ include: { trackings: true } }>;
@@ -46,7 +52,7 @@ const GENERAL_SEARCH_FIELDS = [
   'degreeRequirement',
   'workLocation',
   'jobName',
-  'jobCategory',
+  'majorRequirement',
   'recruitmentType',
   'deadlineAt',
   'announcementUrl',
@@ -205,7 +211,7 @@ export class JobsRecommendationService {
 
     const pageItems = scoredJobs
       .slice((page - 1) * limit, page * limit)
-      .map(({ job, scoreResult }) => this.toRecommendedJobCard(job, scoreResult));
+      .map(({ job, scoreResult }) => this.toRecommendedJobCard(job, scoreResult, access.permissionKeys));
 
     const result = this.buildResult(pageItems, page, limit, recommendedFeed, scoredJobs.length);
     setJobsRecommendationCache(userId, cacheKey, result);
@@ -497,7 +503,6 @@ export class JobsRecommendationService {
     return {
       OR: keywords.flatMap((keyword) => [
         { jobName: { contains: keyword } },
-        { jobCategory: { contains: keyword } },
         { announcementTitle: { contains: keyword } },
       ]),
     };
@@ -544,12 +549,12 @@ export class JobsRecommendationService {
       and.push(companyKeywordFilter);
     }
 
-    const positionKeywordFilter = this.buildMultiFieldContainsFilter(['jobName', 'jobCategory', 'announcementTitle'], query.positionName);
+    const positionKeywordFilter = this.buildMultiFieldContainsFilter(['jobName', 'announcementTitle'], query.positionName);
     if (positionKeywordFilter) {
       and.push(positionKeywordFilter);
     }
 
-    const majorKeywordFilter = this.buildMultiFieldContainsFilter(['jobCategory', 'announcementTitle', 'industry', 'graduationSession'], query.major);
+    const majorKeywordFilter = this.buildMultiFieldContainsFilter(['majorRequirement', 'announcementTitle', 'industry', 'graduationSession'], query.major);
     if (majorKeywordFilter) {
       and.push(majorKeywordFilter);
     }
@@ -767,10 +772,20 @@ export class JobsRecommendationService {
     };
   }
 
-  private toRecommendedJobCard(job: RecommendedJobPayload, scoreResult: RecommendationScoreResult) {
+  private toRecommendedJobCard(
+    job: RecommendedJobPayload,
+    scoreResult: RecommendationScoreResult,
+    permissionKeys: string[],
+  ) {
+    const announcementUrl = resolveValidAnnouncementUrl(job.announcementUrl);
+    const deliveryTarget = resolveValidDeliveryTarget(job.deliveryUrl);
     return buildLegacyJobCard(job, {
       recommendReasons: scoreResult.reasons.map((item) => item.label),
       recommendMeta: scoreResult.meta,
+      access: {
+        canViewAnnouncement: Boolean(announcementUrl) && permissionKeys.includes('jobs:detail:view'),
+        canDeliver: Boolean(deliveryTarget) && permissionKeys.includes('jobs:deliver:use'),
+      },
     });
   }
 

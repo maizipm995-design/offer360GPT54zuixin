@@ -5,6 +5,7 @@ import { AdminTable } from '@/components/admin/admin-table';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminOverviewData } from '@/types';
@@ -23,7 +24,7 @@ export default function AdminOverviewPage() {
         const result = await clientFetch<AdminOverviewData>('/admin/overview');
         setData(result);
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : '后台总览加载失败');
+        setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('后台总览'));
       } finally {
         setLoading(false);
       }

@@ -53,6 +53,42 @@ CREATE TABLE `job_announcements` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `job_announcement_access_logs` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `job_id` CHAR(36) NOT NULL,
+    `user_id` CHAR(36) NULL,
+    `membership_id` CHAR(36) NULL,
+    `member_level` VARCHAR(30) NULL,
+    `action` VARCHAR(40) NOT NULL,
+    `request_status` VARCHAR(30) NOT NULL DEFAULT 'issued',
+    `access_token_id` CHAR(36) NULL,
+    `redirect_target_type` VARCHAR(30) NULL,
+    `limit_hit` BOOLEAN NOT NULL DEFAULT false,
+    `risk_hit` BOOLEAN NOT NULL DEFAULT false,
+    `review_status` VARCHAR(30) NOT NULL DEFAULT 'not_required',
+    `review_conclusion` VARCHAR(50) NULL,
+    `review_note` VARCHAR(500) NULL,
+    `reviewed_by_admin_user_id` CHAR(36) NULL,
+    `reviewed_at` DATETIME(0) NULL,
+    `ip` VARCHAR(45) NULL,
+    `user_agent` TEXT NULL,
+    `device_id` VARCHAR(100) NULL,
+    `session_id` VARCHAR(100) NULL,
+    `failure_reason` VARCHAR(255) NULL,
+    `consumed_at` DATETIME(0) NULL,
+    `expires_at` DATETIME(0) NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    UNIQUE INDEX `job_announcement_access_logs_access_token_id_key`(`access_token_id`),
+    INDEX `idx_job_access_logs_job_created`(`job_id`, `created_at`),
+    INDEX `idx_job_access_logs_user_created`(`user_id`, `created_at`),
+    INDEX `idx_job_access_logs_status_created`(`request_status`, `created_at`),
+    INDEX `idx_job_access_logs_review_status_created`(`review_status`, `created_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `users` (
     `id` CHAR(36) NOT NULL,
     `phone` VARCHAR(20) NOT NULL,
@@ -66,6 +102,8 @@ CREATE TABLE `users` (
     `last_login_at` DATETIME(0) NULL,
     `needs_profile_onboarding` BOOLEAN NOT NULL DEFAULT false,
     `resume_pdf_export_count` INTEGER NOT NULL DEFAULT 0,
+    `interview_transcript_free_count` INTEGER NOT NULL DEFAULT 1,
+    `interview_transcript_super_count` INTEGER NOT NULL DEFAULT 0,
 
     UNIQUE INDEX `users_phone_key`(`phone`),
     UNIQUE INDEX `users_my_invite_code_key`(`my_invite_code`),
@@ -166,6 +204,36 @@ CREATE TABLE `resume_drafts` (
 
     INDEX `idx_resume_drafts_user_updated_at`(`user_id`, `updated_at`),
     INDEX `idx_resume_drafts_status`(`status`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `interview_transcript_tasks` (
+    `id` CHAR(36) NOT NULL,
+    `user_id` CHAR(36) NULL,
+    `company_name` VARCHAR(191) NOT NULL,
+    `job_name` VARCHAR(191) NOT NULL,
+    `interview_type` VARCHAR(50) NOT NULL,
+    `job_requirement` TEXT NOT NULL,
+    `resume_mode` VARCHAR(20) NOT NULL,
+    `workflow_input` LONGTEXT NULL,
+    `structured_resume_title` VARCHAR(191) NULL,
+    `uploaded_file_name` VARCHAR(191) NULL,
+    `uploaded_file_path` TEXT NULL,
+    `uploaded_file_content_type` VARCHAR(191) NULL,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'processing',
+    `quota_type` VARCHAR(20) NULL,
+    `processing_attempt_count` INTEGER NOT NULL DEFAULT 0,
+    `processing_started_at` DATETIME(0) NULL,
+    `output_mode` VARCHAR(20) NULL,
+    `download_url` TEXT NULL,
+    `final_output` LONGTEXT NULL,
+    `error_message` VARCHAR(255) NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_interview_transcript_tasks_user_updated`(`user_id`, `updated_at`),
+    INDEX `idx_interview_transcript_tasks_status_updated`(`status`, `updated_at`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -591,6 +659,7 @@ CREATE TABLE `admin_role_permissions` (
 CREATE TABLE `admin_bootstrap_configs` (
     `id` INTEGER NOT NULL DEFAULT 1,
     `register_entry_closed` BOOLEAN NOT NULL DEFAULT false,
+    `jobs_risk_config` JSON NULL,
     `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
     `updated_at` DATETIME(0) NOT NULL,
 
@@ -717,6 +786,15 @@ CREATE TABLE `member_role_permissions` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- AddForeignKey
+ALTER TABLE `job_announcement_access_logs` ADD CONSTRAINT `job_announcement_access_logs_job_id_fkey` FOREIGN KEY (`job_id`) REFERENCES `job_announcements`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `job_announcement_access_logs` ADD CONSTRAINT `job_announcement_access_logs_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `job_announcement_access_logs` ADD CONSTRAINT `job_announcement_access_logs_reviewed_by_admin_user_id_fkey` FOREIGN KEY (`reviewed_by_admin_user_id`) REFERENCES `admin_users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `users` ADD CONSTRAINT `users_parent_uid_fkey` FOREIGN KEY (`parent_uid`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -730,6 +808,9 @@ ALTER TABLE `user_memberships` ADD CONSTRAINT `user_memberships_user_id_fkey` FO
 
 -- AddForeignKey
 ALTER TABLE `resume_drafts` ADD CONSTRAINT `resume_drafts_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `interview_transcript_tasks` ADD CONSTRAINT `interview_transcript_tasks_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `resume_ai_optimization_logs` ADD CONSTRAINT `resume_ai_optimization_logs_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

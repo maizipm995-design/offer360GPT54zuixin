@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { SitePageSkeleton } from '@/components/layout/site-page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { clientFetch } from '@/lib/api';
@@ -32,6 +33,28 @@ function getStatusClassName(order: CheckoutOrder) {
   if (order.payStatus === 'refund_pending') return 'text-amber-600';
   if (order.payStatus === 'closed' || order.payStatus === 'refunded') return 'text-slate-500';
   return 'text-red-500';
+}
+
+function WechatPayLogo() {
+  return (
+    <div className="mx-auto inline-flex items-center gap-3 rounded-full border border-[#D9F1E3] bg-[#F4FBF7] px-5 py-3">
+      <svg viewBox="0 0 64 64" className="h-10 w-10 shrink-0" aria-hidden="true">
+        <rect x="4" y="4" width="56" height="56" rx="18" fill="#07C160" />
+        <ellipse cx="28" cy="26" rx="13" ry="10" fill="#FFFFFF" />
+        <ellipse cx="40" cy="36" rx="11" ry="9" fill="#DDF8E8" />
+        <path d="M21 34l-2 6 8-4" fill="#FFFFFF" />
+        <path d="M45 43l1 5-6-3" fill="#DDF8E8" />
+        <circle cx="23" cy="25" r="1.8" fill="#07C160" />
+        <circle cx="31" cy="25" r="1.8" fill="#07C160" />
+        <circle cx="36" cy="35" r="1.6" fill="#07C160" />
+        <circle cx="43" cy="35" r="1.6" fill="#07C160" />
+      </svg>
+      <div className="text-left">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#07C160]">Wechat Pay</p>
+        <p className="text-lg font-bold text-[#0f172a]">微信支付</p>
+      </div>
+    </div>
+  );
 }
 
 async function waitForWeixinBridge() {
@@ -74,13 +97,19 @@ function CheckoutPageClient() {
   const [useBalance, setUseBalance] = useState(false);
   const orderNo = useMemo(() => searchParams.get('orderNo')?.trim() ?? '', [searchParams]);
   const productId = useMemo(() => searchParams.get('productId')?.trim() ?? '', [searchParams]);
-  const oauthReady = searchParams.get('oauth') === '1';
   const wxReturned = searchParams.get('wxReturn') === '1';
-  const autoPrepareRef = useRef(false);
+  const activeOrderNo = order?.orderNo || orderNo;
+  const lastAutoPreparedOrderNoRef = useRef('');
+  const handlePreparePaymentRef = useRef<(targetOrderNo?: string) => Promise<void>>(async () => {});
   const createOrderTriggeredRef = useRef(false);
   const pollTimerRef = useRef<number | null>(null);
 
   useGlobalToast(message, setMessage);
+
+  useEffect(() => {
+    router.prefetch('/personal-center');
+    router.prefetch('/login');
+  }, [router]);
 
   const stopPolling = () => {
     if (pollTimerRef.current) {
@@ -100,14 +129,14 @@ function CheckoutPageClient() {
   };
 
   const loadOrder = async (silent = false) => {
-    if (!token || !orderNo) {
+    if (!token || !activeOrderNo) {
       return null;
     }
     if (!silent) {
       setLoading(true);
     }
     try {
-      const nextOrder = await clientFetch<CheckoutOrder>(`/payments/orders/${orderNo}`, {}, token);
+      const nextOrder = await clientFetch<CheckoutOrder>(`/payments/orders/${activeOrderNo}`, {}, token);
       setOrder(nextOrder);
       return nextOrder;
     } catch (error) {
@@ -228,7 +257,7 @@ function CheckoutPageClient() {
       return;
     }
     setUseBalance(Boolean(order.pricing?.useBalance));
-  }, [order?.id, order?.pricing?.useBalance]);
+  }, [order]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -239,12 +268,39 @@ function CheckoutPageClient() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!oauthReady || autoPrepareRef.current || !order || order.payStatus !== 'unpaid') {
+    const orderPricingUseBalance = Boolean(order?.pricing?.useBalance);
+    const shouldAutoPrepare = order?.payStatus === 'unpaid';
+    const hasNativeQrCode = order?.payScene === 'native' && Boolean(order?.wechatCodeUrl);
+    const nextOrderNo = order?.orderNo || orderNo;
+
+    if (!shouldAutoPrepare || !nextOrderNo) {
       return;
     }
-    autoPrepareRef.current = true;
-    void handlePreparePayment();
-  }, [oauthReady, order?.id, order?.payStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (useBalance !== orderPricingUseBalance) {
+      return;
+    }
+    if (wxReturned) {
+      return;
+    }
+    if (hasNativeQrCode) {
+      return;
+    }
+    if (lastAutoPreparedOrderNoRef.current === nextOrderNo) {
+      return;
+    }
+    lastAutoPreparedOrderNoRef.current = nextOrderNo;
+    void handlePreparePaymentRef.current(nextOrderNo);
+  }, [
+    order?.id,
+    order?.orderNo,
+    order?.payStatus,
+    order?.payScene,
+    order?.wechatCodeUrl,
+    order?.pricing?.useBalance,
+    orderNo,
+    useBalance,
+    wxReturned,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePrepareResult = async (result: CheckoutPrepareResult) => {
     setOrder(result.order);
@@ -304,8 +360,8 @@ function CheckoutPageClient() {
     }
   };
 
-  const handlePreparePayment = async () => {
-    if (!token || !orderNo) {
+  const handlePreparePayment = async (targetOrderNo = activeOrderNo) => {
+    if (!token || !targetOrderNo) {
       setMessage('订单信息异常，请返回后重试。');
       return;
     }
@@ -313,12 +369,12 @@ function CheckoutPageClient() {
     setPreparing(true);
     try {
       const result = await clientFetch<CheckoutPrepareResult>(
-        `/payments/orders/${orderNo}/prepare`,
+        `/payments/orders/${targetOrderNo}/prepare`,
         {
           method: 'POST',
           body: JSON.stringify({
             userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-            returnPath: `/checkout?orderNo=${encodeURIComponent(orderNo)}`,
+            returnPath: `/checkout?orderNo=${encodeURIComponent(targetOrderNo)}`,
             useBalance,
           }),
         },
@@ -331,6 +387,8 @@ function CheckoutPageClient() {
       setPreparing(false);
     }
   };
+
+  handlePreparePaymentRef.current = handlePreparePayment;
 
   const handleCloseOrder = async () => {
     if (!token || !orderNo) return;
@@ -475,15 +533,24 @@ function CheckoutPageClient() {
           </div>
 
           <div className="mt-6 rounded-3xl border border-slate-200 p-5">
-            <h2 className="text-lg font-bold text-ink">支付操作</h2>
+            <h2 className="text-lg font-bold text-ink">订单操作</h2>
+            {order.payStatus === 'unpaid' ? (
+              <p className="mt-2 text-sm leading-6 text-muted">
+                页面已在进入时自动发起支付流程，无需再次点击支付按钮；如需重试或更新激励金抵扣后的支付信息，可手动重新发起。
+              </p>
+            ) : null}
             <div className="mt-4 flex flex-wrap gap-3">
               {order.payStatus === 'unpaid' ? (
-                <Button onClick={handlePreparePayment} disabled={preparing}>
-                  {preparing
-                    ? '正在发起支付...'
-                    : useBalance && Math.max(order.pricing.discountedAmount - (order.wallet?.deductibleBalance ?? 0), 0) <= 0
-                      ? '确认使用激励金支付'
-                      : '立即支付'}
+                <Button
+                  onClick={() => {
+                    if (activeOrderNo) {
+                      lastAutoPreparedOrderNoRef.current = activeOrderNo;
+                    }
+                    void handlePreparePayment();
+                  }}
+                  disabled={preparing}
+                >
+                  {preparing ? '正在发起支付...' : '重新发起支付'}
                 </Button>
               ) : null}
               {order.payStatus === 'unpaid' ? (
@@ -501,12 +568,17 @@ function CheckoutPageClient() {
         </Card>
 
         <div className="space-y-6">
-          {order.payStatus === 'unpaid' && qrCodeDataUrl ? (
+          {order.payStatus === 'unpaid' ? (
             <Card className="p-6 text-center">
-              <h2 className="text-lg font-bold text-ink">请使用微信扫码支付</h2>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={qrCodeDataUrl} alt="微信支付二维码" className="mx-auto mt-5 h-[260px] w-[260px] rounded-2xl border border-slate-100 p-3" />
-              <p className="mt-4 text-sm text-muted">支付后页面会自动更新；如未更新，可点击“刷新状态”。</p>
+              <WechatPayLogo />
+              {qrCodeDataUrl ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={qrCodeDataUrl} alt="微信支付二维码" className="mx-auto mt-5 h-[260px] w-[260px] rounded-2xl border border-slate-100 bg-white p-3 shadow-sm" />
+                </>
+              ) : (
+                <div className="mx-auto mt-5 h-[260px] w-[260px] animate-pulse rounded-2xl border border-slate-100 bg-slate-50" aria-label={preparing ? '微信支付二维码生成中' : '微信支付二维码准备中'} />
+              )}
             </Card>
           ) : null}
 
@@ -531,7 +603,7 @@ function CheckoutPageClient() {
 
 export default function CheckoutPage() {
   return (
-    <Suspense fallback={<main className="mx-auto max-w-[960px] px-4 py-10 lg:px-8">订单加载中...</main>}>
+    <Suspense fallback={<SitePageSkeleton compact />}>
       <CheckoutPageClient />
     </Suspense>
   );

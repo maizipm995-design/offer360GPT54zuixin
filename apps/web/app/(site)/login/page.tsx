@@ -1,6 +1,15 @@
+import dynamic from 'next/dynamic';
 import type { Metadata } from 'next';
-import { UnifiedAuthPageClient } from '@/components/auth/unified-auth-page-client';
+import { SitePageSkeleton } from '@/components/layout/site-page-skeleton';
 import { buildPageMetadata } from '@/lib/seo';
+
+const UnifiedAuthPageClient = dynamic(
+  () => import('@/components/auth/unified-auth-page-client').then((mod) => mod.UnifiedAuthPageClient),
+  {
+    ssr: false,
+    loading: () => <SitePageSkeleton compact />,
+  },
+);
 
 export const metadata: Metadata = buildPageMetadata({
   title: '登录',

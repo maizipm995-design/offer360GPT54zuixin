@@ -15,6 +15,8 @@ import { invalidateJobsRecommendationCacheByUserId } from '../jobs/jobs-recommen
 import { StorageService } from '../storage/storage.service';
 import { getHtmlContentLocationDefinition } from './html-content-locations';
 
+const SUPER_MEMBER_INTERVIEW_TRANSCRIPT_COUNT = 20;
+
 @Injectable()
 export class MembershipsService {
   constructor(
@@ -323,7 +325,7 @@ export class MembershipsService {
     const legacyEndAt = resolved.activeEndAt ?? draftMembership.standardEndAt ?? draftMembership.superEndAt ?? now;
     const remainingDays = getMembershipRemainingDays(legacyEndAt, now);
 
-    return tx.userMembership.upsert({
+    const membership = await tx.userMembership.upsert({
       where: { userId },
       update: {
         memberLevel: fallbackLevel,
@@ -353,6 +355,16 @@ export class MembershipsService {
         openedByAdminId: options?.openedByAdminId ?? null,
       },
     });
+
+    if (requestedMemberLevel === 'super') {
+      await tx.$executeRaw`
+        UPDATE users
+        SET interview_transcript_super_count = interview_transcript_super_count + ${SUPER_MEMBER_INTERVIEW_TRANSCRIPT_COUNT}
+        WHERE id = ${userId}
+      `;
+    }
+
+    return membership;
   }
 
   private extendMembershipWindow(options: {

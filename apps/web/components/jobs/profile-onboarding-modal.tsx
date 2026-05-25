@@ -41,9 +41,15 @@ type PersistOptions = {
   tagInputOverride?: Record<PreferenceKey, string>;
 };
 
+type PersistResult = {
+  saved: boolean;
+  profileForm: ProfileFormState;
+  preferenceForm: PersonalPreferenceSummary;
+};
+
 const STEP_TITLES: Record<StepId, string> = {
   1: '真实姓名',
-  2: '求职城市',
+  2: '求职意向',
   3: '意向岗位',
   4: '目标公司',
   5: '毕业学校',
@@ -54,7 +60,7 @@ const STEP_TITLES: Record<StepId, string> = {
 
 const STEP_HINTS: Record<StepId, string> = {
   1: '填写后，系统会更准确地识别你的基础求职资料。',
-  2: '最多 5 个，支持模糊匹配；失去焦点或点击按钮时自动保存。',
+  2: '支持手动填写或一键推荐填充，推荐内容也可随时修改或删除。',
   3: '最多 5 个，支持模糊匹配；失去焦点或点击按钮时自动保存。',
   4: '最多 5 个，支持模糊匹配；失去焦点或点击按钮时自动保存。',
   5: '填写后失去焦点会自动保存，也可以点击按钮统一保存。',
@@ -63,8 +69,23 @@ const STEP_HINTS: Record<StepId, string> = {
   8: '固定选项，不支持手动输入，点击保存即可关闭弹窗。',
 };
 
-const REQUIRED_STEPS: StepId[] = [1, 5, 6, 7, 8];
+const ALL_STEPS: StepId[] = [1, 2, 3, 4, 5, 6, 7, 8];
+const DISPLAY_STEPS: StepId[] = [1, 2, 5, 6, 7, 8];
 const DEGREE_OPTIONS = ['大专', '本科', '硕士', '博士'] as const;
+const RECOMMENDED_PREFERENCE_VALUES: Record<PreferenceKey, string[]> = {
+  intentionCity: ['北京', '上海', '深圳', '杭州', '成都'],
+  intentionJob: ['运营', '策划', '业务', '管培生', '职能'],
+  intentionCompany: ['字节', '腾讯', '美团', '银行', '京东'],
+};
+const CORE_PREFERENCE_FIELDS: Array<{
+  key: PreferenceKey;
+  label: string;
+  placeholder: string;
+}> = [
+  { key: 'intentionCity', label: '求职城市', placeholder: '输入求职城市关键词，如：北京、上海' },
+  { key: 'intentionJob', label: '意向岗位', placeholder: '输入意向岗位关键词，如：开发、运营' },
+  { key: 'intentionCompany', label: '目标公司', placeholder: '输入目标公司关键词' },
+];
 
 function toDisplayDegree(value?: string | null) {
   if (value === '专科') {
@@ -90,10 +111,18 @@ function buildPreferenceForm(
   preference?: PersonalPreferenceSummary | null,
   normalizedPreference?: PersonalPreferenceSummary | null,
 ): PersonalPreferenceSummary {
+  const sanitizeValues = (values?: string[] | null) => Array.from(new Set((values ?? []).map((item) => item.trim()).filter(Boolean)));
+  const rawIntentionCity = sanitizeValues(preference?.intentionCity);
+  const rawIntentionJob = sanitizeValues(preference?.intentionJob);
+  const rawIntentionCompany = sanitizeValues(preference?.intentionCompany);
+  const normalizedIntentionCity = sanitizeValues(normalizedPreference?.intentionCity);
+  const normalizedIntentionJob = sanitizeValues(normalizedPreference?.intentionJob);
+  const normalizedIntentionCompany = sanitizeValues(normalizedPreference?.intentionCompany);
+
   return {
-    intentionCity: preference?.intentionCity ?? normalizedPreference?.intentionCity ?? [],
-    intentionJob: preference?.intentionJob ?? normalizedPreference?.intentionJob ?? [],
-    intentionCompany: preference?.intentionCompany ?? normalizedPreference?.intentionCompany ?? [],
+    intentionCity: rawIntentionCity.length ? rawIntentionCity : normalizedIntentionCity,
+    intentionJob: rawIntentionJob.length ? rawIntentionJob : normalizedIntentionJob,
+    intentionCompany: rawIntentionCompany.length ? rawIntentionCompany : normalizedIntentionCompany,
   };
 }
 
@@ -110,11 +139,11 @@ function getStepCompleted(step: StepId, profileForm: ProfileFormState, preferenc
     case 1:
       return Boolean(profileForm.name.trim());
     case 2:
-      return preferenceForm.intentionCity.length > 0;
+      return hasCompletedPreference(preferenceForm.intentionCity);
     case 3:
-      return preferenceForm.intentionJob.length > 0;
+      return hasCompletedPreference(preferenceForm.intentionJob);
     case 4:
-      return preferenceForm.intentionCompany.length > 0;
+      return hasCompletedPreference(preferenceForm.intentionCompany);
     case 5:
       return Boolean(profileForm.schoolName.trim());
     case 6:
@@ -128,29 +157,18 @@ function getStepCompleted(step: StepId, profileForm: ProfileFormState, preferenc
   }
 }
 
-function resolveInitialStep(profileForm: ProfileFormState, preferenceForm: PersonalPreferenceSummary): StepId {
-  if (!profileForm.name.trim()) {
-    return 1;
-  }
-  if (!preferenceForm.intentionCity.length) {
-    return 2;
-  }
-  if (!preferenceForm.intentionJob.length) {
-    return 3;
-  }
-  if (!preferenceForm.intentionCompany.length) {
-    return 4;
-  }
-  if (!profileForm.schoolName.trim()) {
-    return 5;
-  }
-  if (!profileForm.major.trim()) {
-    return 6;
-  }
-  if (!profileForm.graduationYear) {
-    return 7;
-  }
-  return 8;
+function hasCompletedPreference(values: string[]) {
+  return values.some((item) => Boolean(item.trim()));
+}
+
+function getIncompleteSteps(profileForm: ProfileFormState, preferenceForm: PersonalPreferenceSummary) {
+  const incompleteCorePreference = ([2, 3, 4] as StepId[]).some((step) => !getStepCompleted(step, profileForm, preferenceForm));
+  return DISPLAY_STEPS.filter((step) => {
+    if (step === 2) {
+      return incompleteCorePreference;
+    }
+    return !getStepCompleted(step, profileForm, preferenceForm);
+  });
 }
 
 function getGraduationOptions() {
@@ -167,6 +185,7 @@ function getGraduationOptions() {
 export function ProfileOnboardingModal({ token }: { token: string | null }) {
   const [visible, setVisible] = useState(false);
   const [currentStep, setCurrentStep] = useState<StepId>(1);
+  const [pendingSteps, setPendingSteps] = useState<StepId[]>(ALL_STEPS);
   const [profileForm, setProfileForm] = useState<ProfileFormState>({
     name: '',
     schoolName: '',
@@ -191,7 +210,19 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
   const [lastSavedPreference, setLastSavedPreference] = useState('');
 
   const graduationOptions = useMemo(() => getGraduationOptions(), []);
-  const canClose = REQUIRED_STEPS.some((step) => getStepCompleted(step, profileForm, preferenceForm));
+  const completedStepsCount = useMemo(
+    () => ALL_STEPS.filter((step) => getStepCompleted(step, profileForm, preferenceForm)).length,
+    [profileForm, preferenceForm],
+  );
+  const currentStepQueueIndex = pendingSteps.indexOf(currentStep);
+  const isLastPendingStep = pendingSteps.length > 0 && currentStepQueueIndex === pendingSteps.length - 1;
+  const firstIncompleteCoreField: PreferenceKey = !hasCompletedPreference(preferenceForm.intentionCity)
+    ? 'intentionCity'
+    : !hasCompletedPreference(preferenceForm.intentionJob)
+      ? 'intentionJob'
+      : !hasCompletedPreference(preferenceForm.intentionCompany)
+        ? 'intentionCompany'
+        : 'intentionCity';
   const citySuggestions = useKeywordSuggestions({
     keyword: tagInput.intentionCity,
     field: 'location',
@@ -214,6 +245,8 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
   useEffect(() => {
     if (!token) {
       setVisible(false);
+      setCurrentStep(1);
+      setPendingSteps(ALL_STEPS);
       setLastSavedProfile('');
       setLastSavedPreference('');
       return;
@@ -224,16 +257,22 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
 
     clientFetch<PersonalOverview>('/me/overview', {}, token)
       .then((overview) => {
-        if (cancelled || !overview.profileOnboardingRequired) {
+        if (cancelled) {
           return;
         }
 
         const nextProfile = buildProfileForm(overview.profile, overview.normalizedProfile);
         const nextPreference = buildPreferenceForm(overview.preference, overview.normalizedPreference);
+        const nextPendingSteps = getIncompleteSteps(nextProfile, nextPreference);
+        const shouldShowModal = overview.profileOnboardingRequired && nextPendingSteps.length > 0;
         setProfileForm(nextProfile);
         setPreferenceForm(nextPreference);
-        setCurrentStep(resolveInitialStep(nextProfile, nextPreference));
-        setVisible(true);
+        setPendingSteps(nextPendingSteps);
+        setCurrentStep(nextPendingSteps[0] ?? 1);
+        setVisible(shouldShowModal);
+        if (!shouldShowModal) {
+          setActiveSuggestionField(null);
+        }
         setLastSavedProfile(serializeProfileForm(nextProfile));
         setLastSavedPreference(serializePreferenceForm(nextPreference));
       })
@@ -281,20 +320,21 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
     };
   };
 
-  const persistForms = async (options?: PersistOptions) => {
+  const persistForms = async (options?: PersistOptions): Promise<PersistResult> => {
     if (!token) {
-      return true;
+      return { saved: true, profileForm, preferenceForm };
     }
 
     const commitDraft = Boolean(options?.commitDraft);
     let nextPreference = options?.preferenceOverride ?? preferenceForm;
     let nextTagInput = options?.tagInputOverride ?? tagInput;
 
-    if (commitDraft && currentStep >= 2 && currentStep <= 4) {
-      const key = currentStep === 2 ? 'intentionCity' : currentStep === 3 ? 'intentionJob' : 'intentionCompany';
-      const committed = commitTagDraft(key, nextPreference, nextTagInput);
-      nextPreference = committed.nextPreference;
-      nextTagInput = committed.nextTagInput;
+    if (commitDraft && currentStep === 2) {
+      for (const { key } of CORE_PREFERENCE_FIELDS) {
+        const committed = commitTagDraft(key, nextPreference, nextTagInput);
+        nextPreference = committed.nextPreference;
+        nextTagInput = committed.nextTagInput;
+      }
     }
 
     if (nextPreference !== preferenceForm) {
@@ -312,11 +352,17 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
     const preferenceChanged = shouldSavePreference && nextPreferenceSnapshot !== lastSavedPreference;
 
     if (!profileChanged && !preferenceChanged) {
-      return true;
+      return {
+        saved: true,
+        profileForm,
+        preferenceForm: nextPreference,
+      };
     }
 
     try {
       setPersisting(true);
+      let nextResolvedProfile = profileForm;
+      let nextResolvedPreference = nextPreference;
       if (profileChanged) {
         const savedProfile = await clientFetch<ProfileUpdateResponse>(
           '/me/profile',
@@ -338,6 +384,7 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
         });
         setProfileForm(normalizedProfileForm);
         setLastSavedProfile(serializeProfileForm(normalizedProfileForm));
+        nextResolvedProfile = normalizedProfileForm;
       }
 
       if (preferenceChanged) {
@@ -352,11 +399,20 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
         const normalizedPreferenceForm = buildPreferenceForm(savedPreference, savedPreference.normalizedPreference);
         setPreferenceForm(normalizedPreferenceForm);
         setLastSavedPreference(serializePreferenceForm(normalizedPreferenceForm));
+        nextResolvedPreference = normalizedPreferenceForm;
       }
-      return true;
+      return {
+        saved: true,
+        profileForm: nextResolvedProfile,
+        preferenceForm: nextResolvedPreference,
+      };
     } catch (error) {
       showToast(error instanceof Error ? error.message : '保存失败，请稍后重试');
-      return false;
+      return {
+        saved: false,
+        profileForm,
+        preferenceForm: nextPreference,
+      };
     } finally {
       setPersisting(false);
     }
@@ -384,27 +440,54 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
     setActiveSuggestionField(null);
   };
 
-  const removeTag = async (key: PreferenceKey, value: string) => {
-    const nextPreference = {
-      ...preferenceForm,
-      [key]: preferenceForm[key].filter((item) => item !== value),
-    };
-    setPreferenceForm(nextPreference);
-    await persistForms({
-      saveProfile: false,
-      savePreference: true,
-      preferenceOverride: nextPreference,
-    });
+  const removeTag = (key: PreferenceKey, value: string) => {
+    setPreferenceForm((prev) => ({
+      ...prev,
+      [key]: prev[key].filter((item) => item !== value),
+    }));
   };
 
   const applySuggestion = (key: PreferenceKey, item: JobSearchSuggestionItem) => {
     addTag(key, item.value);
   };
 
+  const applyRecommendedFill = () => {
+    setPreferenceForm((prev) => {
+      return {
+        ...prev,
+        intentionCity: hasCompletedPreference(prev.intentionCity)
+          ? prev.intentionCity
+          : [...RECOMMENDED_PREFERENCE_VALUES.intentionCity],
+        intentionJob: hasCompletedPreference(prev.intentionJob)
+          ? prev.intentionJob
+          : [...RECOMMENDED_PREFERENCE_VALUES.intentionJob],
+        intentionCompany: hasCompletedPreference(prev.intentionCompany)
+          ? prev.intentionCompany
+          : [...RECOMMENDED_PREFERENCE_VALUES.intentionCompany],
+      };
+    });
+    setTagInput((prev) => ({
+      ...prev,
+      intentionCity: '',
+      intentionJob: '',
+      intentionCompany: '',
+    }));
+    setActiveSuggestionField(null);
+  };
+
   const validateStep = (step: StepId) => {
     if (step === 1 && !profileForm.name.trim()) {
       showToast('请先填写姓名');
       return false;
+    }
+    if (step === 2) {
+      const missingFields = CORE_PREFERENCE_FIELDS
+        .filter(({ key }) => !hasCompletedPreference(preferenceForm[key]))
+        .map(({ label }) => label);
+      if (missingFields.length > 0) {
+        showToast(`请先补充${missingFields.join('、')}`);
+        return false;
+      }
     }
     if (step === 5 && !profileForm.schoolName.trim()) {
       showToast('请先填写毕业学校');
@@ -425,34 +508,53 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
     return true;
   };
 
-  const goPrevious = async () => {
-    const saved = await persistForms({ commitDraft: true });
-    if (!saved) {
+  const resolvePendingNavigation = (
+    nextProfileForm: ProfileFormState,
+    nextPreferenceForm: PersonalPreferenceSummary,
+    direction: 'previous' | 'next',
+  ) => {
+    const nextPending = getIncompleteSteps(nextProfileForm, nextPreferenceForm);
+    setPendingSteps(nextPending);
+
+    if (!nextPending.length) {
+      setVisible(false);
+      setActiveSuggestionField(null);
       return;
     }
-    setCurrentStep((current) => (Math.max(1, current - 1) as StepId));
+
+    const referenceSteps = direction === 'previous'
+      ? pendingSteps.slice(0, Math.max(0, currentStepQueueIndex)).reverse()
+      : pendingSteps.slice(currentStepQueueIndex + 1);
+    const nextStep = referenceSteps.find((step) => nextPending.includes(step))
+      ?? (nextPending.includes(currentStep) ? currentStep : nextPending[0]);
+    setCurrentStep(nextStep);
+  };
+
+  const goPrevious = async () => {
+    const result = await persistForms({ commitDraft: true });
+    if (!result.saved) {
+      return;
+    }
+    resolvePendingNavigation(result.profileForm, result.preferenceForm, 'previous');
   };
 
   const goNext = async () => {
     if (!validateStep(currentStep)) {
       return;
     }
-    const saved = await persistForms({ commitDraft: true });
-    if (!saved || currentStep >= 8) {
+    const result = await persistForms({ commitDraft: true });
+    if (!result.saved) {
       return;
     }
-    setCurrentStep((current) => (current + 1) as StepId);
+    resolvePendingNavigation(result.profileForm, result.preferenceForm, 'next');
   };
 
   const handleClose = async () => {
-    if (!canClose) {
-      showToast('至少完成 1 个必填项后才能关闭');
+    const result = await persistForms({ commitDraft: true });
+    if (!result.saved) {
       return;
     }
-    const saved = await persistForms({ commitDraft: true });
-    if (!saved) {
-      return;
-    }
+    setPendingSteps(getIncompleteSteps(result.profileForm, result.preferenceForm));
     setVisible(false);
     setActiveSuggestionField(null);
   };
@@ -461,10 +563,11 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
     if (!validateStep(currentStep)) {
       return;
     }
-    const saved = await persistForms({ commitDraft: true });
-    if (!saved) {
+    const result = await persistForms({ commitDraft: true });
+    if (!result.saved) {
       return;
     }
+    setPendingSteps(getIncompleteSteps(result.profileForm, result.preferenceForm));
     setVisible(false);
     setActiveSuggestionField(null);
     showToast('资料已保存', 'success');
@@ -498,10 +601,10 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
               type="button"
               className={cn(
                 'inline-flex h-10 w-10 items-center justify-center rounded-full border transition',
-                canClose ? 'border-slate-200 text-slate-500 hover:border-brand hover:text-brand' : 'cursor-not-allowed border-slate-100 text-slate-300',
+                'border-slate-200 text-slate-500 hover:border-brand hover:text-brand',
               )}
               onClick={() => void handleClose()}
-              disabled={!canClose || persisting}
+              disabled={persisting}
               aria-label="关闭资料完善弹窗"
             >
               <X className="h-5 w-5" />
@@ -511,7 +614,7 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
           <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-slate-100">
             <div
               className="h-full rounded-full bg-brand transition-all duration-300"
-              style={{ width: `${(currentStep / 8) * 100}%` }}
+              style={{ width: `${Math.max((completedStepsCount / ALL_STEPS.length) * 100, 8)}%` }}
             />
           </div>
         </div>
@@ -542,118 +645,68 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
 
               {currentStep === 2 ? (
                 <div className="space-y-4">
-                  <div className="relative">
-                    <Input
-                      autoFocus
-                      value={tagInput.intentionCity}
-                      placeholder="输入求职城市关键词，如：北京、上海"
-                      onChange={(event) => setTagInput((prev) => ({ ...prev, intentionCity: event.target.value }))}
-                      onFocus={() => setActiveSuggestionField('intentionCity')}
-                      onBlur={() => void handlePreferenceBlur()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          addTag('intentionCity');
-                        }
-                      }}
-                    />
-                    <KeywordSuggestionDropdown
-                      visible={activeSuggestionField === 'intentionCity' && Boolean(tagInput.intentionCity.trim())}
-                      loading={citySuggestions.loading}
-                      suggestions={citySuggestions.suggestions}
-                      onSelect={(item) => applySuggestion('intentionCity', item)}
-                    />
+                  <div className="rounded-2xl border border-brand/20 bg-brand/5 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-brand">高上岸推荐填写</p>
+                        <p className="mt-1 text-xs text-slate-500">自动补齐当前空白的求职城市、意向岗位、目标公司</p>
+                      </div>
+                      <Button type="button" variant="secondary" className="border-brand/20 text-brand hover:bg-brand/10 hover:text-brand" onClick={applyRecommendedFill}>
+                        高上岸推荐填写
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {preferenceForm.intentionCity.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        className="rounded-full bg-slate-100 px-3 py-1 text-sm text-ink transition hover:bg-brand/10 hover:text-brand"
-                        onClick={() => void removeTag('intentionCity', item)}
-                      >
-                        {item} ×
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
 
-              {currentStep === 3 ? (
-                <div className="space-y-4">
-                  <div className="relative">
-                    <Input
-                      autoFocus
-                      value={tagInput.intentionJob}
-                      placeholder="输入意向岗位关键词，如：开发、运营"
-                      onChange={(event) => setTagInput((prev) => ({ ...prev, intentionJob: event.target.value }))}
-                      onFocus={() => setActiveSuggestionField('intentionJob')}
-                      onBlur={() => void handlePreferenceBlur()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          addTag('intentionJob');
-                        }
-                      }}
-                    />
-                    <KeywordSuggestionDropdown
-                      visible={activeSuggestionField === 'intentionJob' && Boolean(tagInput.intentionJob.trim())}
-                      loading={jobSuggestions.loading}
-                      suggestions={jobSuggestions.suggestions}
-                      onSelect={(item) => applySuggestion('intentionJob', item)}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {preferenceForm.intentionJob.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        className="rounded-full bg-slate-100 px-3 py-1 text-sm text-ink transition hover:bg-brand/10 hover:text-brand"
-                        onClick={() => void removeTag('intentionJob', item)}
-                      >
-                        {item} ×
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+                  {CORE_PREFERENCE_FIELDS.map(({ key, label, placeholder }) => {
+                    const suggestions = key === 'intentionCity'
+                      ? citySuggestions
+                      : key === 'intentionJob'
+                        ? jobSuggestions
+                        : companySuggestions;
 
-              {currentStep === 4 ? (
-                <div className="space-y-4">
-                  <div className="relative">
-                    <Input
-                      autoFocus
-                      value={tagInput.intentionCompany}
-                      placeholder="输入目标公司关键词"
-                      onChange={(event) => setTagInput((prev) => ({ ...prev, intentionCompany: event.target.value }))}
-                      onFocus={() => setActiveSuggestionField('intentionCompany')}
-                      onBlur={() => void handlePreferenceBlur()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          addTag('intentionCompany');
-                        }
-                      }}
-                    />
-                    <KeywordSuggestionDropdown
-                      visible={activeSuggestionField === 'intentionCompany' && Boolean(tagInput.intentionCompany.trim())}
-                      loading={companySuggestions.loading}
-                      suggestions={companySuggestions.suggestions}
-                      onSelect={(item) => applySuggestion('intentionCompany', item)}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {preferenceForm.intentionCompany.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        className="rounded-full bg-slate-100 px-3 py-1 text-sm text-ink transition hover:bg-brand/10 hover:text-brand"
-                        onClick={() => void removeTag('intentionCompany', item)}
-                      >
-                        {item} ×
-                      </button>
-                    ))}
-                  </div>
+                    return (
+                      <div key={key} className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-medium text-ink">{label}</p>
+                          <p className="text-xs text-slate-400">最多 5 个</p>
+                        </div>
+                        <div className="relative">
+                          <Input
+                            autoFocus={firstIncompleteCoreField === key}
+                            value={tagInput[key]}
+                            placeholder={placeholder}
+                            onChange={(event) => setTagInput((prev) => ({ ...prev, [key]: event.target.value }))}
+                            onFocus={() => setActiveSuggestionField(key)}
+                            onBlur={() => void handlePreferenceBlur()}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                addTag(key);
+                              }
+                            }}
+                          />
+                          <KeywordSuggestionDropdown
+                            visible={activeSuggestionField === key && Boolean(tagInput[key].trim())}
+                            loading={suggestions.loading}
+                            suggestions={suggestions.suggestions}
+                            onSelect={(item) => applySuggestion(key, item)}
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {preferenceForm[key].map((item) => (
+                            <button
+                              key={item}
+                              type="button"
+                              className="rounded-full bg-slate-100 px-3 py-1 text-sm text-ink transition hover:bg-brand/10 hover:text-brand"
+                              onClick={() => void removeTag(key, item)}
+                            >
+                              {item} ×
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
 
@@ -743,12 +796,12 @@ export function ProfileOnboardingModal({ token }: { token: string | null }) {
               <Button
                 variant="secondary"
                 onClick={() => void goPrevious()}
-                disabled={currentStep === 1 || persisting}
+                disabled={currentStepQueueIndex <= 0 || persisting}
               >
                 上一步
               </Button>
 
-              {currentStep < 8 ? (
+              {!isLastPendingStep ? (
                 <Button onClick={() => void goNext()} disabled={persisting}>
                   下一步
                 </Button>

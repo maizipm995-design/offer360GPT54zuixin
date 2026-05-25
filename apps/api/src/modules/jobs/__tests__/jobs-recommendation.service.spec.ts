@@ -8,7 +8,10 @@ import type {
 } from '../jobs-normalization.types';
 
 vi.mock('../../../common/utils/member-access', () => ({
-  assertUserHasMemberPermission: vi.fn().mockResolvedValue({ memberRoleCode: 'SUPER_MEMBER' }),
+  assertUserHasMemberPermission: vi.fn().mockResolvedValue({
+    memberRoleCode: 'SUPER_MEMBER',
+    permissionKeys: ['jobs:detail:view', 'jobs:deliver:use', 'jobs:recommend:view'],
+  }),
 }));
 
 const locationDictionary: LocationDictionarySnapshot = {
@@ -60,7 +63,7 @@ type MockJob = {
   degreeRequirement: string;
   workLocation: string;
   jobName: string;
-  jobCategory: string;
+  majorRequirement: string;
   recruitmentType: string;
   deadlineAt: string;
   announcementUrl: string;
@@ -88,11 +91,11 @@ function createJob(overrides: Partial<MockJob> = {}): MockJob {
     degreeRequirement: '本科',
     workLocation: '济南',
     jobName: '行政助理',
-    jobCategory: '职能类',
+    majorRequirement: '专业不限',
     recruitmentType: '校招',
     deadlineAt: '2099-12-31',
-    announcementUrl: 'https://example.com/job-1',
-    deliveryUrl: 'https://example.com/deliver/job-1',
+    announcementUrl: 'https://campus.acme.cn/job-1',
+    deliveryUrl: 'https://apply.acme.cn/deliver/job-1',
     graduationSession: '2026届',
     referralCode: null,
     announcementTitle: '山东能源集团校园招聘公告',
@@ -172,7 +175,7 @@ function matchesWhere(job: MockJob, where?: Record<string, any>): boolean {
     return false;
   }
 
-  if (where.jobCategory?.contains && !matchesStringContains(job.jobCategory, where.jobCategory.contains)) {
+  if (where.majorRequirement?.contains && !matchesStringContains(job.majorRequirement, where.majorRequirement.contains)) {
     return false;
   }
 
@@ -350,7 +353,7 @@ describe('JobsRecommendationService', () => {
       jobs: [createJob({
         companyFullName: '山东中烟工业有限责任公司',
         jobName: '研发工程师',
-        jobCategory: '研发类',
+        majorRequirement: '计算机类、自动化类相关专业',
         degreeRequirement: '大学本科及以上',
         announcementTitle: '2026届校园招聘（计算机科学与技术相关专业优先）',
         industry: '烟草',
@@ -416,7 +419,7 @@ describe('JobsRecommendationService', () => {
 
     expect(result.list).toHaveLength(0);
     expect(prisma.jobAnnouncement.findMany).toHaveBeenCalled();
-    const firstSelectCall = prisma.jobAnnouncement.findMany.mock.calls.find(([args]: [{ select?: { id: true } }]) => Boolean(args.select?.id));
+    const firstSelectCall = prisma.jobAnnouncement.findMany.mock.calls.find((call) => Boolean(call[0]?.select?.id));
     expect(firstSelectCall?.[0]?.where?.AND?.[0]?.updatedAt?.gte).toEqual(new Date('2026-01-28T00:00:00Z'));
   });
 
@@ -424,7 +427,7 @@ describe('JobsRecommendationService', () => {
     const prisma = createPrismaMock({
       jobs: [createJob({
         jobName: '行政助理',
-        jobCategory: '职能类',
+        majorRequirement: '专业不限',
         announcementTitle: '综合行政岗位招聘',
       })],
       profile: null,
@@ -445,7 +448,7 @@ describe('JobsRecommendationService', () => {
 
     await service.getRecommendedList('user-1', { page: 1, limit: 20 });
 
-    const firstSelectCall = prisma.jobAnnouncement.findMany.mock.calls.find(([args]: [{ select?: { id: true } }]) => Boolean(args.select?.id));
+    const firstSelectCall = prisma.jobAnnouncement.findMany.mock.calls.find((call) => Boolean(call[0]?.select?.id));
     const recallWhere = firstSelectCall?.[0]?.where;
     const recallText = JSON.stringify(recallWhere);
 
@@ -453,7 +456,7 @@ describe('JobsRecommendationService', () => {
     expect(recallText).not.toContain('"contains":"行政"');
   });
 
-  it('推荐过滤与专业打分会读取岗位分类中的专业信息', async () => {
+  it('推荐过滤与专业打分会读取专业需求字段', async () => {
     const companyPreference = createNormalizedKeyword('中烟', '中国烟草', ['中国烟草', '中烟']);
     const jobPreference = createNormalizedKeyword('研发', '研发', ['研发', '研发工程师']);
     const majorPreference = createNormalizedKeyword('计算机科学与技术', '计算机', ['计算机', '计算机科学与技术']);
@@ -462,7 +465,7 @@ describe('JobsRecommendationService', () => {
       jobs: [createJob({
         companyFullName: '山东中烟工业有限责任公司',
         jobName: '研发工程师',
-        jobCategory: '计算机相关专业优先',
+        majorRequirement: '计算机相关专业优先',
         announcementTitle: '校园招聘公告',
         industry: '烟草',
       })],
@@ -490,5 +493,41 @@ describe('JobsRecommendationService', () => {
 
     expect(result.list).toHaveLength(1);
     expect(hitDimensions).toContain('major');
+  });
+
+  it('专属推荐会把演示链接和无效链接识别为不可用按钮', async () => {
+    const prisma = createPrismaMock({
+      jobs: [createJob({
+        announcementUrl: 'https://example.com/demo-announcement',
+        deliveryUrl: 'javascript:void(0)',
+      })],
+    });
+    const normalizationService = createNormalizationServiceMock();
+    const service = new JobsRecommendationService(prisma as never, normalizationService as never);
+
+    const result = await service.getRecommendedList('user-1', { page: 1, limit: 20 });
+
+    expect(result.list).toHaveLength(1);
+    expect(result.list[0]?.hasAnnouncement).toBe(false);
+    expect(result.list[0]?.hasDelivery).toBe(false);
+    expect(result.list[0]?.canViewAnnouncement).toBe(false);
+    expect(result.list[0]?.canDeliver).toBe(false);
+  });
+
+  it('专属推荐会按包含 @ 的投递字段识别为邮箱投递', async () => {
+    const prisma = createPrismaMock({
+      jobs: [createJob({
+        announcementUrl: 'https://campus.acme.cn/job-email-delivery',
+        deliveryUrl: '投递邮箱：hr@acme.cn',
+      })],
+    });
+    const normalizationService = createNormalizationServiceMock();
+    const service = new JobsRecommendationService(prisma as never, normalizationService as never);
+
+    const result = await service.getRecommendedList('user-1', { page: 1, limit: 20 });
+
+    expect(result.list).toHaveLength(1);
+    expect(result.list[0]?.hasDelivery).toBe(true);
+    expect(result.list[0]?.deliveryType).toBe('email');
   });
 });

@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { buildQuery } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { useGlobalToast } from '@/store/toast-store';
 import { formatDate } from '@/lib/utils';
 import { AdminListResponse, AdminOperationLogItem } from '@/types';
@@ -42,7 +43,7 @@ export default function AdminOperationLogsPage() {
       const result = await clientFetch<AdminListResponse<AdminOperationLogItem>>(`/admin/operation-logs?${buildQuery({ ...nextFilters, page, limit: 10 })}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '操作日志加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('操作日志'));
     } finally {
       setLoading(false);
     }

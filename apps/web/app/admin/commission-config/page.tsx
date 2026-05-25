@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminCommissionConfigItem } from '@/types';
@@ -26,7 +27,7 @@ export default function AdminCommissionConfigPage() {
         setConfig(result);
         setOneLevelRate(String(result.oneLevelRate));
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : '激励金配置加载失败');
+        setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('激励金配置'));
       } finally {
         setLoading(false);
       }
@@ -48,9 +49,9 @@ export default function AdminCommissionConfigPage() {
       });
       setConfig(result);
       setOneLevelRate(String(result.oneLevelRate));
-      setMessage('激励金配置已保存');
+      setMessage(ADMIN_TOAST_COPY.saved('激励金配置'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '激励金配置保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('激励金配置'));
     } finally {
       setSaving(false);
     }

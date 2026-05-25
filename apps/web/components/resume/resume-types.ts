@@ -125,6 +125,7 @@ export interface ResumeContent {
   campusRoles: ResumeCampusRoleEntry[];
   selfEvaluation: string;
   links: ResumeLinkEntry[];
+  sectionLabels: Partial<Record<ResumeSectionId, string>>;
 }
 
 export interface ResumeVerticalSpacingConfig {
@@ -254,6 +255,98 @@ export interface ResumePreviewMetrics {
   pageCount: number;
 }
 
+export type ResumeAiOptimizeEntrySectionId =
+  | 'education'
+  | 'internships'
+  | 'projects'
+  | 'campusRoles'
+  | 'awards'
+  | 'languages'
+  | 'skills';
+export type ResumeAiOptimizeSectionId = 'selfEvaluation' | 'personalSummary';
+export type ResumeAiTranslateDirection = 'zh-to-en' | 'en-to-zh';
+
+export interface ResumeAiOptimizeEntryResponse {
+  logId: string;
+  optimizeType: 'entry';
+  sectionId: ResumeAiOptimizeEntrySectionId;
+  entryId: string;
+  updatedFieldKeys: string[];
+  updatedDraft: ResumeDraftRecord;
+}
+
+export interface ResumeAiAssessEntryResponse {
+  sectionId: ResumeAiOptimizeEntrySectionId;
+  entryId: string;
+  suggestions: string[];
+}
+
+export interface ResumeAiSuggestionRecord {
+  sectionId: ResumeAiOptimizeEntrySectionId | ResumeAiOptimizeSectionId;
+  entryId: string;
+  suggestions: string[];
+  updatedAt: string;
+}
+
+export interface ResumeAiSuggestionPendingTarget {
+  sectionId: ResumeAiOptimizeEntrySectionId | ResumeAiOptimizeSectionId;
+  entryId: string;
+}
+
+export interface ResumeAiSuggestionListResponse {
+  suggestions: ResumeAiSuggestionRecord[];
+  pendingTargets: ResumeAiSuggestionPendingTarget[];
+}
+
+export interface ResumeAiOptimizeSectionResponse {
+  logId: string;
+  optimizeType: 'section';
+  sectionId: ResumeAiOptimizeSectionId;
+  updatedFieldKeys: string[];
+  updatedDraft: ResumeDraftRecord;
+}
+
+export interface ResumeAiOptimizeGlobalSubmitResponse {
+  taskId: string;
+  optimizeType: 'global';
+  status: 'processing';
+  createdAt: string;
+  pollingIntervalMs: number;
+}
+
+export interface ResumeAiOptimizeGlobalTaskStatusResponse {
+  taskId: string;
+  resumeId: string;
+  optimizeType: 'global' | 'translate' | 'professional';
+  status: 'processing' | 'success' | 'failed';
+  updatedDraft?: ResumeDraftRecord;
+  summary?: {
+    updatedFieldCount: number;
+    updatedSections: string[];
+  };
+  errorMessage?: string;
+}
+
+export interface ResumeAiTranslateSubmitResponse {
+  taskId: string;
+  optimizeType: 'translate';
+  status: 'processing';
+  createdAt: string;
+  pollingIntervalMs: number;
+  resumeId: string;
+  sourceResumeId: string;
+}
+
+export interface ResumeAiProfessionalOptimizeSubmitResponse {
+  taskId: string;
+  optimizeType: 'professional';
+  status: 'processing';
+  createdAt: string;
+  pollingIntervalMs: number;
+  resumeId: string;
+  sourceResumeId: string;
+}
+
 export interface ResumeSectionDefinition {
   id: ResumeSectionId;
   label: string;
@@ -365,6 +458,7 @@ export const DEFAULT_RESUME_CONTENT: ResumeContent = {
   campusRoles: [],
   selfEvaluation: '',
   links: [],
+  sectionLabels: {},
 };
 
 export const DEFAULT_RESUME_LAYOUT: ResumeLayoutItem[] = RESUME_SECTION_DEFINITIONS.map((item) => ({
@@ -497,6 +591,7 @@ export function normalizeResumeContent(input?: unknown): ResumeContent {
     campusRoles: normalizeArray(source.campusRoles, createEmptyCampusRoleEntry, true),
     selfEvaluation: typeof source.selfEvaluation === 'string' ? source.selfEvaluation : '',
     links: normalizeArray(source.links, createEmptyLinkEntry, true),
+    sectionLabels: normalizeSectionLabels(source.sectionLabels),
   };
 }
 
@@ -631,7 +726,11 @@ export function formatResumeDate(value: string, format: ResumeDateFormat) {
   return `${year}年${Number(month)}月`;
 }
 
-export function getSectionLabel(sectionId: ResumeSectionId) {
+export function getSectionLabel(sectionId: ResumeSectionId, sectionLabels?: Partial<Record<ResumeSectionId, string>>) {
+  const customLabel = sectionLabels?.[sectionId]?.trim();
+  if (customLabel) {
+    return customLabel;
+  }
   return RESUME_SECTION_DEFINITIONS.find((item) => item.id === sectionId)?.label ?? sectionId;
 }
 
@@ -839,4 +938,19 @@ function normalizeArray<T extends { id: string }>(
   }
 
   return list;
+}
+
+function normalizeSectionLabels(input: unknown): Partial<Record<ResumeSectionId, string>> {
+  if (!isRecord(input)) {
+    return {};
+  }
+  const validIds = new Set(RESUME_SECTION_DEFINITIONS.map((item) => item.id));
+  const entries = Object.entries(input).flatMap(([key, value]) => {
+    if (!validIds.has(key as ResumeSectionId) || typeof value !== 'string') {
+      return [];
+    }
+    const normalized = value.trim();
+    return normalized ? [[key as ResumeSectionId, normalized] as const] : [];
+  });
+  return Object.fromEntries(entries) as Partial<Record<ResumeSectionId, string>>;
 }

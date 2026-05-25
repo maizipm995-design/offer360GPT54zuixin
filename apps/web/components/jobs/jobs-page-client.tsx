@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   BarChart3,
@@ -21,13 +22,14 @@ import {
 } from 'lucide-react';
 import { MemberAccessDialog } from '@/components/membership/member-access-dialog';
 import { KeywordSuggestionDropdown, useKeywordSuggestions } from '@/components/common/keyword-suggestion-dropdown';
-import { ProfileOnboardingModal } from '@/components/jobs/profile-onboarding-modal';
+import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { clientFetch } from '@/lib/api';
+import { COMMON_TOAST_COPY } from '@/lib/toast-copy';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { showToast, useGlobalToast } from '@/store/toast-store';
@@ -37,6 +39,7 @@ interface Props {
   initialStats: JobStats;
   initialFilters: JobFilters;
   initialJobs: JobListResponse;
+  initialJobsMode?: 'full' | 'sample';
   serviceProducts: ServiceItem[];
 }
 
@@ -59,6 +62,7 @@ interface FilterTag {
 }
 
 type DeliveryType = 'email' | 'website';
+type JobsTab = 'all' | 'recommended' | 'free';
 
 type ClipboardModalState = {
   title: string;
@@ -66,6 +70,7 @@ type ClipboardModalState = {
   description: string;
   confirmText: string;
   successMessage: string;
+  closeOnCopy?: boolean;
 };
 
 const initialFilterState: FiltersState = {
@@ -113,6 +118,9 @@ function HoverPreviewText({
 const filterLabelClass = 'text-[12px] font-medium text-[#666666]';
 const toolbarChipBase = 'inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition';
 const jobMetaTagBaseClass = 'inline-flex w-fit items-center rounded-md px-2.5 py-1 text-[11px] font-bold leading-none';
+const publicApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || '';
+const deployLinkDebugServerUrl = 'http://127.0.0.1:7777/event';
+const deployLinkDebugSessionId = 'deploy-link-bug';
 const membershipAvatarUrls = [
   'https://miaoda-site-img.cdn.bcebos.com/images/baidu_image_search_799b0e63-a9a9-4481-8b8a-f10954430c52.jpg',
   'https://miaoda-site-img.cdn.bcebos.com/images/305127fd-1137-4062-8ef7-fc6b919fbec9.jpg',
@@ -121,6 +129,12 @@ const membershipAvatarUrls = [
   'https://miaoda-site-img.cdn.bcebos.com/images/baidu_image_search_36f35de0-9def-4b98-a52b-b844702b206a.jpg',
   'https://miaoda-site-img.cdn.bcebos.com/images/e386e94e-d633-462b-a12e-8018a59d9e90.jpg',
 ] as const;
+const ProfileOnboardingModal = dynamic(
+  () => import('@/components/jobs/profile-onboarding-modal').then((mod) => mod.ProfileOnboardingModal),
+  {
+    ssr: false,
+  },
+);
 
 function MultiSelectDropdown({
   label,
@@ -246,15 +260,6 @@ function getEnterpriseBadgeClass(nature?: string | null) {
   return 'bg-emerald-50 text-emerald-600';
 }
 
-function resolveDeliveryType(value?: string | null): DeliveryType | null {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return null;
-  }
-
-  return normalized.includes('@') && !/^https?:\/\//i.test(normalized) ? 'email' : 'website';
-}
-
 function getDisplayUpdateDate(job: JobItem) {
   return job.entryDate || job.updatedAt;
 }
@@ -270,6 +275,104 @@ function getDisplayJobName(job: JobItem) {
 function getDisplayMajorRequirement(job: JobItem) {
   return job.majorRequirement?.trim() || '暂无专业需求';
 }
+
+function getJobsTabLabel(tab: JobsTab) {
+  return tab === 'all' ? '全部招聘' : tab === 'recommended' ? '专属推荐' : '免费专区';
+}
+
+function renderJobsTabIcon(tab: JobsTab, className?: string) {
+  return tab === 'all'
+    ? <Building2 className={className} />
+    : tab === 'recommended'
+      ? <Star className={className} />
+      : <Check className={className} />;
+}
+
+function resolveJobRedirectPath(redirectPath?: string | null) {
+  const normalized = redirectPath?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^(https?:|mailto:)/i.test(normalized)) {
+    return normalized;
+  }
+
+  if (normalized.startsWith('/api/')) {
+    try {
+      if (typeof window !== 'undefined') {
+        const isLocalBrowser = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+        if (isLocalBrowser) {
+          return new URL(normalized, `${window.location.protocol}//${window.location.hostname}:14000`).toString();
+        }
+      }
+      if (publicApiBaseUrl) {
+        return new URL(normalized, new URL(publicApiBaseUrl).origin).toString();
+      }
+      if (typeof window !== 'undefined') {
+        return new URL(normalized, window.location.origin).toString();
+      }
+    } catch {
+      return normalized;
+    }
+  }
+
+  if (normalized.startsWith('/') && typeof window !== 'undefined') {
+    try {
+      return new URL(normalized, window.location.origin).toString();
+    } catch {
+      return normalized;
+    }
+  }
+
+  return normalized;
+}
+
+// #region debug-point A:deploy-link-debug-reporter
+function reportDeployLinkDebugEvent(input: {
+  hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E';
+  location: string;
+  msg: string;
+  data?: Record<string, unknown>;
+}) {
+  fetch(deployLinkDebugServerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: deployLinkDebugSessionId,
+      runId: 'pre-fix',
+      hypothesisId: input.hypothesisId,
+      location: input.location,
+      msg: `[DEBUG] ${input.msg}`,
+      data: input.data ?? {},
+      ts: Date.now(),
+    }),
+  }).catch(() => undefined);
+}
+// #endregion
+
+
+// #region debug-point A:job-about-blank-helper
+function reportJobAboutBlankDebugEvent(input: {
+  hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E';
+  location: string;
+  msg: string;
+  data?: Record<string, unknown>;
+}) {
+  fetch('http://127.0.0.1:7777/event', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId: 'job-about-blank',
+      runId: 'post-fix',
+      hypothesisId: input.hypothesisId,
+      location: input.location,
+      msg: `[DEBUG] ${input.msg}`,
+      data: input.data ?? {},
+      ts: Date.now(),
+    }),
+  }).catch(() => undefined);
+}
+// #endregion
 
 function MembershipPromoCard({ onUpgrade, user }: { onUpgrade: () => void; user: AuthUser | null }) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -400,14 +503,28 @@ function ActionGrid({
   onReferral: (jobId: string) => void;
   progressOptions: string[];
 }) {
-  const deliveryType = resolveDeliveryType(job.deliveryUrl) ?? job.deliveryType ?? null;
+  const deliveryType = job.deliveryType ?? null;
 
   return (
     <div className="grid grid-cols-2 gap-1.5">
-      <Button className="h-8 w-full bg-[#FF8002] px-1.5 text-[11px] hover:bg-[#E67200]" onClick={() => onViewAnnouncement(job)}>
+      <Button
+        type="button"
+        className="h-8 w-full bg-[#FF8002] px-1.5 text-[11px] hover:bg-[#E67200]"
+        onClick={() => onViewAnnouncement(job)}
+        disabled={!job.hasAnnouncement}
+      >
         查看公告
       </Button>
-      <Button className="h-8 w-full bg-[#FF8002] px-1.5 text-[11px] hover:bg-[#E67200]" onClick={() => onDeliver(job)}>
+      <Button
+        type="button"
+        className="h-8 w-full bg-[#FF8002] px-1.5 text-[11px] hover:bg-[#E67200]"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onDeliver(job);
+        }}
+        disabled={!job.hasDelivery}
+      >
         {deliveryType === 'email' ? '查看邮箱' : '立即投递'}
       </Button>
       <Select
@@ -423,7 +540,7 @@ function ActionGrid({
         ))}
       </Select>
       {job.hasReferral ? (
-        <Button className="h-8 w-full bg-[#FF8002] px-1.5 text-[11px] hover:bg-[#E67200]" onClick={() => onReferral(job.id)}>
+        <Button type="button" className="h-8 w-full bg-[#FF8002] px-1.5 text-[11px] hover:bg-[#E67200]" onClick={() => onReferral(job.id)}>
           查看内推码
         </Button>
       ) : (
@@ -451,15 +568,29 @@ function MobileActionGrid({
   onReferral: (jobId: string) => void;
   progressOptions: string[];
 }) {
-  const deliveryType = resolveDeliveryType(job.deliveryUrl) ?? job.deliveryType ?? null;
+  const deliveryType = job.deliveryType ?? null;
 
   return (
     <div className="grid grid-cols-4 gap-1.5">
-      <Button className="h-9 w-full bg-[#FF8002] px-0.5 text-[10px] hover:bg-[#E67200]" onClick={() => onViewAnnouncement(job)}>
+      <Button
+        type="button"
+        className="h-9 w-full bg-[#FF8002] px-0.5 text-[10px] hover:bg-[#E67200]"
+        onClick={() => onViewAnnouncement(job)}
+        disabled={!job.hasAnnouncement}
+      >
         公告
       </Button>
-      <Button className="h-9 w-full bg-[#FF8002] px-0.5 text-[10px] hover:bg-[#E67200]" onClick={() => onDeliver(job)}>
-        {deliveryType === 'email' ? '邮箱' : '投递'}
+      <Button
+        type="button"
+        className="h-9 w-full bg-[#FF8002] px-0.5 text-[10px] hover:bg-[#E67200]"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onDeliver(job);
+        }}
+        disabled={!job.hasDelivery}
+      >
+        {deliveryType === 'email' ? '查看邮箱' : '立即投递'}
       </Button>
       <Select
         className="h-9 w-full rounded-lg border-slate-200 bg-white text-center text-[10px]"
@@ -474,7 +605,7 @@ function MobileActionGrid({
         ))}
       </Select>
       {job.hasReferral ? (
-        <Button className="h-9 w-full bg-[#FF8002] px-0.5 text-[10px] hover:bg-[#E67200]" onClick={() => onReferral(job.id)}>
+        <Button type="button" className="h-9 w-full bg-[#FF8002] px-0.5 text-[10px] hover:bg-[#E67200]" onClick={() => onReferral(job.id)}>
           内推码
         </Button>
       ) : (
@@ -527,7 +658,11 @@ function JobRow({
       <div className="min-w-0">
         <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#9CA3AF] md:hidden">招聘要求</p>
         <div className="flex flex-col gap-2">
-          {job.degreeRequirement ? <span className={cn(jobMetaTagBaseClass, 'bg-orange-100 text-[#FF8002] text-[12px] px-3 py-1')}>{job.degreeRequirement}</span> : null}
+          {job.degreeRequirement ? (
+            <span className={cn(jobMetaTagBaseClass, 'min-w-[5em] whitespace-normal bg-orange-100 px-3 py-1 text-center text-[12px] leading-5 text-[#FF8002]')}>
+              {job.degreeRequirement}
+            </span>
+          ) : null}
           {job.recruitmentType ? <span className={cn(jobMetaTagBaseClass, 'bg-blue-50 text-blue-600 text-[12px] px-3 py-1')}>{job.recruitmentType}</span> : null}
         </div>
       </div>
@@ -573,19 +708,22 @@ function JobRow({
   );
 }
 
-export function JobsPageClient({ initialStats, initialFilters, initialJobs, serviceProducts }: Props) {
+export function JobsPageClient({ initialStats, initialFilters, initialJobs, initialJobsMode = 'full', serviceProducts }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const loaderRef = useRef<HTMLDivElement | null>(null);
+  const mobileTabMenuRef = useRef<HTMLDivElement | null>(null);
   const { token, user } = useAuthStore();
+  const initialJobsNeedHydration = initialJobsMode === 'sample';
   const [mounted, setMounted] = useState(false);
   const [filters, setFilters] = useState<FiltersState>(initialFilterState);
-  const [tab, setTab] = useState<'all' | 'recommended'>('all');
-  const [view, setView] = useState<'list' | 'card'>('card');
+  const [tab, setTab] = useState<JobsTab>('all');
+  const [view, setView] = useState<'list' | 'card'>('list');
   const [jobs, setJobs] = useState<JobItem[]>(initialJobs.list);
   const [pagination, setPagination] = useState(initialJobs.pagination);
   const [recommendedFeed, setRecommendedFeed] = useState<JobListResponse['recommendedFeed']>(initialJobs.recommendedFeed);
   const [loading, setLoading] = useState(false);
+  const [hydratingInitialJobs, setHydratingInitialJobs] = useState(initialJobsNeedHydration);
   const [message, setMessage] = useState('');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [activeClipboardModal, setActiveClipboardModal] = useState<ClipboardModalState | null>(null);
@@ -593,6 +731,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   const [memberAccessMessage, setMemberAccessMessage] = useState('');
   const [generalSuggestionOpen, setGeneralSuggestionOpen] = useState(false);
   const [citySuggestionOpen, setCitySuggestionOpen] = useState(false);
+  const [mobileTabMenuOpen, setMobileTabMenuOpen] = useState(false);
 
   // 用于追踪上一次应用到 API 的过滤条件，避免重复请求和无限循环
   const lastAppliedRef = useRef<{ filters: string; tab: string }>({
@@ -616,6 +755,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   });
 
   const progressOptions = useMemo(() => ['全部', '已投递', '已笔试', '已面试', '已录用', '已拒绝', '已取消', '其他'], []);
+  const isFreeZoneTab = tab === 'free';
 
   const totalCount = pagination.total || jobs.length;
   const updatedWithinDayOptions = useMemo(
@@ -655,6 +795,35 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   }, []);
 
   useEffect(() => {
+    if (!mobileTabMenuOpen) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (mobileTabMenuRef.current && !mobileTabMenuRef.current.contains(event.target as Node)) {
+        setMobileTabMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [mobileTabMenuOpen]);
+
+  // 首屏 SSR 仅下发少量摘要样例，挂载后再由客户端补拉完整第一页。
+  useEffect(() => {
+    if (!hydratingInitialJobs) {
+      return;
+    }
+
+    void (async () => {
+      await fetchJobs(1, false, initialFilterState, 'all');
+      setHydratingInitialJobs(false);
+    })();
+  }, [hydratingInitialJobs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setView('card');
     }
@@ -662,7 +831,15 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (searchParams.get('tab') !== 'recommended') {
+    const requestedTab = searchParams.get('tab');
+    if (requestedTab === 'free') {
+      if (!token || tab === 'free') {
+        return;
+      }
+      void handleTabChange('free');
+      return;
+    }
+    if (requestedTab !== 'recommended') {
       return;
     }
     if (!token || tab === 'recommended') {
@@ -676,7 +853,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!loaderRef.current || !pagination.hasMore) return;
+    if (!loaderRef.current || !pagination.hasMore || hydratingInitialJobs) return;
     const element = loaderRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -689,7 +866,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [pagination, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pagination, loading, hydratingInitialJobs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 全自动即时检索逻辑
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -725,11 +902,10 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     return () => clearTimeout(timer);
   }, [filters, tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const buildQuery = (page: number, nextFilters: FiltersState = filters, includeTrackingUserId = true) => {
+  const buildQuery = (page: number, nextFilters: FiltersState = filters) => {
     const params = new URLSearchParams();
     params.set('page', String(page));
     params.set('limit', '20');
-    if (includeTrackingUserId && user?.id) params.set('userId', user.id);
     if (nextFilters.generalKeyword.trim()) {
       params.set('keyword', nextFilters.generalKeyword.trim());
     }
@@ -747,13 +923,15 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     page: number,
     append = false,
     nextFilters: FiltersState = filters,
-    nextTab: 'all' | 'recommended' = tab,
+    nextTab: JobsTab = tab,
   ) => {
     setLoading(true);
     try {
       const path = nextTab === 'recommended'
-        ? `/jobs/recommended?${buildQuery(page, nextFilters, false)}`
-        : `/jobs?${buildQuery(page, nextFilters, true)}`;
+        ? `/jobs/recommended?${buildQuery(page, nextFilters)}`
+        : nextTab === 'free'
+          ? '/jobs/free-zone'
+          : `/jobs?${buildQuery(page, nextFilters)}`;
       const result = await clientFetch<JobListResponse>(path, undefined, token || undefined);
       setJobs((prev) => (append ? [...prev, ...result.list] : result.list));
       setPagination(result.pagination);
@@ -781,9 +959,13 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     + nextFilters.updatedWithinDays.length
   );
 
-  const requireLogin = (targetTab: 'all' | 'recommended' = tab) => {
-    showToast('请先登录后再进行该操作');
-    const redirectQuery = targetTab === 'recommended' ? '?tab=recommended' : '';
+  const requireLogin = (targetTab: JobsTab = tab) => {
+    showToast(COMMON_TOAST_COPY.loginRequired);
+    const redirectQuery = targetTab === 'recommended'
+      ? '?tab=recommended'
+      : targetTab === 'free'
+        ? '?tab=free'
+        : '';
     router.push(`/login?redirect=${encodeURIComponent(`/jobs${redirectQuery}`)}`);
   };
 
@@ -792,7 +974,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
   const requireMemberPermission = (
     permissionKey: MemberPermissionKey,
     messageText: string,
-    options?: { targetTab?: 'all' | 'recommended' },
+    options?: { targetTab?: JobsTab },
   ) => {
     if (!token) {
       requireLogin(options?.targetTab ?? tab);
@@ -807,10 +989,25 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
 
   const applyFilterRequest = async (
     nextFilters: FiltersState,
-    nextTab: 'all' | 'recommended' = tab,
+    nextTab: JobsTab = tab,
     options?: { keepScrollPosition?: boolean; resetToAllTab?: boolean; successMessage?: string },
   ) => {
     const targetTab = options?.resetToAllTab ? 'all' : nextTab;
+
+    if (targetTab === 'free') {
+      if (!token) {
+        requireLogin('free');
+        return false;
+      }
+      const fixedFilters = initialFilterState;
+      setFilters(fixedFilters);
+      lastAppliedRef.current = {
+        filters: JSON.stringify(fixedFilters),
+        tab: targetTab,
+      };
+      await fetchJobs(1, false, fixedFilters, targetTab);
+      return true;
+    }
 
     if (hasKeywordFilters(nextFilters) && !requireMemberPermission('jobs:search:use', '标准会员及以上可使用岗位搜索功能', { targetTab })) {
       return false;
@@ -872,13 +1069,18 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     await applyFilterRequest(nextFilters, tab, { keepScrollPosition: true });
   };
 
-  const handleTabChange = async (nextTab: 'all' | 'recommended') => {
+  const handleTabChange = async (nextTab: JobsTab) => {
     if (nextTab === 'recommended' && !requireMemberPermission('jobs:recommend:view', '专属推荐仅对超级会员开放，请先开通或升级会员', { targetTab: 'recommended' })) {
+      return;
+    }
+    if (nextTab === 'free' && !token) {
+      requireLogin('free');
       return;
     }
 
     const nextFilters = initialFilterState;
     setFiltersExpanded(false);
+    setMobileTabMenuOpen(false);
     setTab(nextTab);
     setFilters(nextFilters);
 
@@ -917,6 +1119,18 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
     }
   };
 
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      return fallbackCopyTextToClipboard(text);
+    } catch {
+      return fallbackCopyTextToClipboard(text);
+    }
+  };
+
   const copyClipboardModalValue = async () => {
     if (!activeClipboardModal?.value) {
       return;
@@ -924,67 +1138,216 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
 
     try {
       setCopyingClipboardValue(true);
-      let success = false;
-
-      // 优先使用现代 Clipboard API
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(activeClipboardModal.value);
-        success = true;
-      } else {
-        // 降级使用 execCommand
-        success = fallbackCopyTextToClipboard(activeClipboardModal.value);
-      }
+      const success = await copyTextToClipboard(activeClipboardModal.value);
 
       if (success) {
         setMessage(activeClipboardModal.successMessage);
-        setActiveClipboardModal(null);
+        if (activeClipboardModal.closeOnCopy ?? true) {
+          setActiveClipboardModal(null);
+        }
       } else {
-        setMessage('复制失败，请手动复制');
-      }
-    } catch {
-      // 异常时再次尝试降级方案
-      const success = fallbackCopyTextToClipboard(activeClipboardModal.value);
-      if (success) {
-        setMessage(activeClipboardModal.successMessage);
-        setActiveClipboardModal(null);
-      } else {
-        setMessage('复制失败，请手动复制');
+        setMessage(COMMON_TOAST_COPY.copyFailed);
       }
     } finally {
       setCopyingClipboardValue(false);
     }
   };
 
-  const handleViewAnnouncement = (job: JobItem) => {
-    if (!requireMemberPermission('jobs:detail:view', '标准会员及以上可查看招聘公告详情', { targetTab: tab })) {
+  const openDeliveryEmailModal = async (emailAddress: string) => {
+    const normalizedEmail = emailAddress.trim();
+    if (!normalizedEmail) {
+      setMessage('当前岗位暂无投递邮箱');
       return;
     }
-    if (!job.announcementUrl) {
+
+    setActiveClipboardModal({
+      title: '查看邮箱',
+      value: normalizedEmail,
+      description: '邮箱地址已自动复制，你也可以点击下方按钮再次手动复制。',
+      confirmText: '复制邮箱',
+      successMessage: '邮箱地址已复制',
+      closeOnCopy: false,
+    });
+
+    const copied = await copyTextToClipboard(normalizedEmail);
+    setMessage(copied ? '邮箱地址已自动复制' : '邮箱地址展示成功，请点击复制按钮手动复制');
+  };
+
+  const handleViewAnnouncement = async (job: JobItem) => {
+    if (isFreeZoneTab) {
+      if (!token) {
+        requireLogin('free');
+        return;
+      }
+    } else if (!requireMemberPermission('jobs:detail:view', '标准会员及以上可查看招聘公告详情', { targetTab: tab })) {
+      return;
+    }
+    if (!job.hasAnnouncement) {
       setMessage('当前岗位暂无公告链接');
       return;
     }
 
+    let pendingWindow: Window | null = null;
     try {
-      void clientFetch(`/jobs/${job.id}/click`, { method: 'POST', body: JSON.stringify({ actionType: 'view_announcement' }) }, token || undefined);
-    } catch {
-      // 埋点失败时不阻断用户查看公告
-    }
+      pendingWindow = window.open('about:blank', '_blank');
+      if (pendingWindow) {
+        try {
+          pendingWindow.opener = null;
+        } catch {}
+      }
+      // #region debug-point A:view-announcement-open-window
+      reportJobAboutBlankDebugEvent({
+        hypothesisId: 'A',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:open',
+        msg: 'view announcement window opened',
+        data: {
+          jobId: job.id,
+          companyName: getDisplayCompanyFullName(job),
+          hasPendingWindow: Boolean(pendingWindow),
+          pendingWindowClosed: pendingWindow?.closed ?? null,
+          hasAnnouncement: job.hasAnnouncement,
+          tab,
+          isFreeZoneTab,
+        },
+      });
+      // #endregion
+      const result = await clientFetch<{ announcementUrl?: string | null; redirectPath?: string | null }>(
+        isFreeZoneTab ? `/jobs/${job.id}/free-zone/view-announcement` : `/jobs/${job.id}/view-announcement`,
+        { method: 'POST' },
+        token!,
+      );
 
-    window.open(job.announcementUrl, '_blank');
+      const announcementUrl = result.announcementUrl ?? result.redirectPath ?? null;
+      const redirectPath = resolveJobRedirectPath(announcementUrl);
+      // #region debug-point B:deploy-link-announcement-target
+      reportDeployLinkDebugEvent({
+        hypothesisId: 'B',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:deploy-target',
+        msg: 'announcement redirect target resolved',
+        data: {
+          jobId: job.id,
+          origin: typeof window !== 'undefined' ? window.location.origin : null,
+          hostname: typeof window !== 'undefined' ? window.location.hostname : null,
+          publicApiBaseUrl,
+          rawRedirectPath: announcementUrl,
+          resolvedRedirectPath: redirectPath,
+          usesApiProxyPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/proxy/') : false,
+          usesApiJobsPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/jobs/') : false,
+        },
+      });
+      // #endregion
+      // #region debug-point B:view-announcement-path
+      reportJobAboutBlankDebugEvent({
+        hypothesisId: 'B',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:path',
+        msg: 'view announcement redirect resolved',
+        data: {
+          jobId: job.id,
+          rawRedirectPath: announcementUrl,
+          resolvedRedirectPath: redirectPath,
+          hasPendingWindow: Boolean(pendingWindow),
+          pendingWindowClosed: pendingWindow?.closed ?? null,
+        },
+      });
+      // #endregion
+      if (!redirectPath) {
+        if (pendingWindow) {
+          pendingWindow.close();
+        }
+        setMessage('当前岗位暂无公告链接');
+        return;
+      }
+
+      if (pendingWindow) {
+        // #region debug-point D:view-announcement-assign
+        reportJobAboutBlankDebugEvent({
+          hypothesisId: 'D',
+          location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:assign',
+          msg: 'assigning announcement redirect to pending window',
+          data: {
+            jobId: job.id,
+            resolvedRedirectPath: redirectPath,
+            pendingWindowClosed: pendingWindow.closed,
+          },
+        });
+        // #endregion
+          pendingWindow.location.replace(redirectPath);
+      } else {
+        // #region debug-point D:view-announcement-window-open
+        reportJobAboutBlankDebugEvent({
+          hypothesisId: 'D',
+          location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:fallback-open',
+          msg: 'opening announcement redirect in fallback window',
+          data: {
+            jobId: job.id,
+            resolvedRedirectPath: redirectPath,
+          },
+        });
+        // #endregion
+        window.open(redirectPath, '_blank');
+      }
+    } catch (error) {
+      if (pendingWindow && !pendingWindow.closed) {
+        pendingWindow.close();
+      }
+      // #region debug-point E:view-announcement-error
+      reportJobAboutBlankDebugEvent({
+        hypothesisId: 'E',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:error',
+        msg: 'view announcement failed',
+        data: {
+          jobId: job.id,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        },
+      });
+      // #endregion
+      setMessage(error instanceof Error ? error.message : '查看公告失败');
+    }
   };
 
   const handleDeliver = async (job: JobItem) => {
-    if (!requireMemberPermission('jobs:deliver:use', '标准会员及以上可使用立即投递')) return;
+    if (isFreeZoneTab) {
+      if (!token) {
+        requireLogin('free');
+        return;
+      }
+    } else if (!requireMemberPermission('jobs:deliver:use', '标准会员及以上可使用立即投递', { targetTab: tab })) {
+      return;
+    }
+    let pendingWindow: Window | null = null;
     try {
+      const expectsEmailModal = job.deliveryType === 'email';
+      pendingWindow = expectsEmailModal ? null : window.open('about:blank', '_blank');
+      if (pendingWindow) {
+        try {
+          pendingWindow.opener = null;
+        } catch {}
+      }
+      // #region debug-point A:deliver-open-window
+      reportJobAboutBlankDebugEvent({
+        hypothesisId: 'A',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:open',
+        msg: 'deliver window opened',
+        data: {
+          jobId: job.id,
+          companyName: getDisplayCompanyFullName(job),
+          hasPendingWindow: Boolean(pendingWindow),
+          pendingWindowClosed: pendingWindow?.closed ?? null,
+          tab,
+          isFreeZoneTab,
+          deliveryType: job.deliveryType ?? null,
+        },
+      });
+      // #endregion
       const result = await clientFetch<{
         action: string;
         deliveryType?: DeliveryType | null;
+        emailAddress?: string | null;
         deliveryUrl?: string | null;
-        recruitmentType?: string | null;
-        recruitmentLink?: string | null;
+        redirectPath?: string | null;
         progressStatus: string;
       }>(
-        `/jobs/${job.id}/deliver`,
+        isFreeZoneTab ? `/jobs/${job.id}/free-zone/deliver` : `/jobs/${job.id}/deliver`,
         { method: 'POST' },
         token!,
       );
@@ -994,57 +1357,158 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
         setJobs((prev) => prev.map((item) => (item.id === job.id ? { ...item, currentProgress: '已投递' } : item)));
       }
 
-      const deliveryValue = result.deliveryUrl ?? result.recruitmentLink ?? job.deliveryUrl ?? null;
-      const deliveryType = result.deliveryType ?? resolveDeliveryType(deliveryValue) ?? job.deliveryType ?? null;
+      const deliveryUrl = result.deliveryUrl ?? result.redirectPath ?? null;
+      const redirectPath = resolveJobRedirectPath(deliveryUrl);
+      const deliveryType = result.deliveryType ?? job.deliveryType ?? null;
+      const emailAddress = result.emailAddress?.trim() || null;
+      // #region debug-point B:deploy-link-deliver-target
+      reportDeployLinkDebugEvent({
+        hypothesisId: 'B',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:deploy-target',
+        msg: 'deliver redirect target resolved',
+        data: {
+          jobId: job.id,
+          origin: typeof window !== 'undefined' ? window.location.origin : null,
+          hostname: typeof window !== 'undefined' ? window.location.hostname : null,
+          publicApiBaseUrl,
+          rawRedirectPath: deliveryUrl,
+          resolvedRedirectPath: redirectPath,
+          deliveryType,
+          usesApiProxyPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/proxy/') : false,
+          usesApiJobsPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/jobs/') : false,
+        },
+      });
+      // #endregion
+      // #region debug-point B:deliver-path
+      reportJobAboutBlankDebugEvent({
+        hypothesisId: 'B',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:path',
+        msg: 'deliver redirect resolved',
+        data: {
+          jobId: job.id,
+          rawRedirectPath: deliveryUrl,
+          resolvedRedirectPath: redirectPath,
+          action: result.action,
+          deliveryType,
+          emailAddress,
+          hasPendingWindow: Boolean(pendingWindow),
+          pendingWindowClosed: pendingWindow?.closed ?? null,
+        },
+      });
+      // #endregion
 
-      if (deliveryType === 'email' && deliveryValue) {
-        setActiveClipboardModal({
-          title: '查看邮箱',
-          value: deliveryValue,
-          description: '请复制该邮箱后，通过邮件发送简历进行投递。',
-          confirmText: '复制该邮箱',
-          successMessage: '邮箱已复制，快去发送简历吧',
-        });
+      const shouldOpenEmailModal = job.deliveryType === 'email' || result.action === 'show_email_modal' || deliveryType === 'email' || Boolean(emailAddress);
+
+      if (shouldOpenEmailModal) {
+        if (pendingWindow && !pendingWindow.closed) {
+          pendingWindow.close();
+        }
+        await openDeliveryEmailModal(emailAddress ?? '');
         return;
       }
 
-      if (deliveryValue) {
-        window.open(deliveryValue, '_blank');
-        setMessage('已为你打开投递链接');
+      if (redirectPath) {
+        if (pendingWindow) {
+          // #region debug-point D:deliver-assign
+          reportJobAboutBlankDebugEvent({
+            hypothesisId: 'D',
+            location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:assign',
+            msg: 'assigning deliver redirect to pending window',
+            data: {
+              jobId: job.id,
+              resolvedRedirectPath: redirectPath,
+              deliveryType,
+              pendingWindowClosed: pendingWindow.closed,
+            },
+          });
+          // #endregion
+          pendingWindow.location.replace(redirectPath);
+        } else {
+          // #region debug-point D:deliver-window-open
+          reportJobAboutBlankDebugEvent({
+            hypothesisId: 'D',
+            location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:fallback-open',
+            msg: 'opening deliver redirect in fallback window',
+            data: {
+              jobId: job.id,
+              resolvedRedirectPath: redirectPath,
+              deliveryType,
+            },
+          });
+          // #endregion
+          window.open(redirectPath, '_blank');
+        }
+        setMessage('已为你打开投递入口');
       } else {
         setMessage('当前岗位暂无投递入口');
       }
     } catch (error) {
+      if (pendingWindow && !pendingWindow.closed) {
+        pendingWindow.close();
+      }
+      // #region debug-point E:deliver-error
+      reportJobAboutBlankDebugEvent({
+        hypothesisId: 'E',
+        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:error',
+        msg: 'deliver failed',
+        data: {
+          jobId: job.id,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        },
+      });
+      // #endregion
       setMessage(error instanceof Error ? error.message : '投递失败');
     }
   };
 
   const handleProgress = async (jobId: string, progressStatus: string) => {
-    if (!requireMemberPermission('jobs:progress:update', '超级会员可标记求职进度')) return;
+    if (isFreeZoneTab) {
+      if (!token) {
+        requireLogin('free');
+        return;
+      }
+    } else if (!requireMemberPermission('jobs:progress:update', '超级会员可标记求职进度', { targetTab: tab })) {
+      return;
+    }
     try {
-      await clientFetch(`/jobs/${jobId}/progress`, { method: 'PUT', body: JSON.stringify({ progressStatus }) }, token!);
+      await clientFetch(
+        isFreeZoneTab ? `/jobs/${jobId}/free-zone/progress` : `/jobs/${jobId}/progress`,
+        { method: 'PUT', body: JSON.stringify({ progressStatus }) },
+        token!,
+      );
       if (tab === 'recommended') {
         await fetchJobs(1, false, filters, 'recommended');
       } else {
         setJobs((prev) => prev.map((item) => (item.id === jobId ? { ...item, currentProgress: progressStatus } : item)));
       }
-      setMessage('进度已保存');
+      setMessage(COMMON_TOAST_COPY.saved);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '保存失败');
+      setMessage(error instanceof Error ? error.message : COMMON_TOAST_COPY.saveFailed);
     }
   };
 
   const handleReferral = async (jobId: string) => {
-    if (!requireMemberPermission('jobs:referral:view', '超级会员可查看岗位内推信息')) return;
+    if (isFreeZoneTab) {
+      if (!token) {
+        requireLogin('free');
+        return;
+      }
+    } else if (!requireMemberPermission('jobs:referral:view', '超级会员可查看岗位内推信息', { targetTab: tab })) {
+      return;
+    }
     try {
-      const result = await clientFetch<{ hasReferral: boolean; referralCode?: string | null; contactHint: string }>(`/jobs/${jobId}/referral`, {}, token!);
+      const result = await clientFetch<{ hasReferral: boolean; referralCode?: string | null; contactHint: string }>(
+        isFreeZoneTab ? `/jobs/${jobId}/free-zone/referral` : `/jobs/${jobId}/referral`,
+        {},
+        token!,
+      );
       if (result.referralCode?.trim()) {
         setActiveClipboardModal({
           title: '查看内推码',
           value: result.referralCode.trim(),
           description: '复制内推码后，可在企业投递入口或内推流程中使用。',
           confirmText: '复制内推码',
-          successMessage: '内推码已复制',
+          successMessage: COMMON_TOAST_COPY.copySuccess,
         });
         return;
       }
@@ -1245,7 +1709,9 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
             })}
           </section>
 
-          <Card className="rounded-xl border-0 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.1)] sm:p-4">
+          {isFreeZoneTab ? null : (
+            <Card className="rounded-xl border-0 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.1)] sm:p-4">
+              <>
             <div className="hidden md:grid md:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)_112px_112px_132px] md:items-end md:gap-3">
               <label className="flex flex-col gap-1.5">
                 <span className={filterLabelClass}>通用搜索</span>
@@ -1425,15 +1891,56 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
             ) : null}
 
             {renderFilterTagRow()}
-          </Card>
+              </>
+            </Card>
+          )}
 
           <MembershipPromoCard onUpgrade={() => router.push('/membership')} user={mounted ? user : null} />
 
           <section className="overflow-hidden rounded-xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
             <div className="border-b border-[#F3F4F6] px-3 py-3 sm:px-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="md:hidden">
+                <div className="flex items-center justify-between gap-3" ref={mobileTabMenuRef}>
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-[#FF8002] transition hover:border-orange-200"
+                      onClick={() => setMobileTabMenuOpen((prev) => !prev)}
+                    >
+                      {renderJobsTabIcon(tab, 'h-4 w-4 shrink-0 text-[#FF8002]')}
+                      <span className="whitespace-nowrap">{getJobsTabLabel(tab)}</span>
+                      {mobileTabMenuOpen ? <ChevronUp className="ml-1 h-4 w-4 shrink-0 text-[#FF8002]" /> : <ChevronDown className="ml-1 h-4 w-4 shrink-0 text-[#FF8002]" />}
+                    </button>
+
+                    {mobileTabMenuOpen ? (
+                      <div className="absolute left-0 top-full z-20 mt-2 min-w-full overflow-hidden rounded-xl border border-orange-100 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.12)]">
+                        <div className="p-2">
+                          {(['all', 'recommended', 'free'] as const).map((item) => (
+                            <button
+                              key={item}
+                              type="button"
+                              className={cn(
+                                'flex w-full items-center rounded-lg px-3 py-2.5 text-sm font-medium transition',
+                                tab === item ? 'bg-orange-50 text-[#FF8002]' : 'text-[#333333] hover:bg-slate-50',
+                              )}
+                              onClick={() => void handleTabChange(item)}
+                            >
+                              {renderJobsTabIcon(item, 'mr-2 h-4 w-4 shrink-0')}
+                              {getJobsTabLabel(item)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <span className="shrink-0 whitespace-nowrap text-sm font-medium text-[#666666]">共 {totalCount} 条结果</span>
+                </div>
+              </div>
+
+              <div className="hidden md:flex md:flex-col md:gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-wrap gap-2">
-                  {(['all', 'recommended'] as const).map((item) => (
+                  {(['all', 'recommended', 'free'] as const).map((item) => (
                     <button
                       key={item}
                       type="button"
@@ -1443,8 +1950,8 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                       )}
                       onClick={() => void handleTabChange(item)}
                     >
-                      {item === 'all' ? <Building2 className="mr-1.5 h-4 w-4" /> : <Star className="mr-1.5 h-4 w-4" />}
-                      {item === 'all' ? '全部招聘' : '专属推荐'}
+                      {renderJobsTabIcon(item, 'mr-1.5 h-4 w-4')}
+                      {getJobsTabLabel(item)}
                     </button>
                   ))}
                 </div>
@@ -1476,10 +1983,16 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
             </div>
 
             {tab === 'recommended' ? renderRecommendedFeedNotice() : null}
+            {isFreeZoneTab ? (
+              <div className="mx-3 mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 sm:mx-4">
+                <p className="font-semibold">免费专区</p>
+                <p className="mt-1 leading-6 text-emerald-800">当前栏目固定开放最新更新的 20 条岗位，已登录用户可直接查看并使用专区内岗位功能。</p>
+              </div>
+            ) : null}
 
             {jobs.length === 0 && !loading ? (
               <div className="px-4 py-12 text-center text-sm text-slate-500">
-                {tab === 'recommended' ? getRecommendedEmptyText() : '当前暂无符合条件的岗位，试试调整筛选条件后再搜索。'}
+                {tab === 'recommended' ? getRecommendedEmptyText() : isFreeZoneTab ? '免费专区当前暂无可展示的最新岗位。' : '当前暂无符合条件的岗位，试试调整筛选条件后再搜索。'}
               </div>
             ) : view === 'list' ? (
               <>
@@ -1491,7 +2004,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
                   <div>招聘岗位</div>
                   <div>专业需求</div>
                   <div>截止日期</div>
-                  <div>会员操作区</div>
+                  <div>{isFreeZoneTab ? '操作区' : '会员操作区'}</div>
                 </div>
                 <div>
                   {jobs.map((job) => (
@@ -1565,7 +2078,11 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
               </div>
             )}
 
-            {loading ? <div className="border-t border-[#F3F4F6] px-4 py-4 text-center text-sm text-[#666666]">正在加载数据...</div> : null}
+            {loading ? (
+              <div className="border-t border-[#F3F4F6] px-4 py-4 text-center text-sm text-[#666666]">
+                {hydratingInitialJobs ? '正在加载完整岗位列表...' : '正在加载数据...'}
+              </div>
+            ) : null}
             {!pagination.hasMore ? (
               <div className="border-t border-[#F3F4F6] px-4 py-4 text-center text-sm text-[#666666]">没有更多了</div>
             ) : (
@@ -1609,6 +2126,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, serv
           </Card>
         </div>
       ) : null}
+        <SiteBeianFooter />
         <MemberAccessDialog
           open={Boolean(memberAccessMessage)}
           message={memberAccessMessage}

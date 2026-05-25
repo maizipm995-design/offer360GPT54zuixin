@@ -30,7 +30,9 @@ const adminMenus = [
   { href: '/admin/admin-users', label: '后台账号管理', icon: ShieldCheck, permission: 'admin:admin-user:manage' },
   { href: '/admin/admin-roles', label: '角色权限管理', icon: Settings2, permission: 'admin:role:manage' },
   { href: '/admin/operation-logs', label: '操作日志', icon: FileText, permission: 'admin:operation-log:view' },
+  { href: '/admin/jobs-risk-controls', label: '招聘风控处置', icon: ShieldCheck, permission: 'admin:operation-log:view' },
   { href: '/admin/jobs', label: '招聘公告管理', icon: Newspaper, permission: 'admin:job:manage' },
+  { href: '/admin/jobs-deduplication', label: '招聘公告智能去重', icon: ListChecks, permission: 'admin:job:manage' },
   { href: '/admin/normalization-dictionary', label: '标准化词典中心', icon: Settings2, permission: 'admin:job:manage' },
   { href: '/admin/jobs-recommendation-config', label: '专属推荐权重配置', icon: Settings2, permission: 'admin:job:manage' },
   { href: '/admin/users', label: '用户管理', icon: Users, permission: 'admin:user:manage' },
@@ -38,6 +40,7 @@ const adminMenus = [
   { href: '/admin/member-roles', label: 'C端会员角色权限', icon: Settings2, permission: 'admin:membership:manage' },
   { href: '/admin/membership-content', label: 'HTML通用内容管理', icon: FileText, permission: 'admin:membership:manage' },
   { href: '/admin/site-config-assets', label: '网站运营配置文件', icon: FileText, permission: 'admin:service:manage' },
+  { href: '/admin/ai-model-configs', label: 'AI模型配置', icon: Settings2, permission: 'admin:ai:manage' },
   { href: '/admin/redeem-batches', label: '兑换码批次', icon: Ticket, permission: 'admin:redeem:manage' },
   { href: '/admin/redeem-codes', label: '会员兑换码', icon: ListChecks, permission: 'admin:redeem:manage' },
   { href: '/admin/resume-template-configs', label: '简历模板排版配置', icon: Settings2, permission: 'admin:service:manage' },
@@ -50,6 +53,10 @@ const adminMenus = [
 function hasPermission(session: AdminAuthSession | null, permission: string) {
   if (!session) return false;
   return session.admin.isSuperAdmin || session.admin.permissions.includes(permission);
+}
+
+function isMenuActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -202,7 +209,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           <nav className="mt-4 hidden flex-col gap-2 lg:flex">
             {visibleMenus.map((item) => {
               const Icon = item.icon;
-              const active = pathname.startsWith(item.href);
+              const active = isMenuActive(pathname, item.href);
               return (
                 <Link
                   key={item.href}
@@ -223,7 +230,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             <div className="flex min-w-max gap-2 px-1">
               {visibleMenus.map((item) => {
                 const Icon = item.icon;
-                const active = pathname.startsWith(item.href);
+                const active = isMenuActive(pathname, item.href);
                 return (
                   <Link
                     key={item.href}

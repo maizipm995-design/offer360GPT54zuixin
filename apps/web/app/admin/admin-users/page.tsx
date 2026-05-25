@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminListResponse, AdminManagedRoleItem, AdminManagedUserItem } from '@/types';
@@ -57,7 +58,7 @@ export default function AdminManagedUsersPage() {
       setData(userResult);
       setRoles(roleResult.list);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '后台账号加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('后台账号'));
     } finally {
       setLoading(false);
     }
@@ -110,11 +111,11 @@ export default function AdminManagedUsersPage() {
       const result = selectedId
         ? await clientFetch<AdminManagedUserItem>(`/admin/admin-users/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await clientFetch<AdminManagedUserItem>('/admin/admin-users', { method: 'POST', body: JSON.stringify(payload) });
-      setMessage(selectedId ? '后台账号已更新' : '后台账号已创建');
+      setMessage(selectedId ? ADMIN_TOAST_COPY.updated('后台账号') : ADMIN_TOAST_COPY.created('后台账号'));
       fillForm(result);
       await loadData(selectedId ? data.pagination.page : 1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '后台账号保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('后台账号'));
     } finally {
       setSaving(false);
     }
@@ -125,11 +126,11 @@ export default function AdminManagedUsersPage() {
     if (!window.confirm('确认删除当前后台账号吗？')) return;
     try {
       await clientFetch(`/admin/admin-users/${selectedId}`, { method: 'DELETE' });
-      setMessage('后台账号已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('后台账号'));
       resetForm();
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '后台账号删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('后台账号'));
     }
   };
 

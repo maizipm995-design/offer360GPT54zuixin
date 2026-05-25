@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminMemberRoleItem, AdminPermissionCatalogItem } from '@/types';
@@ -49,7 +50,7 @@ export default function AdminMemberRolesPage() {
         setPermissionKeys(next.permissionKeys);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '会员角色配置加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('会员角色配置'));
     } finally {
       setLoading(false);
     }
@@ -82,9 +83,9 @@ export default function AdminMemberRolesPage() {
       });
       setRoles((prev) => prev.map((item) => (item.id === result.id ? result : item)));
       fillForm(result);
-      setMessage('会员角色权限已更新');
+      setMessage(ADMIN_TOAST_COPY.updated('会员角色权限'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '会员角色保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('会员角色'));
     } finally {
       setSaving(false);
     }

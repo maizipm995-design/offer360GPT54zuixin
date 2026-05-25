@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { clientFetch } from '@/lib/api';
+import { AUTH_TOAST_COPY, COMMON_TOAST_COPY } from '@/lib/toast-copy';
 import { useAuthStore } from '@/store/auth-store';
 import { useGlobalToast } from '@/store/toast-store';
 import type { AuthUser } from '@/types';
@@ -88,7 +89,12 @@ function UnifiedAuthPageContent() {
   const [countdown, setCountdown] = useState(0);
   const [message, setMessage] = useState('');
 
-  useGlobalToast(message, setMessage, (message?.includes('成功') || message?.includes('已发送')) ? 'success' : 'error');
+  useGlobalToast(message, setMessage);
+
+  useEffect(() => {
+    router.prefetch(redirectPath);
+    router.prefetch('/');
+  }, [redirectPath, router]);
 
   useEffect(() => {
     if (countdown <= 0) {
@@ -144,13 +150,13 @@ function UnifiedAuthPageContent() {
       });
       startCooldown(result.cooldownSeconds || 60);
       if (result.deliveryMode === 'mock' && result.debugCode) {
-        setMessage(`开发环境未接短信通道，本次验证码：${result.debugCode}`);
+        setMessage(AUTH_TOAST_COPY.debugCode(result.debugCode));
       } else {
-        setMessage('验证码已发送，请注意查收。');
+        setMessage(COMMON_TOAST_COPY.verificationCodeSent);
       }
       return result;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '验证码发送失败，请稍后重试');
+      setMessage(error instanceof Error ? error.message : COMMON_TOAST_COPY.verificationCodeFailed);
       throw error;
     } finally {
       setSendingCode(false);
@@ -188,7 +194,7 @@ function UnifiedAuthPageContent() {
       // 未注册，切到注册验证码步骤
       setStep('register-code');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '手机号识别失败，请稍后重试');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.identifyPhoneFailed);
     } finally {
       setLoading(false);
     }
@@ -216,7 +222,7 @@ function UnifiedAuthPageContent() {
       });
       finishAuth(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '登录失败，请稍后重试');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.loginFailed);
     } finally {
       setLoading(false);
     }
@@ -237,7 +243,7 @@ function UnifiedAuthPageContent() {
       });
       finishAuth(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '验证码登录失败');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.codeLoginFailed);
     } finally {
       setLoading(false);
     }
@@ -252,9 +258,9 @@ function UnifiedAuthPageContent() {
         body: JSON.stringify({ phone: phone.trim(), business: 'register', code: verificationCode.trim() }),
       });
       setStep('register-password');
-      setMessage('验证码验证成功，请设置登录密码。');
+      setMessage(AUTH_TOAST_COPY.verificationCodeVerifiedForRegister);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '验证码校验失败');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.verifyCodeFailed);
     } finally {
       setLoading(false);
     }
@@ -276,7 +282,7 @@ function UnifiedAuthPageContent() {
       });
       finishAuth(result, '/');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '注册失败，请稍后重试');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.registerFailed);
     } finally {
       setLoading(false);
     }
@@ -297,9 +303,9 @@ function UnifiedAuthPageContent() {
         body: JSON.stringify({ phone: phone.trim(), business: 'reset_password', code: verificationCode.trim() }),
       });
       setStep('reset-password');
-      setMessage('验证码验证成功，请设置新密码。');
+      setMessage(AUTH_TOAST_COPY.verificationCodeVerifiedForReset);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '验证码校验失败');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.verifyCodeFailed);
     } finally {
       setLoading(false);
     }
@@ -315,7 +321,7 @@ function UnifiedAuthPageContent() {
       });
       finishAuth(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '密码重置失败');
+      setMessage(error instanceof Error ? error.message : AUTH_TOAST_COPY.resetPasswordFailed);
     } finally {
       setLoading(false);
     }

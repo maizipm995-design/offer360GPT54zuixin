@@ -5,6 +5,7 @@ import { LoaderCircle, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { requestAdminOssUploadSession, uploadFileToOss } from '@/lib/oss';
 import { useGlobalToast } from '@/store/toast-store';
 
@@ -44,9 +45,9 @@ export default function AdminSiteConfigAssetsPage() {
         objectReference: result.objectReference,
         signedUrl: result.signedUrl,
       });
-      setMessage('网站运营配置文件已上传');
+      setMessage(ADMIN_TOAST_COPY.uploadDone('网站运营配置文件'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '网站运营配置文件上传失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.uploadFailed('网站运营配置文件'));
     } finally {
       setUploading(false);
     }

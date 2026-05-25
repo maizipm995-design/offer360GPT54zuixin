@@ -33,6 +33,7 @@ model JobAnnouncement {
   createdAt          DateTime          @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt          DateTime          @updatedAt @map("updated_at") @db.DateTime(0)
   trackings          UserJobTracking[]
+  accessLogs         JobAnnouncementAccessLog[]
 
   @@index([companyFullName], map: "idx_jobs_company_full_name")
   @@index([degreeRequirement], map: "idx_jobs_degree")
@@ -43,6 +44,43 @@ model JobAnnouncement {
   @@index([deliveryMarkCount, updatedAt], map: "idx_jobs_delivery_mark_updated_at")
   @@index([accessClickCount, updatedAt], map: "idx_jobs_access_click_updated_at")
   @@map("job_announcements")
+}
+
+model JobAnnouncementAccessLog {
+  id                 BigInt          @id @default(autoincrement())
+  jobId              String          @map("job_id") @db.Char(36)
+  userId             String?         @map("user_id") @db.Char(36)
+  membershipId       String?         @map("membership_id") @db.Char(36)
+  memberLevel        String?         @map("member_level") @db.VarChar(30)
+  action             String          @db.VarChar(40)
+  requestStatus      String          @default("issued") @map("request_status") @db.VarChar(30)
+  accessTokenId      String?         @unique @map("access_token_id") @db.Char(36)
+  redirectTargetType String?         @map("redirect_target_type") @db.VarChar(30)
+  limitHit           Boolean         @default(false) @map("limit_hit")
+  riskHit            Boolean         @default(false) @map("risk_hit")
+  reviewStatus       String          @default("not_required") @map("review_status") @db.VarChar(30)
+  reviewConclusion   String?         @map("review_conclusion") @db.VarChar(50)
+  reviewNote         String?         @map("review_note") @db.VarChar(500)
+  reviewedByAdminUserId String?      @map("reviewed_by_admin_user_id") @db.Char(36)
+  reviewedAt         DateTime?       @map("reviewed_at") @db.DateTime(0)
+  ip                 String?         @db.VarChar(45)
+  userAgent          String?         @map("user_agent") @db.Text
+  deviceId           String?         @map("device_id") @db.VarChar(100)
+  sessionId          String?         @map("session_id") @db.VarChar(100)
+  failureReason      String?         @map("failure_reason") @db.VarChar(255)
+  consumedAt         DateTime?       @map("consumed_at") @db.DateTime(0)
+  expiresAt          DateTime?       @map("expires_at") @db.DateTime(0)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.DateTime(0)
+  job                JobAnnouncement @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user               User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  reviewedByAdminUser AdminUser?     @relation("JobsRiskReviewedByAdmin", fields: [reviewedByAdminUserId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, createdAt], map: "idx_job_access_logs_job_created")
+  @@index([userId, createdAt], map: "idx_job_access_logs_user_created")
+  @@index([requestStatus, createdAt], map: "idx_job_access_logs_status_created")
+  @@index([reviewStatus, createdAt], map: "idx_job_access_logs_review_status_created")
+  @@map("job_announcement_access_logs")
 }
 
 model User {
@@ -58,6 +96,8 @@ model User {
   lastLoginAt       DateTime?              @map("last_login_at") @db.DateTime(0)
   needsProfileOnboarding Boolean           @default(false) @map("needs_profile_onboarding")
   resumePdfExportCount Int                 @default(0) @map("resume_pdf_export_count")
+  interviewTranscriptFreeCount Int         @default(1) @map("interview_transcript_free_count")
+  interviewTranscriptSuperCount Int        @default(0) @map("interview_transcript_super_count")
   profile           UserProfile?
   preference        UserJobPreferenceTag?
   membership        UserMembership?
@@ -75,6 +115,8 @@ model User {
   bindLogsIn        InvBindLog[]           @relation("BindInvitee")
   inviteRewards     InviteRewardLog[]      @relation("InviteRewardInviter")
   resumeAiOptimizationLogs ResumeAiOptimizationLog[]
+  interviewTranscriptTasks InterviewTranscriptTask[]
+  jobAnnouncementAccessLogs JobAnnouncementAccessLog[]
 
   @@index([parentUid], map: "idx_users_parent_uid")
   @@index([status], map: "idx_users_status")
@@ -171,6 +213,36 @@ model ResumeDraft {
   @@index([userId, updatedAt], map: "idx_resume_drafts_user_updated_at")
   @@index([status], map: "idx_resume_drafts_status")
   @@map("resume_drafts")
+}
+
+model InterviewTranscriptTask {
+  id                    String   @id @default(uuid()) @db.Char(36)
+  userId                String?  @map("user_id") @db.Char(36)
+  companyName           String   @map("company_name") @db.VarChar(191)
+  jobName               String   @map("job_name") @db.VarChar(191)
+  interviewType         String   @map("interview_type") @db.VarChar(50)
+  jobRequirement        String   @map("job_requirement") @db.Text
+  resumeMode            String   @map("resume_mode") @db.VarChar(20)
+  workflowInput         String?  @map("workflow_input") @db.LongText
+  structuredResumeTitle String?  @map("structured_resume_title") @db.VarChar(191)
+  uploadedFileName      String?  @map("uploaded_file_name") @db.VarChar(191)
+  uploadedFilePath      String?  @map("uploaded_file_path") @db.Text
+  uploadedFileContentType String? @map("uploaded_file_content_type") @db.VarChar(191)
+  status                String   @default("processing") @db.VarChar(20)
+  quotaType             String?  @map("quota_type") @db.VarChar(20)
+  processingAttemptCount Int     @default(0) @map("processing_attempt_count")
+  processingStartedAt   DateTime? @map("processing_started_at") @db.DateTime(0)
+  outputMode            String?  @map("output_mode") @db.VarChar(20)
+  downloadUrl           String?  @map("download_url") @db.Text
+  finalOutput           String?  @map("final_output") @db.LongText
+  errorMessage          String?  @map("error_message") @db.VarChar(255)
+  createdAt             DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+  user                  User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, updatedAt], map: "idx_interview_transcript_tasks_user_updated")
+  @@index([status, updatedAt], map: "idx_interview_transcript_tasks_status_updated")
+  @@map("interview_transcript_tasks")
 }
 
 model AiModelConfig {
@@ -539,6 +611,7 @@ model AdminUser {
   operationLogs          AdminOperationLog[]
   createdRedeemBatches   MembershipRedeemCodeBatch[] @relation("RedeemBatchCreator")
   invalidatedRedeemCodes MembershipRedeemCode[]      @relation("RedeemCodeInvalidator")
+  reviewedJobAnnouncementAccessLogs JobAnnouncementAccessLog[] @relation("JobsRiskReviewedByAdmin")
 
   @@index([status], map: "idx_admin_users_status")
   @@map("admin_users")
@@ -591,6 +664,7 @@ model AdminRolePermission {
 model AdminBootstrapConfig {
   id                  Int      @id @default(1)
   registerEntryClosed Boolean  @default(false) @map("register_entry_closed")
+  jobsRiskConfig      Json?    @map("jobs_risk_config")
   createdAt           DateTime @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt           DateTime @updatedAt @map("updated_at") @db.DateTime(0)
 

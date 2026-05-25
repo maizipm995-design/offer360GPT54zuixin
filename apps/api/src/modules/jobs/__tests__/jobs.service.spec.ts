@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-import { JobsRecommendationService } from '../jobs-recommendation.service';
-import { JobsNormalizationService } from '../jobs-normalization.service';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getUserMemberAccess } from '../../../common/utils/member-access';
 import { JobsService } from '../jobs.service';
+
+vi.mock('../../../common/utils/member-access', () => ({
+  assertUserHasMemberPermission: vi.fn(),
+  getUserMemberAccess: vi.fn(),
+}));
 
 type MockJob = {
   id: string;
@@ -10,7 +14,7 @@ type MockJob = {
   degreeRequirement: string;
   workLocation: string;
   jobName: string;
-  jobCategory: string;
+  majorRequirement: string;
   recruitmentType: string;
   deadlineAt: string;
   announcementUrl: string;
@@ -38,11 +42,11 @@ function createJob(overrides: Partial<MockJob> = {}): MockJob {
     degreeRequirement: '本科及以上',
     workLocation: '上海市浦东新区',
     jobName: '前端开发工程师',
-    jobCategory: '互联网技术类',
+    majorRequirement: '计算机类、软件工程相关专业',
     recruitmentType: '校招',
     deadlineAt: '2099-12-31',
-    announcementUrl: 'https://example.com/job-1',
-    deliveryUrl: 'https://example.com/deliver/job-1',
+    announcementUrl: 'https://campus.acme.cn/job-1',
+    deliveryUrl: 'https://apply.acme.cn/deliver/job-1',
     graduationSession: '2026届',
     referralCode: null,
     announcementTitle: '上海互联网科技 2026 届校园招聘公告',
@@ -96,7 +100,7 @@ function matchesWhere(job: MockJob, where?: Record<string, any>): boolean {
   if (where.enterpriseNature?.contains && !matchesStringContains(job.enterpriseNature, where.enterpriseNature.contains)) return false;
   if (where.degreeRequirement?.contains && !matchesStringContains(job.degreeRequirement, where.degreeRequirement.contains)) return false;
   if (where.jobName?.contains && !matchesStringContains(job.jobName, where.jobName.contains)) return false;
-  if (where.jobCategory?.contains && !matchesStringContains(job.jobCategory, where.jobCategory.contains)) return false;
+  if (where.majorRequirement?.contains && !matchesStringContains(job.majorRequirement, where.majorRequirement.contains)) return false;
   if (where.recruitmentType?.contains && !matchesStringContains(job.recruitmentType, where.recruitmentType.contains)) return false;
   if (where.deadlineAt?.contains && !matchesStringContains(job.deadlineAt, where.deadlineAt.contains)) return false;
   if (where.announcementUrl?.contains && !matchesStringContains(job.announcementUrl, where.announcementUrl.contains)) return false;
@@ -129,18 +133,48 @@ function createPrismaMock(jobs: MockJob[]) {
   };
 }
 
-describe('JobsService fuzzy search filters', () => {
-  it('通用搜索会重点命中公司名、岗位名和岗位类别，并覆盖单表文本字段模糊匹配', async () => {
-    const prisma = createPrismaMock([
-      createJob({ companyFullName: '深圳互联科技集团', jobName: '算法工程师', jobCategory: '人工智能研发类' }),
-      createJob({ id: 'job-2', companyFullName: '江苏电力集团', jobName: '行政专员', jobCategory: '职能类' }),
-    ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
+function createNormalizationMock(overrides: Partial<{
+  normalizeLocationPreferences: ReturnType<typeof vi.fn>;
+  expandSearchKeywords: ReturnType<typeof vi.fn>;
+}> = {}) {
+  return {
+    normalizeLocationPreferences: overrides.normalizeLocationPreferences ?? vi.fn().mockResolvedValue([]),
+    expandSearchKeywords: overrides.expandSearchKeywords ?? vi.fn().mockImplementation(async (_domain: string, keyword?: string) => keyword ? [keyword] : []),
+  };
+}
 
-    const result = await service.getList({ keyword: '互联科技', page: 1, limit: 20 });
+function createRedisMock() {
+  return {
+    get: vi.fn().mockResolvedValue(null),
+  };
+}
+
+describe('JobsService fuzzy search filters', () => {
+  beforeEach(() => {
+    vi.mocked(getUserMemberAccess).mockResolvedValue({
+      isMember: true,
+      memberLevel: 'standard',
+      memberLevelLabel: '标准会员',
+      memberRoleCode: 'STANDARD_MEMBER',
+      memberRoleName: '标准会员',
+      permissionKeys: ['jobs:search:use', 'jobs:filter:use', 'jobs:detail:view', 'jobs:deliver:use'],
+      membershipRemainingDays: 30,
+    });
+  });
+
+  it('通用搜索会重点命中公司名、岗位名和专业需求，并覆盖单表文本字段模糊匹配', async () => {
+    const prisma = createPrismaMock([
+      createJob({ companyFullName: '深圳互联科技集团', jobName: '算法工程师', majorRequirement: '人工智能、计算机类相关专业' }),
+      createJob({ id: 'job-2', companyFullName: '江苏电力集团', jobName: '行政专员', majorRequirement: '专业不限' }),
+    ]);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+
+    const result = await service.getList({ keyword: '互联科技', page: 1, limit: 20 }, 'user-1');
 
     expect(result.list).toHaveLength(1);
     expect(result.list[0]?.companyName).toBe('深圳互联科技集团');
+    expect(result.list[0]?.hasAnnouncement).toBe(true);
+    expect(result.list[0]).not.toHaveProperty('announcementUrl');
   });
 
   it('城市搜索只针对 workLocation 做包含匹配', async () => {
@@ -148,9 +182,9 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ workLocation: '北京海淀区' }),
       createJob({ id: 'job-2', workLocation: '上海徐汇区' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
-    const result = await service.getList({ cityKeyword: '海淀', page: 1, limit: 20 });
+    const result = await service.getList({ cityKeyword: '海淀', page: 1, limit: 20 }, 'user-1');
 
     expect(result.list).toHaveLength(1);
     expect(result.list[0]?.workLocation).toContain('海淀');
@@ -165,7 +199,7 @@ describe('JobsService fuzzy search filters', () => {
         enterpriseNature: '国企',
         recruitmentType: '校招提前批',
         jobName: '产品经理',
-        jobCategory: '产品类',
+        majorRequirement: '产品、设计、市场相关专业',
         updatedAt: new Date('2026-04-28T00:00:00Z'),
       }),
       createJob({
@@ -176,11 +210,11 @@ describe('JobsService fuzzy search filters', () => {
         enterpriseNature: '国企',
         recruitmentType: '实习',
         jobName: '产品经理',
-        jobCategory: '产品类',
+        majorRequirement: '产品、设计、市场相关专业',
         updatedAt: new Date('2026-03-01T00:00:00Z'),
       }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({
       keyword: '产品',
@@ -191,26 +225,57 @@ describe('JobsService fuzzy search filters', () => {
       updatedWithinDays: [7],
       page: 1,
       limit: 20,
-    });
+    }, 'user-1');
 
     expect(result.list).toHaveLength(1);
     expect(result.list[0]?.degreeRequirement).toContain('硕士');
     expect(result.list[0]?.jobType).toContain('校招');
   });
 
-  it('筛选项直接来自 job_announcements 对应字段并自动去重', async () => {
+  it('筛选项按业务固定选项返回，不再直接透传数据库全量字段', async () => {
     const prisma = createPrismaMock([
       createJob({ degreeRequirement: '本科', enterpriseNature: '民企', recruitmentType: '校招' }),
       createJob({ id: 'job-2', degreeRequirement: '硕士', enterpriseNature: '国企', recruitmentType: '实习' }),
       createJob({ id: 'job-3', degreeRequirement: '本科', enterpriseNature: '民企', recruitmentType: '校招' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const filters = await service.getFilters();
 
-    expect(filters.degreeOptions).toEqual(['本科', '硕士']);
-    expect(filters.enterpriseNatureOptions).toEqual(['国企', '民企']);
-    expect(filters.recruitmentTypeOptions).toEqual(['实习', '校招']);
+    expect(filters.degreeOptions).toEqual(['专科', '本科', '硕士', '博士']);
+    expect(filters.enterpriseNatureOptions).toEqual(['央企', '国企', '银行', '内资', '外资', '民营', '民企', '股份', '混合', '合资', '上市企业', '社会组织', '事业单位', '外企', '政府单位', '其他']);
+    expect(filters.recruitmentTypeOptions).toEqual(['全职', '秋招', '春招', '校招', '实习']);
+    expect(filters.jobTypeOptions).toEqual(['全职', '秋招', '春招', '校招', '实习']);
+  });
+
+  it('固定筛选项仍支持别名模糊匹配，并为企业性质提供其他兜底', async () => {
+    const prisma = createPrismaMock([
+      createJob({
+        degreeRequirement: '大专及以上',
+        recruitmentType: '秋季校园招聘',
+        enterpriseNature: '合作社',
+      }),
+      createJob({
+        id: 'job-2',
+        degreeRequirement: '本科',
+        recruitmentType: '全职',
+        enterpriseNature: '国企',
+      }),
+    ]);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+
+    const result = await service.getList({
+      degreeRequirement: ['专科'],
+      recruitmentType: ['秋招'],
+      enterpriseNature: ['其他'],
+      page: 1,
+      limit: 20,
+    }, 'user-1');
+
+    expect(result.list).toHaveLength(1);
+    expect(result.list[0]?.degreeRequirement).toContain('大专');
+    expect(result.list[0]?.jobType).toContain('秋季');
+    expect(result.list[0]?.enterpriseNature).toBe('合作社');
   });
 
   it('仍支持按 userId + progressStatus 追加进度筛选', async () => {
@@ -218,11 +283,132 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ trackings: [{ userId: 'user-1', progressStatus: '已投递' }] }),
       createJob({ id: 'job-2', trackings: [{ userId: 'user-1', progressStatus: '已面试' }] }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, { normalizeLocationPreferences: vi.fn().mockResolvedValue([]) } as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
-    const result = await service.getList({ userId: 'user-1', progressStatus: '已投递', page: 1, limit: 20 });
+    const result = await service.getList({ progressStatus: '已投递', page: 1, limit: 20 }, 'user-1');
 
     expect(result.list).toHaveLength(1);
     expect(result.list[0]?.currentProgress).toBe('已投递');
+  });
+
+  it('公司简称搜索会并行扩展标准词，避免只搜简称时漏掉全称岗位', async () => {
+    const prisma = createPrismaMock([
+      createJob({ companyFullName: '中国建设银行股份有限公司', announcementTitle: '中国建设银行 2026 届校园招聘公告' }),
+      createJob({ id: 'job-2', companyFullName: '招商银行股份有限公司', announcementTitle: '招商银行 2026 届校园招聘公告' }),
+    ]);
+    const normalization = createNormalizationMock({
+      expandSearchKeywords: vi.fn().mockImplementation(async (domain: string, keyword?: string) => {
+        if (domain === 'COMPANY' && keyword === '建行') {
+          return ['建行', '建设银行', '中国建设银行'];
+        }
+        return keyword ? [keyword] : [];
+      }),
+    });
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, normalization as never, createRedisMock() as never);
+
+    const result = await service.getList({ companyName: '建行', page: 1, limit: 20 }, 'user-1');
+
+    expect(normalization.expandSearchKeywords).toHaveBeenCalledWith('COMPANY', '建行');
+    expect(result.list).toHaveLength(1);
+    expect(result.list[0]?.companyName).toContain('建设银行');
+  });
+
+  it('搜索建议只返回推荐词，不改动用户原始输入', async () => {
+    const service = new JobsService(
+      createRedisMock() as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        getMultiDomainSuggestions: vi.fn().mockResolvedValue([
+          {
+            domain: 'COMPANY',
+            canonical: '建设银行',
+            matchedAlias: '建行',
+            relatedKeywords: ['建设银行', '建行', '中国建设银行'],
+          },
+        ]),
+      } as never,
+      {} as never,
+    );
+
+    const result = await service.getSearchSuggestions({ keyword: '建行', field: 'company', limit: 8 }, 'user-1');
+
+    expect(result.list).toEqual([
+      {
+        value: '建设银行',
+        label: '建设银行',
+        domain: 'COMPANY',
+        domainLabel: '企业建议',
+        matchText: '建行',
+        relatedKeywords: ['建设银行', '建行', '中国建设银行'],
+      },
+    ]);
+  });
+
+  it('免费专区只返回最新更新且链接真实可用的 20 条岗位', async () => {
+    const prisma = createPrismaMock([
+      createJob({
+        id: 'job-invalid-announcement',
+        updatedAt: new Date('2026-05-03T00:00:00Z'),
+        announcementUrl: 'https://example.com/demo-announcement',
+        deliveryUrl: 'https://apply.acme.cn/job-invalid-announcement',
+      }),
+      createJob({
+        id: 'job-invalid-delivery',
+        updatedAt: new Date('2026-05-02T00:00:00Z'),
+        announcementUrl: 'https://campus.acme.cn/job-invalid-delivery',
+        deliveryUrl: 'javascript:void(0)',
+      }),
+      ...Array.from({ length: 22 }, (_, index) => createJob({
+        id: `job-valid-${index + 1}`,
+        updatedAt: new Date(`2026-05-${String(22 - index).padStart(2, '0')}T00:00:00Z`),
+        announcementUrl: `https://campus.acme.cn/job-valid-${index + 1}`,
+        deliveryUrl: `https://apply.acme.cn/job-valid-${index + 1}`,
+      })),
+    ]);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+
+    const result = await service.getFreeZoneList('user-1');
+
+    expect(result.list).toHaveLength(20);
+    expect(result.list.map((item) => item.id)).toEqual(Array.from({ length: 20 }, (_, index) => `job-valid-${index + 1}`));
+    expect(result.list.every((item) => item.hasAnnouncement && item.hasDelivery)).toBe(true);
+  });
+
+  it('全部招聘列表会把演示链接和无效链接识别为不可用按钮', async () => {
+    const prisma = createPrismaMock([
+      createJob({
+        id: 'job-invalid-links',
+        announcementUrl: 'https://example.com/demo-announcement',
+        deliveryUrl: 'javascript:void(0)',
+      }),
+    ]);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+
+    const result = await service.getList({ page: 1, limit: 20 }, 'user-1');
+
+    expect(result.list).toHaveLength(1);
+    expect(result.list[0]?.hasAnnouncement).toBe(false);
+    expect(result.list[0]?.hasDelivery).toBe(false);
+    expect(result.list[0]?.canViewAnnouncement).toBe(false);
+    expect(result.list[0]?.canDeliver).toBe(false);
+  });
+
+  it('全部招聘列表会按包含 @ 的投递字段识别为邮箱投递', async () => {
+    const prisma = createPrismaMock([
+      createJob({
+        id: 'job-email-delivery',
+        announcementUrl: 'https://campus.acme.cn/job-email-delivery',
+        deliveryUrl: '简历投递邮箱：hr@acme.cn',
+      }),
+    ]);
+    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+
+    const result = await service.getList({ page: 1, limit: 20 }, 'user-1');
+
+    expect(result.list).toHaveLength(1);
+    expect(result.list[0]?.hasDelivery).toBe(true);
+    expect(result.list[0]?.deliveryType).toBe('email');
   });
 });

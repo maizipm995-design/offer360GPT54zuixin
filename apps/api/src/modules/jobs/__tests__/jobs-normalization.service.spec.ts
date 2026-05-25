@@ -149,4 +149,24 @@ describe('JobsNormalizationService', () => {
     expect(result?.searchKeywords ?? []).not.toContain('行政');
     expect(result?.searchKeywords ?? []).toEqual(['人事 / 行政', '行政文员', '行政助理']);
   });
+
+  it('搜索扩展会保留原词，并补齐标准词及关联别名供并行召回', async () => {
+    const service = createService();
+    const result = await service.expandSearchKeywords('COMPANY', '腾讯控股');
+
+    expect(result).toEqual(expect.arrayContaining(['腾讯控股', '腾讯', '腾讯科技']));
+  });
+
+  it('建议词只返回推荐项，不会直接改写输入值', async () => {
+    const service = createService();
+    const result = await service.getSuggestions('JOB_TITLE', 'Java', 5);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        domain: 'JOB_TITLE',
+        canonical: '后端',
+        matchedAlias: 'Java工程师',
+      }),
+    ]);
+  });
 });

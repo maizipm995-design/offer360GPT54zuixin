@@ -1,13 +1,146 @@
 import bcrypt from 'bcryptjs';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { MEMBERSHIP_BENEFITS_CONTENT_HTML, MEMBERSHIP_BENEFITS_CONTENT_SLUG, MEMBERSHIP_BENEFITS_CONTENT_TITLE } from '../src/modules/memberships/membership-benefits-content';
-import { DEFAULT_JOBS_RECOMMENDATION_CONFIG } from '../src/modules/jobs/jobs-recommendation-config';
+// import { MEMBERSHIP_BENEFITS_CONTENT_HTML, MEMBERSHIP_BENEFITS_CONTENT_SLUG, MEMBERSHIP_BENEFITS_CONTENT_TITLE } from '../src/modules/memberships/membership-benefits-content';
+const MEMBERSHIP_BENEFITS_CONTENT_SLUG = 'offer360-membership-benefits';
+const MEMBERSHIP_BENEFITS_CONTENT_TITLE = 'offer360求职会员权益说明';
+const MEMBERSHIP_BENEFITS_CONTENT_HTML = `
+<section class="membership-rich-section">
+  <h3>权益一：24小时实时更新校招信息，全、准、快、新</h3>
+  <div class="membership-rich-lead">
+    <h4>求职信息，贵在及时与全面！</h4>
+    <p>
+      成为会员后，平台平均每日更新超50家企业的校招信息，更新周期长达6个月，截至目前已累计更新2025年全行业12000+条校招资讯。你可通过offer360电脑端官网、手机端筛选并投递岗位，第一时间掌握最新校招动态。
+    </p>
+    <p>
+      加入专属校招会员群，每个工作日都能获取最新校招资讯，确保会员不会错失简历投递的黄金窗口期、补录捡漏期以及冲刺收尾期。
+    </p>
+  </div>
+  <div class="membership-rich-grid">
+    <article class="membership-rich-item">
+      <h5>信息全面且新鲜</h5>
+      <p>
+        平台每日整理并更新20至80条校招信息（校招高峰期数量会有所增加），23届至26届毕业生均可找到适配的投递岗位，覆盖秋招、秋招提前批、秋招补录、春招、春招提前批、春招补录、实习等各类招聘批次。
+      </p>
+    </article>
+    <article class="membership-rich-item">
+      <h5>覆盖行业广泛</h5>
+      <p>
+        招聘信息按行业精细分类，涵盖国企央企、外资企业、事业单位、民营企业等各类企业性质，以及互联网、快消、金融、制造业、文娱传媒、新能源、医药、法律、会计师事务所等全行业校招信息。
+      </p>
+    </article>
+    <article class="membership-rich-item">
+      <h5>信息来源官方可靠</h5>
+      <p>
+        所有校招信息均100%来源于企业官方招聘网站、高校就业指导中心平台、合作企业官方发布渠道，确保信息的真实性与有效性。
+      </p>
+    </article>
+  </div>
+</section>
+`.trim();
+// import { DEFAULT_JOBS_RECOMMENDATION_CONFIG } from '../src/modules/jobs/jobs-recommendation-config';
+const DEFAULT_JOBS_RECOMMENDATION_CONFIG = {
+  companyWeight: 35,
+  jobWeight: 30,
+  cityExactWeight: 20,
+  cityParentWeight: 10,
+  degreeWeight: 8,
+  majorWeight: 8,
+  fresh3DaysWeight: 6,
+  fresh7DaysWeight: 3,
+  stateOwnedFallbackWeight: 4,
+  deliveredPenalty: -12,
+  heatMax: 6,
+  hotAccessThreshold: 50,
+  hotDeliveryThreshold: 10,
+};
 import {
   locationHierarchySeedItems,
   normalizationAliasSeedItems,
   normalizationTermSeedItems,
-} from '../src/modules/jobs/jobs-normalization.seed-data';
-import { ensureMemberRoleSetup } from '../src/common/utils/member-access';
+} from './jobs-normalization.seed-data';
+// import { ensureMemberRoleSetup } from '../src/common/utils/member-access';
+async function ensureMemberRoleSetup(prisma: any) {
+  const MEMBER_PERMISSION_CATALOG = [
+    { key: 'jobs:list:view', name: '招聘公告列表访问权限', group: 'jobs' },
+    { key: 'jobs:search:use', name: '岗位搜索权限', group: 'jobs' },
+    { key: 'jobs:filter:use', name: '岗位筛选权限', group: 'jobs' },
+    { key: 'jobs:detail:view', name: '查看招聘公告详情权限', group: 'jobs' },
+    { key: 'jobs:deliver:use', name: '立即投递权限', group: 'jobs' },
+    { key: 'jobs:referral:view', name: '查看内推码权限', group: 'jobs' },
+    { key: 'jobs:progress:update', name: '标记求职进度权限', group: 'jobs' },
+    { key: 'jobs:recommend:view', name: '访问专属推荐模块权限', group: 'jobs' },
+  ];
+
+  const MEMBER_ROLE_DEFINITIONS = [
+    {
+      code: 'FREE_USER',
+      name: '免费用户',
+      description: '注册默认角色，仅可浏览基础公开内容',
+      sortOrder: 10,
+      permissionKeys: [],
+    },
+    {
+      code: 'STANDARD_MEMBER',
+      name: '标准会员',
+      description: '开放招聘列表、搜索筛选、详情查看与立即投递能力',
+      sortOrder: 20,
+      permissionKeys: ['jobs:list:view', 'jobs:search:use', 'jobs:filter:use', 'jobs:detail:view', 'jobs:deliver:use'],
+    },
+    {
+      code: 'SUPER_MEMBER',
+      name: '超级会员',
+      description: '在标准会员基础上，额外开放内推码查看与专属推荐能力',
+      sortOrder: 30,
+      permissionKeys: [
+        'jobs:list:view',
+        'jobs:search:use',
+        'jobs:filter:use',
+        'jobs:detail:view',
+        'jobs:deliver:use',
+        'jobs:referral:view',
+        'jobs:progress:update',
+        'jobs:recommend:view',
+      ],
+    },
+  ];
+
+  const existingRoles = await prisma.memberRole.findMany({
+    select: { id: true, code: true },
+  });
+
+  const existingRoleMap = new Map(existingRoles.map((item: any) => [item.code, item]));
+
+  for (const role of MEMBER_ROLE_DEFINITIONS) {
+    if (existingRoleMap.has(role.code)) {
+      continue;
+    }
+
+    await prisma.memberRole.create({
+      data: {
+        code: role.code,
+        name: role.name,
+        description: role.description,
+        status: 'active',
+        isSystem: true,
+        sortOrder: role.sortOrder,
+        permissions: role.permissionKeys.length
+          ? {
+              create: role.permissionKeys.map((permissionKey) => {
+                const meta = MEMBER_PERMISSION_CATALOG.find((item) => item.key === permissionKey)!;
+                return {
+                  permissionKey,
+                  permissionName: meta.name,
+                  permissionGroup: meta.group,
+                  permissionType: 'member',
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+  }
+}
+import { serviceProductSeedItems } from './reference-data';
 
 const prisma = new PrismaClient();
 
@@ -438,76 +571,7 @@ async function main() {
     },
   });
 
-  const serviceProducts = [
-    ['简历精修', '专业 HR 一对一精修简历，提升面试通过率，突出核心竞争力', 1, 399, 4.8, 2355, true],
-    ['面试辅导', '资深面试官模拟面试，针对性指导，提升面试表现和应对能力', 1, 599, 4.9, 1876, true],
-    ['笔试代做', '专业团队代做各类笔试题，保证高分通过，快速拿到 offer', 1, 799, 4.7, 1234, true],
-    ['求职全流程', '从简历到入职全程陪伴，一站式解决求职难题，保 offer 服务', 70, 1999, 4.9, 856, false],
-    ['职业规划', '资深职业规划师一对一咨询，明确职业方向，制定发展路径', 1, 799, 4.8, 1567, true],
-    ['背景提升', '实习推荐、项目经历包装，快速提升个人竞争力和简历含金量', 30, 1199, 4.6, 923, false],
-    ['offer 谈判', '薪资谈判技巧指导，帮你争取更高薪资和更好的入职条件', 1, 599, 4.8, 1345, true],
-    ['内推服务', '名企内推资源，跳过简历筛选，直达面试环节，提高成功率', 1, 999, 4.9, 2134, true],
-  ] as const;
-
-  for (const [name, description, price, originalPrice, score, salesCount, isHot] of serviceProducts) {
-    await prisma.serviceProduct.upsert({
-      where: { id: `service-${name}` },
-      update: {
-        name,
-        description,
-        price,
-        originalPrice,
-        score,
-        salesCount,
-        isHot,
-        status: true,
-        productType: 'service',
-        memberLevel: null,
-        grantDays: null,
-      },
-      create: {
-        id: `service-${name}`,
-        name,
-        description,
-        price,
-        originalPrice,
-        score,
-        salesCount,
-        isHot,
-        status: true,
-        productType: 'service',
-      },
-    });
-  }
-
-  const membershipProducts = [
-    {
-      id: 'membership-standard-180',
-      name: '标准会员 · 180 天',
-      description: '开放招聘列表、搜索筛选、详情查看与立即投递能力，适合需要高频找岗投递的同学。',
-      price: 88,
-      originalPrice: 199,
-      score: 4.8,
-      salesCount: 680,
-      isHot: false,
-      memberLevel: 'standard',
-      grantDays: 180,
-    },
-    {
-      id: 'membership-super-180',
-      name: 'offer360求职会员',
-      description: '覆盖校招公告、AI专属岗位推荐、求职资料包与直播辅导的年度求职会员服务。',
-      price: 99,
-      originalPrice: 199,
-      score: 4.9,
-      salesCount: 420,
-      isHot: true,
-      memberLevel: 'super',
-      grantDays: 365,
-    },
-  ] as const;
-
-  for (const item of membershipProducts) {
+  for (const item of serviceProductSeedItems) {
     await prisma.serviceProduct.upsert({
       where: { id: item.id },
       update: {
@@ -519,9 +583,12 @@ async function main() {
         salesCount: item.salesCount,
         isHot: item.isHot,
         status: true,
-        productType: 'membership',
-        memberLevel: item.memberLevel,
-        grantDays: item.grantDays,
+        productType: item.productType,
+        memberLevel: item.memberLevel ?? null,
+        grantDays: item.grantDays ?? null,
+        detailHtml: item.detailHtml ?? null,
+        orderServiceText: item.orderServiceText ?? null,
+        orderServiceImageUrl: item.orderServiceImageUrl ?? null,
       },
       create: {
         id: item.id,
@@ -533,9 +600,12 @@ async function main() {
         salesCount: item.salesCount,
         isHot: item.isHot,
         status: true,
-        productType: 'membership',
-        memberLevel: item.memberLevel,
-        grantDays: item.grantDays,
+        productType: item.productType,
+        memberLevel: item.memberLevel ?? null,
+        grantDays: item.grantDays ?? null,
+        detailHtml: item.detailHtml ?? null,
+        orderServiceText: item.orderServiceText ?? null,
+        orderServiceImageUrl: item.orderServiceImageUrl ?? null,
       },
     });
   }
@@ -548,11 +618,11 @@ async function main() {
       degreeRequirement: '本科',
       workLocation: '南京,无锡',
       jobName: '软件开发工程师,数据分析工程师',
-      jobCategory: '技术类',
+      majorRequirement: '计算机类、软件工程、数据分析相关专业',
       recruitmentType: '校招',
       deadlineAt: formatDateOnly(new Date(Date.now() + 1000 * 60 * 60 * 24 * 12)),
-      announcementUrl: 'https://offer360.cn/jobs/jiangsu-tobacco-2026',
-      deliveryUrl: 'https://offer360.cn/deliver/jiangsu-tobacco-2026',
+      announcementUrl: 'https://www.jssrcw.com/article.php?id=611',
+      deliveryUrl: 'https://jszy.ksbm.com/',
       graduationSession: '2026届',
       referralCode: 'JSZY2026',
       announcementTitle: '江苏中烟 2026 届校园招聘公告',
@@ -567,11 +637,11 @@ async function main() {
       degreeRequirement: '本科',
       workLocation: '南京,苏州',
       jobName: '前端开发工程师,后端开发工程师',
-      jobCategory: '技术类',
+      majorRequirement: '计算机类、通信类、电子信息类相关专业',
       recruitmentType: '校招',
       deadlineAt: formatDateOnly(new Date(Date.now() + 1000 * 60 * 60 * 24 * 9)),
-      announcementUrl: 'https://offer360.cn/jobs/chinatelecom-2026',
-      deliveryUrl: 'https://offer360.cn/deliver/chinatelecom-2026',
+      announcementUrl: 'http://www.chinatelecom.com.cn/zp/',
+      deliveryUrl: 'https://job.chinatelecom.com.cn/wt/TELE/web/index#/',
       graduationSession: '2026届',
       referralCode: 'CTJS2026',
       announcementTitle: '中国电信江苏公司 2026 校园招聘',
@@ -586,11 +656,11 @@ async function main() {
       degreeRequirement: '本科',
       workLocation: '北京,深圳',
       jobName: '产品经理,运营专员,测试工程师',
-      jobCategory: '产品/运营/测试',
+      majorRequirement: '计算机类、统计学、市场营销、管理学相关专业',
       recruitmentType: '校招',
       deadlineAt: formatDateOnly(new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)),
-      announcementUrl: 'https://offer360.cn/jobs/tencent-2026',
-      deliveryUrl: 'https://offer360.cn/deliver/tencent-2026',
+      announcementUrl: 'https://hr.tencent.com/m/zh-cn/campusrecruit.html',
+      deliveryUrl: 'https://join.qq.com/post.html',
       graduationSession: '2026届',
       referralCode: 'TX2026',
       announcementTitle: '腾讯 2026 届校园招聘',

@@ -125,6 +125,7 @@ export class AuthService {
           passwordHash,
           myInviteCode: inviteCode,
           parentUid: inviter?.id,
+          needsProfileOnboarding: true,
           status: 'active',
           sourceType: inviter ? 'invite_register' : 'self_register',
           lastLoginAt: now,

@@ -8,6 +8,7 @@ ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env}"
 STATE_FILE="${STATE_FILE:-$ROOT_DIR/runtime/release-state.env}"
 
 DOCKER_BIN="${DOCKER_BIN:-docker}"
+DEPLOY_VERIFY_BROWSER_UA="${DEPLOY_VERIFY_BROWSER_UA:-Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36}"
 
 ensure_commands() {
   local missing=0
@@ -20,6 +21,10 @@ ensure_commands() {
   if [ "$missing" -ne 0 ]; then
     exit 1
   fi
+}
+
+curl_with_browser_ua() {
+  curl -A "$DEPLOY_VERIFY_BROWSER_UA" "$@"
 }
 
 docker_cmd() {

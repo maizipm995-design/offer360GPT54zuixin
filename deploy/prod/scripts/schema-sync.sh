@@ -28,6 +28,7 @@ EXPECTED_INIT_SQL_PATH="${RUNTIME_DIR}/schema-init-expected-${APP_IMAGE_TAG}.sql
 SCHEMA_RECORD_MISMATCH_PATH="${RUNTIME_DIR}/schema-record-mismatch-${APP_IMAGE_TAG}.txt"
 MIGRATION_DIFF_REPORT_PATH="${RUNTIME_DIR}/migration-schema-diff-${APP_IMAGE_TAG}.txt"
 SHADOW_DATABASE_NAME="${MYSQL_DATABASE}_shadow"
+IGNORABLE_BACKUP_DROP_REGEX='^DROP TABLE `(ai_model_configs_backup_[^`]+|ai_model_configs_prompt_backup_[^`]+)`;$'
 
 mkdir -p "$RUNTIME_DIR"
 
@@ -101,6 +102,19 @@ echo "开始生成线上库与当前代码结构的差异 SQL..."
 compose_cmd run --rm --no-deps -T api sh -lc \
   'npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel apps/api/prisma/schema.prisma --script' \
   >"$DIFF_SQL_PATH"
+
+# Allow explicitly retained backup tables to stay online without blocking deploys.
+python3 - "$DIFF_SQL_PATH" "$IGNORABLE_BACKUP_DROP_REGEX" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+pattern = re.compile(sys.argv[2])
+lines = path.read_text().splitlines()
+filtered = [line for line in lines if not pattern.match(line)]
+path.write_text("\n".join(filtered) + ("\n" if filtered else ""))
+PY
 
 if ! grep -Eiq '^[[:space:]]*(CREATE|ALTER|DROP|RENAME)' "$DIFF_SQL_PATH"; then
   echo "未检测到需要同步的表结构变更。"

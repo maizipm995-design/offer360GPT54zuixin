@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CircleHelp, Crown, Ticket } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { clientFetch } from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
 import { showToast, useGlobalToast } from '@/store/toast-store';
@@ -31,6 +32,11 @@ const freeUserBenefits: BenefitItem[] = [
   {
     title: '校招求职资料包：',
     content: '网上零散拼凑优质资料,简历/面试题缺乏体系,求职竞争力较弱',
+  },
+  {
+    title: '面试逐字稿生成：',
+    content: '普通用户与标准会员统一仅可免费生成 1 次,用尽后需开通超级会员继续使用',
+    hint: '提交生成时立即扣减次数；若接口返回失败系统会自动返还。开通或续费超级会员后可直接解锁 20 次面试逐字稿生成机会。',
   },
   {
     title: '商品购买权益：',
@@ -64,6 +70,11 @@ const superMemberBenefits: BenefitItem[] = [
   {
     title: '校招求职资料包：',
     content: '全套求职资料:高分简历模板+大厂面试题+行业科普,一站式备齐',
+  },
+  {
+    title: '面试逐字稿生成：',
+    content: '每次开通或续费超级会员，都会新增 20 次面试逐字稿生成机会',
+    hint: '20 次全部用完后，再次开通或续费超级会员会再新增 20 次，同时顺延延长超级会员有效期。',
   },
   {
     title: '商品购买权益：',
@@ -109,6 +120,12 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
   const [message, setMessage] = useState('');
 
   useGlobalToast(message, setMessage);
+
+  useEffect(() => {
+    router.prefetch('/checkout');
+    router.prefetch('/login');
+    router.prefetch('/personal-center');
+  }, [router]);
 
   const superPlan = useMemo(
     () =>
@@ -202,7 +219,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
     setLoadingPlanId(plan.id);
     setMessage('');
     try {
-      showToast('正在前往支付页面。', 'success');
+      showToast('正在前往支付页面。', 'info');
       router.push(`/checkout?productId=${encodeURIComponent(plan.id)}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '跳转支付页失败');
@@ -215,16 +232,16 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
     <main className="bg-[#F6F6F6] pb-16">
       {showRedeem ? (
         <section className="px-4 pb-4 pt-6">
-          <div className="mx-auto max-w-[980px] rounded-[22px] border border-[#FFCFAB] bg-white p-5 shadow-sm">
+          <div className="mx-auto max-w-[980px] rounded-[22px] border border-brand/20 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-[#F08A24]">
+              <div className="flex items-center gap-2 text-brand">
                 <Crown className="h-5 w-5" />
                 <h1 className="text-xl font-bold sm:text-2xl">offer360会员</h1>
               </div>
               <button
                 type="button"
                 onClick={handleRedeemClick}
-                className="inline-flex items-center gap-1 rounded-xl border border-[#FFE2C7] bg-[#FFF8F1] px-3 py-2 text-sm font-medium text-[#F08A24] transition hover:bg-[#FFF1E5]"
+                className="inline-flex items-center gap-1 rounded-xl border border-brand/20 bg-brand/5 px-3 py-2 text-sm font-medium text-brand transition hover:bg-brand/10"
               >
                 <Ticket className="h-4 w-4" />
                 返回开通
@@ -235,13 +252,13 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                 value={redeemCode}
                 onChange={(event) => setRedeemCode(event.target.value.toUpperCase())}
                 placeholder="请输入兑换码"
-                className="h-11 flex-1 rounded-xl border border-gray-200 px-4 text-sm outline-none transition focus:border-[#F08A24]"
+                className="h-11 flex-1 rounded-xl border border-gray-200 px-4 text-sm outline-none transition focus:border-brand"
               />
               <button
                 type="button"
                 onClick={handleRedeemSubmit}
                 disabled={redeemLoading}
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-[#F08A24] px-5 text-sm font-medium text-white transition hover:bg-[#DD7C1A] disabled:cursor-not-allowed disabled:opacity-60 lg:min-w-[140px]"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-brand px-5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60 lg:min-w-[140px]"
               >
                 {redeemLoading ? '兑换中...' : '立即兑换'}
               </button>
@@ -253,14 +270,17 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
           <section className="px-2 pb-4 pt-6 sm:px-4">
             <div className="mx-auto w-full max-w-[980px] overflow-hidden">
               <div className="flex flex-col items-center gap-3 pb-5 sm:relative sm:block sm:pb-6">
-                <div className="flex items-center justify-center gap-2 text-[#F08A24]">
+                <div className="flex items-center justify-center gap-2 text-brand">
                   <Crown className="h-5 w-5 sm:h-6 sm:w-6" />
                   <h1 className="text-[24px] font-bold leading-none sm:text-[36px]">offer360会员</h1>
                 </div>
+                <p className="mx-auto max-w-[760px] text-center text-xs leading-6 text-[#666666] sm:mt-3 sm:text-sm">
+                  面向大学生与应届生的求职会员权益，覆盖校招公告查看、岗位搜索、专属推荐、求职资料包、面试逐字稿与求职全流程支持。
+                </p>
                 <button
                   type="button"
                   onClick={handleRedeemClick}
-                  className="inline-flex items-center gap-1 rounded-xl border border-[#FFE2C7] bg-[#FFF8F1] px-3 py-2 text-xs font-medium text-[#F08A24] transition hover:bg-[#FFF1E5] sm:absolute sm:right-0 sm:top-1/2 sm:-translate-y-1/2 sm:text-sm"
+                  className="inline-flex items-center gap-1 rounded-xl border border-brand/20 bg-brand/5 px-3 py-2 text-xs font-medium text-brand transition hover:bg-brand/10 sm:absolute sm:right-0 sm:top-1/2 sm:-translate-y-1/2 sm:text-sm"
                 >
                   <Ticket className="h-4 w-4" />
                   兑换码
@@ -289,8 +309,8 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                   </div>
                 </article>
 
-                <article className="flex min-h-[388px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-[#F08A24] bg-white px-2.5 py-4 shadow-[0_8px_20px_rgba(240,138,36,0.08)] sm:min-h-[430px] sm:rounded-[18px] sm:px-7 sm:py-6">
-                  <h2 className="text-center text-[15px] font-bold text-[#F08A24] sm:text-[22px]">offer360求职会员</h2>
+                <article className="flex min-h-[388px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-brand bg-white px-2.5 py-4 shadow-[0_8px_20px_rgba(65,131,255,0.08)] sm:min-h-[430px] sm:rounded-[18px] sm:px-7 sm:py-6">
+                  <h2 className="text-center text-[15px] font-bold text-brand sm:text-[22px]">offer360求职会员</h2>
                   <div className="mt-4 space-y-3 text-[10px] leading-[1.45] text-[#555555] sm:mt-6 sm:space-y-5 sm:text-[15px] sm:leading-7">
                     {superMemberBenefits.map((item) => (
                       <div key={item.title} className="min-w-0">
@@ -300,11 +320,11 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                     ))}
                   </div>
 
-                  <div className="mt-auto border-t border-[#F4D7BF] pt-3 sm:pt-4">
+                  <div className="mt-auto border-t border-brand/20 pt-3 sm:pt-4">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
                       <div>
                         <div className="flex flex-wrap items-end gap-1 sm:gap-2">
-                          <span className="text-[25px] font-bold leading-none text-[#F08A24] sm:text-[36px]">¥{displaySuperPlan?.price ?? 99}</span>
+                          <span className="text-[25px] font-bold leading-none text-brand sm:text-[36px]">¥{displaySuperPlan?.price ?? 99}</span>
                           <span className="pb-0.5 text-[10px] text-[#9CA3AF] line-through sm:pb-1 sm:text-sm">¥{displaySuperPlan?.originalPrice ?? 199}</span>
                           <span className="pb-0.5 text-[10px] text-[#666666] sm:pb-1 sm:text-sm">/年</span>
                         </div>
@@ -312,6 +332,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                         <div className="mt-2 space-y-1 text-[10px] leading-4 text-[#666666] sm:text-sm sm:leading-5">
                           <p>标准会员为系统赠送权益，不支持单独购买。</p>
                           <p>超级会员支持随时购买、提前续费，系统会自动顺延叠加时长。</p>
+                          <p>每次开通或续费超级会员后，都会新增 20 次面试逐字稿生成机会。</p>
                         </div>
                         <label className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-[#666666] sm:gap-2 sm:text-sm sm:leading-5">
                           <input
@@ -325,14 +346,14 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                             <button
                               type="button"
                               onClick={() => router.push('/membership#membership-benefits')}
-                              className="ml-1 font-medium text-[#F08A24]"
+                              className="ml-1 font-medium text-brand"
                             >
                               《会员服务协议》
                             </button>
                           </span>
                         </label>
                         {user?.isMember ? (
-                          <p className="mt-2 text-[10px] font-medium leading-4 text-[#F08A24] sm:text-sm sm:leading-5">
+                          <p className="mt-2 text-[10px] font-medium leading-4 text-brand sm:text-sm sm:leading-5">
                             当前账号已开通 {user.memberLevelLabel}，剩余约 {user.membershipRemainingDays ?? 0} 天，可随时继续购买或续费。
                           </p>
                         ) : null}
@@ -342,7 +363,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                         type="button"
                         onClick={() => displaySuperPlan && handlePurchasePlan(displaySuperPlan)}
                         disabled={!displaySuperPlan || loadingPlanId === displaySuperPlan?.id}
-                        className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-[#F08A24] px-2 text-[11px] font-semibold text-white transition hover:bg-[#DD7C1A] disabled:cursor-not-allowed disabled:opacity-60 sm:h-11 sm:min-w-[132px] sm:w-auto sm:rounded-xl sm:px-6 sm:text-sm"
+                        className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-brand px-2 text-[11px] font-semibold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60 sm:h-11 sm:min-w-[132px] sm:w-auto sm:rounded-xl sm:px-6 sm:text-sm"
                       >
                         {loadingPlanId === displaySuperPlan?.id ? '创建订单中...' : user?.memberLevel === 'super' ? '立即续费超级会员' : '立即开通超级会员'}
                       </button>
@@ -355,12 +376,13 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
 
           <section id="membership-benefits" className="px-4 py-6">
             <div className="mx-auto max-w-[980px] rounded-3xl bg-white p-8 shadow-sm">
-              <h2 className="mb-8 text-center text-2xl font-bold text-[#FF7D00]">{benefitsContent.title}</h2>
+              <h2 className="mb-8 text-center text-2xl font-bold text-brand">{benefitsContent.title}</h2>
               <div className="rich-html-content membership-rich-content" dangerouslySetInnerHTML={{ __html: benefitsContent.htmlContent }} />
             </div>
           </section>
         </>
       )}
+      <SiteBeianFooter />
     </main>
   );
 }
@@ -378,7 +400,7 @@ function BenefitTitle({
 
   return (
     <div className="relative inline-flex items-start gap-1">
-      <p className={`font-semibold ${tone === 'accent' ? 'text-[#F08A24]' : 'text-[#333333]'}`}>{title}</p>
+      <p className={`font-semibold ${tone === 'accent' ? 'text-brand' : 'text-[#333333]'}`}>{title}</p>
       {hint ? (
         <button
           type="button"
@@ -387,7 +409,7 @@ function BenefitTitle({
           onMouseLeave={() => setOpen(false)}
           className={`relative mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition sm:h-4.5 sm:w-4.5 ${
             tone === 'accent'
-              ? 'border-[#F4B276] text-[#F08A24] hover:bg-[#FFF5EC]'
+              ? 'border-brand/30 text-brand hover:bg-brand/5'
               : 'border-[#D9D9D9] text-[#999999] hover:bg-[#F8F8F8]'
           }`}
           aria-label={`${title}说明`}
@@ -395,7 +417,7 @@ function BenefitTitle({
           <CircleHelp className="h-3 w-3" />
           {open ? (
             <span
-              className="absolute left-1/2 top-full z-20 mt-2 w-[220px] -translate-x-1/2 rounded-xl border border-[#FFE2C7] bg-white px-3 py-2 text-left text-[11px] font-normal leading-5 text-[#666666] shadow-[0_12px_36px_rgba(15,23,42,0.12)]"
+              className="absolute left-1/2 top-full z-20 mt-2 w-[220px] -translate-x-1/2 rounded-xl border border-brand/20 bg-white px-3 py-2 text-left text-[11px] font-normal leading-5 text-[#666666] shadow-[0_12px_36px_rgba(15,23,42,0.12)]"
               onMouseEnter={() => setOpen(true)}
               onMouseLeave={() => setOpen(false)}
             >

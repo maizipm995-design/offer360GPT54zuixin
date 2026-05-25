@@ -12,6 +12,17 @@ import {
   NormalizedPreferenceKeyword,
 } from './jobs-normalization.types';
 
+type NormalizationSuggestionMatchType = 'exact' | 'prefix' | 'contains' | 'sentence';
+
+type NormalizationSuggestionItem = {
+  domain: JobsNormalizationDomain;
+  canonical: string;
+  matchedAlias: string | null;
+  relatedKeywords: string[];
+  score: number;
+  sortOrder: number;
+};
+
 function normalizeLookupKeyword(value?: string | null) {
   return String(value ?? '')
     .trim()
@@ -22,6 +33,30 @@ function normalizeLookupKeyword(value?: string | null) {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+}
+
+function scoreSuggestionMatch(
+  input: string,
+  target: string,
+): { matched: boolean; score: number; matchType: NormalizationSuggestionMatchType | null } {
+  const normalizedInput = normalizeLookupKeyword(input);
+  const normalizedTarget = normalizeLookupKeyword(target);
+  if (!normalizedInput || !normalizedTarget) {
+    return { matched: false, score: 0, matchType: null };
+  }
+  if (normalizedTarget === normalizedInput) {
+    return { matched: true, score: 400, matchType: 'exact' };
+  }
+  if (normalizedTarget.startsWith(normalizedInput)) {
+    return { matched: true, score: 320, matchType: 'prefix' };
+  }
+  if (normalizedTarget.includes(normalizedInput)) {
+    return { matched: true, score: 240, matchType: 'contains' };
+  }
+  if (normalizedInput.includes(normalizedTarget)) {
+    return { matched: true, score: 180, matchType: 'sentence' };
+  }
+  return { matched: false, score: 0, matchType: null };
 }
 
 function readMetadataString(metadata: unknown, key: string) {
@@ -144,6 +179,114 @@ export class JobsNormalizationService {
     return normalized?.matched ? normalized.canonical : trimmed;
   }
 
+  async expandSearchKeywords(domain: JobsNormalizationDomain, input?: string | null) {
+    const trimmed = input?.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const snapshot = await this.getSnapshot();
+    const domainSnapshot = snapshot.domains[domain];
+    const relatedCanonicals = new Set<string>();
+    const exactMatched = await this.normalizeSingle(domain, trimmed);
+
+    if (exactMatched?.matched) {
+      relatedCanonicals.add(exactMatched.canonical);
+    }
+
+    const extractedCanonicals = await this.extractCanonicalOptionsFromText(domain, trimmed);
+    extractedCanonicals.forEach((canonical) => relatedCanonicals.add(canonical));
+
+    const expandedKeywords = new Set<string>([trimmed]);
+    relatedCanonicals.forEach((canonical) => {
+      const term = domainSnapshot.canonicalMap.get(canonical);
+      if (!term) {
+        expandedKeywords.add(canonical);
+        return;
+      }
+      term.aliases.forEach((alias) => expandedKeywords.add(alias));
+      term.searchKeywords.forEach((keyword) => expandedKeywords.add(keyword));
+    });
+
+    return uniqueStrings(Array.from(expandedKeywords));
+  }
+
+  async getSuggestions(domain: JobsNormalizationDomain, input?: string | null, limit = 8) {
+    const trimmed = input?.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const snapshot = await this.getSnapshot();
+    const suggestions = snapshot.domains[domain].terms
+      .map<NormalizationSuggestionItem | null>((term) => {
+        const canonicalMatch = scoreSuggestionMatch(trimmed, term.canonical);
+        const aliasMatches = term.aliases
+          .map((alias) => ({
+            alias,
+            result: scoreSuggestionMatch(trimmed, alias),
+          }))
+          .filter((item) => item.result.matched)
+          .sort((left, right) => {
+            if (right.result.score !== left.result.score) {
+              return right.result.score - left.result.score;
+            }
+            return left.alias.localeCompare(right.alias, 'zh-Hans-CN');
+          });
+
+        if (!canonicalMatch.matched && !aliasMatches.length) {
+          return null;
+        }
+
+        const bestAlias = aliasMatches[0];
+        const score = Math.max(
+          canonicalMatch.matched ? canonicalMatch.score + 10 : 0,
+          bestAlias ? bestAlias.result.score + (bestAlias.alias === term.canonical ? 5 : 30) : 0,
+        );
+
+        return {
+          domain,
+          canonical: term.canonical,
+          matchedAlias: bestAlias && bestAlias.alias !== term.canonical ? bestAlias.alias : null,
+          relatedKeywords: uniqueStrings(term.aliases).slice(0, 6),
+          score,
+          sortOrder: term.sortOrder,
+        };
+      })
+      .filter((item): item is NormalizationSuggestionItem => Boolean(item))
+      .sort((left, right) => {
+        if (right.score !== left.score) {
+          return right.score - left.score;
+        }
+        if (left.sortOrder !== right.sortOrder) {
+          return left.sortOrder - right.sortOrder;
+        }
+        return left.canonical.localeCompare(right.canonical, 'zh-Hans-CN');
+      })
+      .slice(0, limit);
+
+    return suggestions.map(({ domain: suggestionDomain, canonical, matchedAlias, relatedKeywords }) => ({
+      domain: suggestionDomain,
+      canonical,
+      matchedAlias,
+      relatedKeywords,
+    }));
+  }
+
+  async getMultiDomainSuggestions(domains: JobsNormalizationDomain[], input?: string | null, limit = 8) {
+    const groups = await Promise.all(domains.map((domain) => this.getSuggestions(domain, input, limit)));
+    const deduped = new Map<string, Awaited<ReturnType<JobsNormalizationService['getSuggestions']>>[number]>();
+
+    groups.flat().forEach((item) => {
+      const key = `${item.domain}:${item.canonical}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, item);
+      }
+    });
+
+    return Array.from(deduped.values()).slice(0, limit);
+  }
+
   async normalizeLocationPreferences(input: string[]): Promise<LocationPreferenceKeyword[]> {
     const [snapshot, normalizedLocations] = await Promise.all([this.getSnapshot(), this.normalizePreferences('LOCATION', input)]);
     const locationSnapshot = snapshot.domains.LOCATION;
@@ -234,7 +377,7 @@ export class JobsNormalizationService {
       const searchKeywords = uniqueStrings([
         term.canonicalName,
         ...(
-          domain === 'LOCATION'
+          domain === 'LOCATION' || domain === 'COMPANY'
             ? term.aliases.map((item) => item.aliasName)
             : term.aliases
               .filter((item) => item.matchMode === 'contains')

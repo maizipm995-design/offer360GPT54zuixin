@@ -1,15 +1,11 @@
-'use client';
-
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/utils';
 import { ServiceItem } from '@/types';
 
 export function ServiceGrid({ services }: { services: ServiceItem[] }) {
-  const router = useRouter();
-
   return (
     <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
       {services.map((item) => (
@@ -21,12 +17,24 @@ export function ServiceGrid({ services }: { services: ServiceItem[] }) {
           <p className="mt-4 min-h-[96px] text-sm leading-7 text-muted">{item.description}</p>
           <div className="mt-6 space-y-2">
             <p className="text-2xl font-bold text-brand">{formatCurrency(item.price)}</p>
-            <p className="text-sm text-muted line-through">原价 {formatCurrency(item.originalPrice)}</p>
-            <p className="text-sm text-muted">评分 {item.score} · {item.salesCount} 人付款</p>
+            {item.originalPrice > item.price ? (
+              <p className="text-sm text-muted line-through">原价 {formatCurrency(item.originalPrice)}</p>
+            ) : null}
+            {item.score > 0 || item.salesCount > 0 ? (
+              <p className="text-sm text-muted">
+                {item.score > 0 ? `评分 ${item.score}` : '正式上架'}
+                {item.salesCount > 0 ? ` · ${item.salesCount} 人付款` : ''}
+              </p>
+            ) : null}
           </div>
-          <Button className="mt-6 w-full" onClick={() => router.push(`/services/${encodeURIComponent(item.id)}`)}>
+          <Link
+            href={`/services/${encodeURIComponent(item.id)}`}
+            className={cn(
+              'mt-6 inline-flex w-full items-center justify-center rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white shadow-card transition hover:bg-brand-dark active:scale-[0.98]',
+            )}
+          >
             查看详情
-          </Button>
+          </Link>
         </Card>
       ))}
     </section>

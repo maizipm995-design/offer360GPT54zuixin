@@ -10,6 +10,7 @@ export const ADMIN_PERMISSION_CATALOG: AdminPermissionCatalogItem[] = [
   { key: 'admin:user:manage', name: '管理 C 端用户', group: 'user' },
   { key: 'admin:membership:manage', name: '管理会员与权益内容', group: 'membership' },
   { key: 'admin:service:manage', name: '管理服务商品与订单', group: 'service' },
+  { key: 'admin:ai:manage', name: '管理 AI 模型配置与简历优化', group: 'service' },
   { key: 'admin:commission:manage', name: '管理激励金配置与流水', group: 'commission' },
   { key: 'admin:redeem:manage', name: '管理兑换码批次与明细', group: 'redeem' },
   { key: 'admin:admin-user:manage', name: '管理后台账号', group: 'governance' },

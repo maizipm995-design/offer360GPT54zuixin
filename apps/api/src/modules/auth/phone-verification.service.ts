@@ -40,7 +40,7 @@ export class PhoneVerificationService {
     const code = this.generateCode();
     // 强制使用 300 秒（5 分钟）有效期，确保后端时效性准确
     const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
-    await this.aliyunSmsService.sendVerificationCode(normalizedPhone, code);
+    const smsResult = await this.aliyunSmsService.sendVerificationCode(normalizedPhone, code);
 
     await this.prisma.phoneVerificationCode.upsert({
       where: {
@@ -76,6 +76,8 @@ export class PhoneVerificationService {
       reused: false,
       sent: true,
       cooldownSeconds: 60,
+      deliveryMode: smsResult.deliveryMode,
+      debugCode: smsResult.debugCode,
     };
   }
 

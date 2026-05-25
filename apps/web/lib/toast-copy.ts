@@ -1,0 +1,72 @@
+'use client';
+
+export const COMMON_TOAST_COPY = {
+  loginRequired: '请先登录后继续操作',
+  saved: '内容已保存',
+  saveFailed: '保存失败，请稍后重试',
+  invalidPhone: '请输入正确的手机号',
+  verificationCodeSent: '验证码已发送，请注意查收',
+  verificationCodeFailed: '验证码发送失败，请稍后重试',
+  enterVerificationCode: '请输入验证码',
+  maxFiveItems: '最多可添加 5 项',
+  duplicateItem: '该内容已添加，无需重复添加',
+  copySuccess: '内容已复制，可直接使用',
+  copyFailed: '复制失败，请手动复制',
+} as const;
+
+export const AUTH_TOAST_COPY = {
+  debugCode: (code: string) => `开发环境未接短信通道，本次验证码：${code}`,
+  identifyPhoneFailed: '手机号识别失败，请稍后重试',
+  loginFailed: '登录失败，请稍后重试',
+  codeLoginFailed: '验证码登录失败，请稍后重试',
+  verificationCodeVerifiedForRegister: '验证码已验证，请设置登录密码',
+  verificationCodeVerifiedForReset: '验证码已验证，请设置新密码',
+  verifyCodeFailed: '验证码验证失败，请稍后重试',
+  registerFailed: '注册失败，请稍后重试',
+  resetPasswordFailed: '密码重置失败，请稍后重试',
+} as const;
+
+export const ADMIN_TOAST_COPY = {
+  loadFailed: (entity: string) => `${entity}加载失败，请稍后重试`,
+  saved: (entity: string) => `${entity}已保存`,
+  saveFailed: (entity: string) => `${entity}保存失败，请稍后重试`,
+  created: (entity: string) => `${entity}已创建`,
+  updated: (entity: string) => `${entity}已更新`,
+  deleted: (entity: string) => `${entity}已删除`,
+  deleteFailed: (entity: string) => `${entity}删除失败，请稍后重试`,
+  enabled: (entity: string) => `${entity}已启用`,
+  disabled: (entity: string) => `${entity}已停用`,
+  uploadDone: (entity: string) => `${entity}已上传`,
+  uploadFailed: (entity: string) => `${entity}上传失败，请稍后重试`,
+  imageInserted: (entity: string) => `${entity}已上传并插入内容`,
+  templateDownloaded: (entity: string) => `${entity}模板已开始下载`,
+  exportDone: (entity: string) => `${entity}已导出`,
+  exportFailed: (entity: string) => `${entity}导出失败，请稍后重试`,
+  statusUpdated: (entity: string) => `${entity}状态已更新`,
+  statusUpdateFailed: (entity: string) => `${entity}状态更新失败，请稍后重试`,
+  operationFailed: (entity: string) => `${entity}操作失败，请稍后重试`,
+  noOperableData: (entity: string) => `当前没有可操作的${entity}`,
+  selectSavedItemFirst: (entity: string) => `请先选择已保存的${entity}`,
+  templateFileRequired: (entity: string) => `请先选择待导入的${entity}`,
+  fileLoaded: (fileName: string) => `文件已载入：${fileName}`,
+  fileSelected: (fileName: string) => `已选择文件：${fileName}`,
+  importCompleted: (total: number, success: number, failed: number) => `导入已完成：共 ${total} 条，成功 ${success} 条，失败 ${failed} 条`,
+  connectionTestDone: '连通性测试已完成',
+  connectionTestFailed: '连通性测试失败，请稍后重试',
+  passwordRequired: '请先填写新密码',
+  passwordResetDone: '密码已重置',
+} as const;
+
+export const RESUME_TOAST_COPY = {
+  aiOptimizeDone: 'AI 优化已完成',
+  aiOptimizeFailed: 'AI 优化失败，请稍后重试',
+  aiTaskSubmitted: 'AI 任务已提交，完成后会自动刷新结果',
+  taskNoChange: '任务已完成，当前内容无需更新',
+  draftCreated: '已新建简历草稿',
+  smartSortDone: '已完成智能排序',
+  smartLayoutDone: '已为你适配单页简历',
+  smartLayoutReverted: '已恢复到调整前的版式',
+  pdfGenerating: '正在生成 PDF，请稍候...',
+  pdfDownloadStarted: 'PDF 已开始下载',
+  imageUploaded: '图片已上传',
+} as const;

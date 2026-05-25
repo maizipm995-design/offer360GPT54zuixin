@@ -15,6 +15,13 @@ export function formatCurrency(value: number) {
 }
 
 export function formatDate(value?: string | Date | null) {
+  const formatter = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  });
+
   if (!value) return '-';
   if (typeof value === 'string') {
     const normalized = value.trim();
@@ -23,20 +30,12 @@ export function formatDate(value?: string | Date | null) {
     if (Number.isNaN(date.getTime())) {
       return normalized;
     }
-    return new Intl.DateTimeFormat('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(date);
+    return formatter.format(date);
   }
 
   if (Number.isNaN(value.getTime())) {
     return '-';
   }
 
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(value);
+  return formatter.format(value);
 }

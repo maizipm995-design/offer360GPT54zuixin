@@ -14,6 +14,7 @@ import {
   RESUME_SKILL_VARIANT_OPTIONS,
 } from '@/components/resume/resume-templates';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import type {
@@ -194,7 +195,7 @@ export default function AdminResumeTemplateConfigsPage() {
         setForm(null);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '简历模板排版配置加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('简历模板排版配置'));
     } finally {
       setLoading(false);
     }
@@ -241,9 +242,9 @@ export default function AdminResumeTemplateConfigsPage() {
           itemSpacing: Number((saved.bodyTextLineHeightPt * item.styleJson.spacingScale).toFixed(2)),
         },
       })));
-      setMessage('全局垂直排版参数已保存');
+      setMessage(ADMIN_TOAST_COPY.saved('全局垂直排版参数'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '全局垂直排版参数保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('全局垂直排版参数'));
     } finally {
       setSavingGlobalSpacing(false);
     }
@@ -288,9 +289,9 @@ export default function AdminResumeTemplateConfigsPage() {
 
       setList((prev) => prev.map((item) => (item.templateCode === saved.templateCode ? saved : item)));
       fillForm(saved);
-      setMessage('简历模板排版配置已保存');
+      setMessage(ADMIN_TOAST_COPY.saved('简历模板排版配置'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '简历模板排版配置保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('简历模板排版配置'));
     } finally {
       setSaving(false);
     }

@@ -6,14 +6,80 @@ type JobAnnouncementBasePayload = Prisma.JobAnnouncementGetPayload<{}>;
 type JobAnnouncementTrackingItem = { progressStatus: string };
 
 export type JobAnnouncementViewPayload = JobAnnouncementBasePayload & { trackings?: JobAnnouncementTrackingItem[] };
+type JobCardAccessState = {
+  canViewAnnouncement?: boolean;
+  canDeliver?: boolean;
+};
 
-function resolveDeliveryMethod(deliveryUrl?: string | null) {
-  if (!deliveryUrl) {
+const BLOCKED_TARGET_VALUES = new Set(['#', '/', 'javascript:void(0)', 'javascript:;', 'about:blank']);
+const BLOCKED_TARGET_HOSTNAMES = new Set(['example.com', 'www.example.com', 'localhost', '127.0.0.1', '0.0.0.0']);
+const BARE_DOMAIN_PATTERN = /^(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:[/:?#].*)?$/i;
+const EMAIL_ADDRESS_EXTRACT_PATTERN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+
+function normalizeTargetValue(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) {
     return null;
   }
 
-  const normalized = deliveryUrl.trim().toLowerCase();
-  return normalized.includes('@') && !normalized.startsWith('http') ? 'email' : 'website';
+  const lowered = normalized.toLowerCase();
+  if (BLOCKED_TARGET_VALUES.has(lowered)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function normalizeExternalUrl(value?: string | null) {
+  const normalized = normalizeTargetValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  let candidate = normalized;
+  if (candidate.startsWith('//')) {
+    candidate = `https:${candidate}`;
+  } else if (!/^[a-z][a-z0-9+.-]*:/i.test(candidate) && BARE_DOMAIN_PATTERN.test(candidate)) {
+    candidate = `https://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    if (BLOCKED_TARGET_HOSTNAMES.has(parsed.hostname.toLowerCase())) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEmailTarget(value?: string | null) {
+  const normalized = normalizeTargetValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const candidate = normalized.toLowerCase().startsWith('mailto:')
+    ? normalized.slice('mailto:'.length).trim()
+    : normalized;
+
+  const matchedEmail = candidate.match(EMAIL_ADDRESS_EXTRACT_PATTERN)?.[0];
+  if (matchedEmail) {
+    return matchedEmail;
+  }
+
+  return candidate.includes('@') ? candidate : null;
+}
+
+function resolveDeliveryMethod(deliveryUrl?: string | null) {
+  if (normalizeEmailTarget(deliveryUrl)) {
+    return 'email';
+  }
+  return normalizeExternalUrl(deliveryUrl) ? 'website' : null;
 }
 
 function buildJobDisplayName(job: Pick<JobAnnouncementViewPayload, 'jobName' | 'announcementTitle'>) {
@@ -43,14 +109,19 @@ export function buildLegacyJobCard(
       matchTier?: 0 | 1 | 2 | 3;
       matchType?: 'CITY_JOB_COMPANY' | 'CITY_COMPANY' | 'CITY_JOB' | 'JOB_COMPANY' | 'CITY_ONLY' | 'JOB_ONLY' | 'COMPANY_ONLY' | 'FALLBACK';
     };
+    access?: JobCardAccessState;
   },
 ) {
   const tracking = job.trackings?.[0];
-  const deliveryMethod = resolveDeliveryMethod(job.deliveryUrl);
+  const announcementUrl = resolveValidAnnouncementUrl(job.announcementUrl);
+  const deliveryTarget = resolveValidDeliveryTarget(job.deliveryUrl);
+  const deliveryMethod = resolveDeliveryMethod(deliveryTarget);
   const jobName = job.jobName?.trim() || null;
-  const jobCategory = job.jobCategory?.trim() || null;
+  const majorRequirement = job.majorRequirement?.trim() || null;
   const recruitmentType = job.recruitmentType?.trim() || null;
   const companyFullName = job.companyFullName?.trim() || '';
+  const hasAnnouncement = Boolean(announcementUrl);
+  const hasDelivery = Boolean(deliveryTarget);
 
   return {
     id: job.id,
@@ -58,19 +129,18 @@ export function buildLegacyJobCard(
     companyName: companyFullName,
     jobName,
     positionNames: buildJobDisplayName(job),
-    jobCategory,
-    positionCategory: jobCategory,
     workLocation: job.workLocation,
     degreeRequirement: job.degreeRequirement,
     enterpriseNature: job.enterpriseNature,
     recruitmentType,
     jobType: recruitmentType,
-    majorRequirement: jobCategory,
+    majorRequirement,
     deadlineAt: job.deadlineAt,
-    announcementUrl: job.announcementUrl,
+    hasAnnouncement,
+    canViewAnnouncement: hasAnnouncement && Boolean(extras?.access?.canViewAnnouncement),
     deliveryType: deliveryMethod,
-    deliveryUrl: job.deliveryUrl,
-    recruitmentLink: job.deliveryUrl,
+    hasDelivery,
+    canDeliver: hasDelivery && Boolean(extras?.access?.canDeliver),
     announcementTitle: job.announcementTitle,
     industry: job.industry,
     graduationSession: job.graduationSession,
@@ -88,12 +158,20 @@ export function buildLegacyJobCard(
   };
 }
 
-export function buildJobKeywordText(job: Pick<JobAnnouncementViewPayload, 'jobCategory' | 'jobName' | 'announcementTitle'>) {
-  return `${job.jobCategory || ''} ${job.jobName || ''} ${job.announcementTitle || ''}`.toLowerCase();
+export function buildJobKeywordText(job: Pick<JobAnnouncementViewPayload, 'jobName' | 'announcementTitle'>) {
+  return `${job.jobName || ''} ${job.announcementTitle || ''}`.toLowerCase();
 }
 
-export function buildJobSupplementText(job: Pick<JobAnnouncementViewPayload, 'jobCategory' | 'announcementTitle' | 'industry' | 'graduationSession'>) {
-  return `${job.jobCategory || ''} ${job.announcementTitle || ''} ${job.industry || ''} ${job.graduationSession || ''}`.toLowerCase();
+export function buildJobSupplementText(job: Pick<JobAnnouncementViewPayload, 'majorRequirement' | 'announcementTitle' | 'industry' | 'graduationSession'>) {
+  return `${job.majorRequirement || ''} ${job.announcementTitle || ''} ${job.industry || ''} ${job.graduationSession || ''}`.toLowerCase();
+}
+
+export function resolveValidAnnouncementUrl(announcementUrl?: string | null) {
+  return normalizeExternalUrl(announcementUrl);
+}
+
+export function resolveValidDeliveryTarget(deliveryUrl?: string | null) {
+  return normalizeEmailTarget(deliveryUrl) ?? normalizeExternalUrl(deliveryUrl);
 }
 
 export function resolveJobDeliveryMethod(deliveryUrl?: string | null) {

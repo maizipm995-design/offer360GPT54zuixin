@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery, downloadFilePayload } from '@/lib/admin';
 import { clientFetch, clientUpload, type ClientUploadProgress } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminFileDownloadPayload, AdminImportResult, AdminJobItem, AdminListResponse } from '@/types';
@@ -27,12 +28,12 @@ const jobTemplateHeaders = [
   '学历要求',
   '工作地点',
   '岗位名称',
-  '岗位类别',
+  '专业需求',
   '招聘类型',
   '截止日期',
   '公告链接',
   '投递链接',
-  '相关专业',
+  '毕业届别',
   '内推码',
   '招聘公告标题',
   '行业',
@@ -45,7 +46,7 @@ const emptyForm = {
   degreeRequirement: '',
   workLocation: '',
   jobName: '',
-  jobCategory: '',
+  majorRequirement: '',
   recruitmentType: '',
   deadlineAt: '',
   announcementUrl: '',
@@ -96,7 +97,7 @@ export default function AdminJobsPage() {
       const result = await clientFetch<AdminListResponse<AdminJobItem>>(`/admin/jobs?${queryString}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '招聘公告加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('招聘公告'));
     } finally {
       setLoading(false);
     }
@@ -117,7 +118,7 @@ export default function AdminJobsPage() {
       degreeRequirement: item.degreeRequirement || '',
       workLocation: item.workLocation || '',
       jobName: item.jobName || '',
-      jobCategory: item.jobCategory || '',
+      majorRequirement: item.majorRequirement || '',
       recruitmentType: item.recruitmentType || '',
       deadlineAt: item.deadlineAt || '',
       announcementUrl: item.announcementUrl || '',
@@ -157,11 +158,11 @@ export default function AdminJobsPage() {
       const result = selectedId
         ? await clientFetch<AdminJobItem>(`/admin/jobs/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await clientFetch<AdminJobItem>('/admin/jobs', { method: 'POST', body: JSON.stringify(payload) });
-      setMessage(selectedId ? '招聘公告已更新' : '招聘公告已创建');
+      setMessage(selectedId ? ADMIN_TOAST_COPY.updated('招聘公告') : ADMIN_TOAST_COPY.created('招聘公告'));
       handleSelect(result);
       await loadData(selectedId ? page : 1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '招聘公告保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('招聘公告'));
     } finally {
       setSaving(false);
     }
@@ -172,11 +173,11 @@ export default function AdminJobsPage() {
     if (!window.confirm('确认删除当前招聘公告吗？')) return;
     try {
       await clientFetch(`/admin/jobs/${selectedId}`, { method: 'DELETE' });
-      setMessage('招聘公告已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('招聘公告'));
       resetForm();
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '招聘公告删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('招聘公告'));
     }
   };
 
@@ -185,9 +186,9 @@ export default function AdminJobsPage() {
       setDownloadingTemplate(true);
       const payload = await clientFetch<AdminFileDownloadPayload>('/admin/jobs/template');
       downloadFilePayload(payload);
-      setMessage('招聘公告 Excel 导入模板已下载');
+      setMessage(ADMIN_TOAST_COPY.templateDownloaded('招聘公告导入'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '模板下载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('模板'));
     } finally {
       setDownloadingTemplate(false);
     }
@@ -199,9 +200,9 @@ export default function AdminJobsPage() {
       const queryString = buildQuery(filters);
       const payload = await clientFetch<AdminFileDownloadPayload>(`/admin/jobs/export${queryString ? `?${queryString}` : ''}`);
       downloadFilePayload(payload);
-      setMessage('招聘公告筛选结果已导出为 Excel');
+      setMessage(ADMIN_TOAST_COPY.exportDone('招聘公告筛选结果'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '导出失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('招聘公告'));
     } finally {
       setExporting(false);
     }
@@ -230,7 +231,7 @@ export default function AdminJobsPage() {
     setImportProgress(0);
     setImportResult(null);
     setImportStatusText(`已选择 ${file.name}（${formatFileSize(file.size)}），点击“开始导入”后将自动上传并分批入库。`);
-    setMessage(`已选择 Excel 文件：${file.name}`);
+    setMessage(ADMIN_TOAST_COPY.fileSelected(file.name));
   };
 
   const handleImportProgress = (progress: ClientUploadProgress) => {
@@ -256,7 +257,7 @@ export default function AdminJobsPage() {
   const handleImportSubmit = async () => {
     if (!importFile) {
       setImportStatusText('请先选择 Excel 文件后再开始导入');
-      setMessage('请先选择待导入的 Excel 文件');
+      setMessage(ADMIN_TOAST_COPY.templateFileRequired('Excel 文件'));
       return;
     }
 
@@ -276,7 +277,7 @@ export default function AdminJobsPage() {
       setImportResult(result);
       setImportProgress(100);
       setImportStatusText(`导入完成：共 ${result.total} 行，成功 ${result.success} 行，失败 ${result.failed} 行，耗时 ${(result.durationMs / 1000).toFixed(1)} 秒。`);
-      setMessage(`导入完成：共 ${result.total} 行，成功 ${result.success} 行，失败 ${result.failed} 行`);
+      setMessage(ADMIN_TOAST_COPY.importCompleted(result.total, result.success, result.failed));
       await loadData(1, filters);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '招聘公告导入失败';
@@ -305,7 +306,7 @@ export default function AdminJobsPage() {
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h3 className="text-lg font-semibold text-ink">批量工具</h3>
-            <p className="mt-1 text-sm text-muted">严格按模板列头顺序解析 Excel；仅“企业/单位全称”为必填，录入日期为空时系统自动补当前系统时间，且前台“更新日期”固定读取录入日期展示；相关专业/岗位名称/工作地点支持长文本导入。</p>
+            <p className="mt-1 text-sm text-muted">系统按表头名称智能匹配导入列；列顺序可打乱、列数可多可少、多余列自动忽略。仅“企业/单位全称”为必填，录入日期为空时系统自动补当前系统日期。</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void handleTemplateDownload()} disabled={downloadingTemplate || importing}>
@@ -347,7 +348,7 @@ export default function AdminJobsPage() {
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500">{importStatusText}</p>
             </div>
-            <p className="mt-3 text-xs leading-6 text-slate-500">模板列头顺序：{jobTemplateHeaders.join('、')}。</p>
+            <p className="mt-3 text-xs leading-6 text-slate-500">标准模板列头：{jobTemplateHeaders.join('、')}。上传文件可乱序，系统会自动识别匹配。</p>
           </div>
 
           <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
@@ -483,8 +484,8 @@ export default function AdminJobsPage() {
 
             <div className="grid gap-3 md:grid-cols-2">
               <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">岗位类别</span>
-                <Input placeholder="如：技术类 / 产品类" value={form.jobCategory} onChange={(e) => setForm((prev) => ({ ...prev, jobCategory: e.target.value }))} />
+                <span className="text-sm font-medium text-ink">专业需求</span>
+                <Textarea placeholder="支持填写多个专业要求，如：计算机类、软件工程、信息安全、人工智能等" value={form.majorRequirement} onChange={(e) => setForm((prev) => ({ ...prev, majorRequirement: e.target.value }))} className="min-h-[88px]" />
               </label>
               <label className="block space-y-2">
                 <span className="text-sm font-medium text-ink">招聘类型</span>
@@ -518,8 +519,8 @@ export default function AdminJobsPage() {
 
             <div className="grid gap-3 md:grid-cols-2">
               <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">相关专业</span>
-                <Textarea placeholder="支持批量填写多个专业，如：计算机类、软件工程、信息安全、人工智能、数学统计等" value={form.graduationSession} onChange={(e) => setForm((prev) => ({ ...prev, graduationSession: e.target.value }))} className="min-h-[88px]" />
+                <span className="text-sm font-medium text-ink">毕业届别</span>
+                <Input placeholder="如：2025届 / 2026届 / 2027届" value={form.graduationSession} onChange={(e) => setForm((prev) => ({ ...prev, graduationSession: e.target.value }))} />
               </label>
               <label className="block space-y-2">
                 <span className="text-sm font-medium text-ink">内推码</span>

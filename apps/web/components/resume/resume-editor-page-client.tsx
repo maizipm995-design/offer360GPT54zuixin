@@ -2,6 +2,8 @@
 
 import {
   type ChangeEvent,
+  type FocusEvent as ReactFocusEvent,
+  type FormEvent as ReactFormEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
@@ -14,6 +16,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -41,15 +44,24 @@ import { Input } from '@/components/ui/input';
 import { downloadFilePayload } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
 import { uploadFileToOss as sharedUploadFileToOss } from '@/lib/oss';
+import { COMMON_TOAST_COPY, RESUME_TOAST_COPY } from '@/lib/toast-copy';
 import { cn, formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { showToast } from '@/store/toast-store';
 import { MemberAccessDialog } from '@/components/membership/member-access-dialog';
-import { ResumeDocument } from './resume-document';
 import { getRichTextPlainText } from './resume-rich-text';
-import { ResumeRichTextEditor } from './resume-rich-text-editor';
 import {
   type ResumeBasicInfoVariant,
+  type ResumeAiOptimizeEntryResponse,
+  type ResumeAiOptimizeEntrySectionId,
+  type ResumeAiOptimizeGlobalSubmitResponse,
+  type ResumeAiOptimizeGlobalTaskStatusResponse,
+  type ResumeAiProfessionalOptimizeSubmitResponse,
+  type ResumeAiSuggestionListResponse,
+  type ResumeAiOptimizeSectionId,
+  type ResumeAiOptimizeSectionResponse,
+  type ResumeAiTranslateDirection,
+  type ResumeAiTranslateSubmitResponse,
   DEFAULT_RESUME_CONTENT,
   DEFAULT_RESUME_LAYOUT,
   DEFAULT_RESUME_STYLE,
@@ -66,6 +78,7 @@ import {
   createEmptySkillEntry,
   getAllowedHeaderAlignsByVariant,
   getSectionFilledCount,
+  getSectionLabel,
   hasIncompleteDates,
   normalizeResumeContent,
   normalizeResumeLayout,
@@ -94,16 +107,62 @@ import {
   RESUME_SKILL_VARIANT_OPTIONS,
 } from './resume-templates';
 
+const ResumeDocument = dynamic(
+  () => import('./resume-document').then((mod) => mod.ResumeDocument),
+  {
+    loading: () => (
+      <div className="flex min-h-[320px] items-center justify-center rounded-[24px] border border-[#D8DEE8] bg-white text-sm text-slate-500">
+        简历预览加载中...
+      </div>
+    ),
+  },
+);
+
+const ResumeRichTextEditor = dynamic(
+  () => import('./resume-rich-text-editor').then((mod) => mod.ResumeRichTextEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-[140px] items-center justify-center rounded-2xl border border-[#E5E6EB] bg-white px-4 text-sm text-slate-500">
+        富文本编辑器加载中...
+      </div>
+    ),
+  },
+);
+
 const REDIRECT_PATH = '/resume-optimizer';
+
+function getGuestPreviewBlockedElement(target: EventTarget | null) {
+  const element = target instanceof Element ? target : null;
+  if (!element) {
+    return null;
+  }
+
+  const blockedElement = element.closest<HTMLElement>(
+    'input, textarea, select, [contenteditable], [role="textbox"], [data-resume-guest-block]',
+  );
+  if (!blockedElement) {
+    return null;
+  }
+
+  if (blockedElement.closest('[data-allow-guest="true"]')) {
+    return null;
+  }
+
+  return blockedElement;
+}
 const PREVIEW_BASE_WIDTH = 794;
 const PREVIEW_BASE_HEIGHT = 1123;
 const FLOATING_PANEL_OFFSET = 12;
-const AVATAR_CROP_VIEWPORT_WIDTH = 288;
-const AVATAR_CROP_VIEWPORT_HEIGHT = 384;
+const AVATAR_CROP_STAGE_MAX_WIDTH = 520;
+const AVATAR_CROP_STAGE_MAX_HEIGHT = 520;
 const AVATAR_CROP_OUTPUT_WIDTH = 900;
 const AVATAR_CROP_OUTPUT_HEIGHT = 1200;
-const AVATAR_CROP_MIN_ZOOM = 1;
-const AVATAR_CROP_MAX_ZOOM = 3;
+const AVATAR_CROP_MIN_SCALE = 0.35;
+const AVATAR_CROP_DEFAULT_SCALE = 0.82;
+const AVATAR_CROP_MAX_SCALE = 1;
+const SCHOOL_LOGO_CROP_OUTPUT_WIDTH = 1500;
+const SCHOOL_LOGO_CROP_OUTPUT_HEIGHT = 927;
 const AUTO_FIT_LIMITS = {
   fontSize: 12,
   spacingScale: 0.8,
@@ -141,6 +200,50 @@ const OSS_IMAGE_UPLOAD_SCENES = {
   avatar: 'resume-avatar',
   schoolLogo: 'resume-school-logo',
 } as const;
+type ImageCropConfig = {
+  title: string;
+  description: string;
+  helperText: string;
+  successMessage: string;
+  previewAspectRatio: string;
+  previewObjectPosition: string;
+  targetRatio: number;
+  outputWidth: number;
+  outputHeight: number;
+  minScale: number;
+  defaultScale: number;
+  maxScale: number;
+};
+const IMAGE_CROP_CONFIGS: Record<(typeof OSS_IMAGE_UPLOAD_SCENES)[keyof typeof OSS_IMAGE_UPLOAD_SCENES], ImageCropConfig> = {
+  [OSS_IMAGE_UPLOAD_SCENES.avatar]: {
+    title: '裁剪头像',
+    description: '请将头像调整到 3:4 裁剪框内。拖动中间可移动位置，拖动边缘或角点可同比例缩放，确认后仅上传裁剪成品。',
+    helperText: '支持任意尺寸和比例原图，确认裁剪后将按 3:4 标准头像上传。',
+    successMessage: '头像上传成功',
+    previewAspectRatio: '295 / 413',
+    previewObjectPosition: 'center top',
+    targetRatio: 3 / 4,
+    outputWidth: AVATAR_CROP_OUTPUT_WIDTH,
+    outputHeight: AVATAR_CROP_OUTPUT_HEIGHT,
+    minScale: AVATAR_CROP_MIN_SCALE,
+    defaultScale: AVATAR_CROP_DEFAULT_SCALE,
+    maxScale: AVATAR_CROP_MAX_SCALE,
+  },
+  [OSS_IMAGE_UPLOAD_SCENES.schoolLogo]: {
+    title: '裁剪校徽',
+    description: '请将校徽调整到固定裁剪框内。拖动中间可移动位置，拖动边缘或角点可同比例缩放，确认后仅上传裁剪成品。',
+    helperText: '支持任意尺寸和比例原图，确认裁剪后将按校徽标准比例上传。',
+    successMessage: '校徽上传成功',
+    previewAspectRatio: '1500 / 927',
+    previewObjectPosition: 'center',
+    targetRatio: SCHOOL_LOGO_CROP_OUTPUT_WIDTH / SCHOOL_LOGO_CROP_OUTPUT_HEIGHT,
+    outputWidth: SCHOOL_LOGO_CROP_OUTPUT_WIDTH,
+    outputHeight: SCHOOL_LOGO_CROP_OUTPUT_HEIGHT,
+    minScale: AVATAR_CROP_MIN_SCALE,
+    defaultScale: AVATAR_CROP_DEFAULT_SCALE,
+    maxScale: AVATAR_CROP_MAX_SCALE,
+  },
+};
 const STYLE_PANEL_TABS = [
   { id: 'template', label: '模板切换' },
   { id: 'header', label: '头部布局' },
@@ -151,6 +254,31 @@ const STYLE_PANEL_TABS = [
 ] as const;
 type StylePanelTab = (typeof STYLE_PANEL_TABS)[number]['id'];
 type ToolbarPanel = 'font' | 'fontSize' | 'spacingScale' | 'pageMargin' | 'theme' | 'textFormat' | 'templateStyle' | 'moduleManager' | 'translate' | 'download' | null;
+type ResumeAiUndoScope = 'entry' | 'global';
+type ResumeBatchAiAction =
+  | { type: 'translate'; direction: ResumeAiTranslateDirection }
+  | { type: 'professional' };
+type ResumeBatchAiTask = {
+  taskId: string;
+  resumeId: string;
+  sourceResumeId: string;
+  optimizeType: 'translate' | 'professional';
+  pollingIntervalMs: number;
+};
+
+interface ResumeAiUndoState {
+  scope: ResumeAiUndoScope;
+  sectionId?: SupportedSectionId;
+  entryId?: string;
+  previousDraft: ResumeDraftRecord;
+}
+
+interface ResumeEntrySuggestionState {
+  suggestions: string[];
+  loading: boolean;
+}
+
+type ResumeSuggestionTargetSectionId = ResumeAiOptimizeEntrySectionId | ResumeAiOptimizeSectionId;
 const DRAFT_COUNT_COPY: Record<ResumeDraftListResponse['memberRoleCode'], { limit: number; upgradeHint: string }> = {
   FREE_USER: {
     limit: 1,
@@ -170,9 +298,23 @@ type AvatarCropState = {
   sourceUrl: string;
   imageWidth: number;
   imageHeight: number;
-  zoom: number;
-  offsetX: number;
-  offsetY: number;
+  cropConfig: ImageCropConfig;
+  cropScale: number;
+  cropX: number;
+  cropY: number;
+};
+type AvatarCropHandle = 'move' | 'top' | 'right' | 'bottom' | 'left' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+type AvatarCropInteraction = {
+  pointerId: number;
+  handle: AvatarCropHandle;
+  startClientX: number;
+  startClientY: number;
+  cropRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 };
 const SUPPORTED_SECTION_IDS = [
   'personal',
@@ -335,6 +477,7 @@ const TEMPLATE_PREVIEW_CONTENT: ResumeContent = {
   campusRoles: [],
   selfEvaluation: '<p>注重用户体验与可维护性，擅长跨团队协作推进交付。</p>',
   links: [],
+  sectionLabels: {},
 };
 
 const TEMPLATE_PREVIEW_LAYOUT: ResumeLayoutItem[] = [
@@ -406,6 +549,72 @@ const PREVIEW_CONTENT_SKILL: ResumeContent = {
     },
   ],
 };
+
+const EMPTY_STATE_TEMPLATE_CONTENT: ResumeContent = {
+  ...DEFAULT_RESUME_CONTENT,
+  personal: {
+    ...DEFAULT_RESUME_CONTENT.personal,
+    name: 'Offer360',
+    phone: '1356666888',
+    email: 'offer360@offer.com',
+  },
+  education: [
+    {
+      id: 'empty-state-edu-1',
+      schoolName: 'Offer360',
+      degree: '本科',
+      major: '行政管理',
+      logoUrl: '',
+      startDate: '2020-09',
+      endDate: '2024-06',
+      description: '<ul><li>主修行政管理、文书处理与组织协调等课程，展示标准教育经历排版结构。</li></ul>',
+    },
+  ],
+  internships: [
+    {
+      id: 'empty-state-exp-1',
+      companyName: 'Offer360',
+      roleName: '行政专员',
+      city: '',
+      startDate: '2024-01',
+      endDate: '2024-06',
+      description: '<ul><li>负责日常资料整理、会议支持与流程跟进，展示工作经历的标准呈现方式。</li></ul>',
+    },
+  ],
+  projects: [
+    {
+      id: 'empty-state-project-1',
+      projectName: 'Offer360',
+      roleName: '项目执行',
+      city: '',
+      startDate: '2023-09',
+      endDate: '2023-12',
+      description: '<ul><li>协助推进项目资料归档、进度同步与跨部门沟通，展示项目经历的标准排版结构。</li></ul>',
+    },
+  ],
+  skills: [],
+  awards: [],
+  languages: [],
+  campusRoles: [],
+  selfEvaluation: '<p>具备良好的沟通表达、资料整理与执行推进能力，能够在明确流程下高效完成工作任务。</p>',
+  links: [],
+  sectionLabels: {
+    selfEvaluation: '个人评价',
+  },
+};
+
+const EMPTY_STATE_TEMPLATE_LAYOUT: ResumeLayoutItem[] = [
+  { id: 'personal', visible: true, deleted: false },
+  { id: 'education', visible: true, deleted: false },
+  { id: 'internships', visible: true, deleted: false },
+  { id: 'projects', visible: true, deleted: false },
+  { id: 'selfEvaluation', visible: true, deleted: false },
+  { id: 'awards', visible: false, deleted: true },
+  { id: 'skills', visible: false, deleted: true },
+  { id: 'languages', visible: false, deleted: true },
+  { id: 'campusRoles', visible: false, deleted: true },
+  { id: 'links', visible: false, deleted: true },
+];
 
 const LOCAL_RESUME_TEMPLATE_CONFIGS: ResumeTemplateConfigRecord[] = Object.values(RESUME_TEMPLATES).map((template) => ({
   id: `local-${template.code}`,
@@ -506,9 +715,24 @@ export function ResumeEditorPageClient() {
   const [activeSectionPage, setActiveSectionPage] = useState(1);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [optimizingEntryKey, setOptimizingEntryKey] = useState<string | null>(null);
+  const [optimizingSectionKey, setOptimizingSectionKey] = useState<string | null>(null);
+  const [optimizingGlobal, setOptimizingGlobal] = useState(false);
+  const [translatingDirection, setTranslatingDirection] = useState<ResumeAiTranslateDirection | null>(null);
+  const [professionalOptimizing, setProfessionalOptimizing] = useState(false);
+  const [pendingBatchAiAction, setPendingBatchAiAction] = useState<ResumeBatchAiAction | null>(null);
+  const [batchAiTask, setBatchAiTask] = useState<ResumeBatchAiTask | null>(null);
   const [openDrawers, setOpenDrawers] = useState<Record<string, boolean>>({});
   const [createLimitPromptOpen, setCreateLimitPromptOpen] = useState(false);
   const [memberAccessMessage, setMemberAccessMessage] = useState('');
+  const [entrySuggestions, setEntrySuggestions] = useState<Record<string, ResumeEntrySuggestionState>>({});
+  const [authRequiredDialogOpen, setAuthRequiredDialogOpen] = useState(false);
+  const [aiUndoState, setAiUndoState] = useState<ResumeAiUndoState | null>(null);
+  const suggestionPollTimerRef = useRef<number | null>(null);
+  const globalOptimizePollTimerRef = useRef<number | null>(null);
+  const batchAiPollTimerRef = useRef<number | null>(null);
+  const guestPromptAtRef = useRef(0);
+  const isGuestPreview = !token;
 
   const templateConfigMap = useMemo(
     () => new Map(templateConfigs.map((item) => [item.templateCode, item])),
@@ -520,22 +744,20 @@ export function ResumeEditorPageClient() {
   const previewHostRef = useRef<HTMLDivElement | null>(null);
   const previewMetricsRef = useRef<ResumePreviewMetrics | null>(null);
   const lastSavedSnapshotRef = useRef('');
-  const loginGateTriggeredRef = useRef(false);
+  const currentDraftIdRef = useRef('');
+
+  const clearBatchAiPolling = useCallback(() => {
+    if (batchAiPollTimerRef.current !== null) {
+      window.clearInterval(batchAiPollTimerRef.current);
+      batchAiPollTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!mounted || token || loginGateTriggeredRef.current) {
-      return;
-    }
-    loginGateTriggeredRef.current = true;
-    showToast('简历优化功能需要先登录后使用');
-    router.replace(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
-  }, [mounted, token, router]);
-
-  const applyDraftToEditor = useCallback((draft: ResumeDraftRecord) => {
+  const applyDraftToEditor = useCallback((draft: ResumeDraftRecord, options?: { activeSectionId?: SupportedSectionId; keepAiState?: boolean }) => {
     const nextTitle = draft.title?.trim() || '我的简历';
     const nextContent = normalizeResumeContent(draft.contentJson);
     const nextStyle = sanitizeStyleConfig(normalizeResumeStyle(draft.styleJson));
@@ -547,15 +769,115 @@ export function ResumeEditorPageClient() {
     setStyleConfig(nextStyle);
     setLayout(nextLayout);
     setLastSavedAt(draft.updatedAt);
-    setActiveSectionId('personal');
+    setActiveSectionId(options?.activeSectionId ?? 'personal');
     setHighlightedSections([]);
     setOpenDrawers({});
     setActiveToolbarPanel(null);
     setActiveStyleTab('header');
     setSmartOnePageActive(false);
     setSmartOnePageSnapshot(null);
+    if (!options?.keepAiState) {
+      setAiUndoState(null);
+      setEntrySuggestions({});
+    }
+    currentDraftIdRef.current = draft.id;
     lastSavedSnapshotRef.current = buildResumeSnapshot(nextTitle, nextContent, nextStyle, nextLayout);
   }, []);
+
+  const openMemberAccessDialog = useCallback((message: string) => {
+    setMemberAccessMessage(message);
+  }, []);
+
+  const openAuthRequiredDialog = useCallback((message?: string) => {
+    if (message) {
+      showToast(message);
+    }
+    setAuthRequiredDialogOpen(true);
+  }, []);
+
+  const promptGuestLogin = useCallback(
+    (message = '登录后即可开始填写、编辑、保存和导出简历。') => {
+      const now = Date.now();
+      if (now - guestPromptAtRef.current < 300) {
+        return;
+      }
+      guestPromptAtRef.current = now;
+      openAuthRequiredDialog(message);
+    },
+    [openAuthRequiredDialog],
+  );
+
+  const handleGuestPreviewBlocked = useCallback(
+    (target: EventTarget | null) => {
+      if (!isGuestPreview) {
+        return false;
+      }
+
+      const blockedElement = getGuestPreviewBlockedElement(target);
+      if (!blockedElement) {
+        return false;
+      }
+
+      blockedElement.blur();
+      promptGuestLogin();
+      return true;
+    },
+    [isGuestPreview, promptGuestLogin],
+  );
+
+  const handleGuestPointerDownCapture = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (!handleGuestPreviewBlocked(event.target)) {
+        return;
+      }
+      event.preventDefault();
+    },
+    [handleGuestPreviewBlocked],
+  );
+
+  const handleGuestFocusCapture = useCallback(
+    (event: ReactFocusEvent<HTMLElement>) => {
+      if (!handleGuestPreviewBlocked(event.target)) {
+        return;
+      }
+      window.setTimeout(() => {
+        if (event.target instanceof HTMLElement) {
+          event.target.blur();
+        }
+      }, 0);
+    },
+    [handleGuestPreviewBlocked],
+  );
+
+  const handleGuestBeforeInputCapture = useCallback(
+    (event: ReactFormEvent<HTMLElement>) => {
+      if (!handleGuestPreviewBlocked(event.target)) {
+        return;
+      }
+      event.preventDefault();
+    },
+    [handleGuestPreviewBlocked],
+  );
+
+  const canUseGlobalAi = useCallback(() => {
+    if (draftListMeta.memberRoleCode === 'FREE_USER') {
+      openMemberAccessDialog('全文一键 AI 优化需开通标准会员或超级会员后使用。');
+      return false;
+    }
+    return true;
+  }, [draftListMeta.memberRoleCode, openMemberAccessDialog]);
+
+  const canUseEntryAi = useCallback(() => {
+    if (draftListMeta.memberRoleCode !== 'SUPER_MEMBER') {
+      openMemberAccessDialog(
+        draftListMeta.memberRoleCode === 'STANDARD_MEMBER'
+          ? '单模块 AI 优化与二次深度优化仅限超级会员使用，请升级后解锁。'
+          : 'AI 优化功能需先开通会员后使用；单模块 AI 优化与二次深度优化仅限超级会员。',
+      );
+      return false;
+    }
+    return true;
+  }, [draftListMeta.memberRoleCode, openMemberAccessDialog]);
 
   const fetchTemplateConfigs = useCallback(async () => {
     if (!token) {
@@ -634,7 +956,7 @@ export function ResumeEditorPageClient() {
     }
 
     try {
-      const [, listResponse] = await Promise.all([fetchTemplateConfigs(), fetchDraftList()]);
+      const listResponse = await fetchDraftList();
       let targetDraftId = listResponse?.list?.[0]?.id;
 
       if (!targetDraftId) {
@@ -658,7 +980,7 @@ export function ResumeEditorPageClient() {
       const msg = error instanceof Error ? error.message : '简历初始化失败';
       if (msg.toLowerCase().includes('unauthorized') || msg.includes('401')) {
         logout();
-        router.replace(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
+        setAuthRequiredDialogOpen(true);
         return;
       }
       setInitError(msg);
@@ -666,7 +988,7 @@ export function ResumeEditorPageClient() {
     } finally {
       setLoading(false);
     }
-  }, [fetchDraftList, fetchTemplateConfigs, loadDraftDetail, token, logout, router]);
+  }, [fetchDraftList, loadDraftDetail, token, logout]);
 
   useEffect(() => {
     if (!mounted) {
@@ -675,18 +997,40 @@ export function ResumeEditorPageClient() {
     void bootstrapDraft();
   }, [bootstrapDraft, mounted]);
 
+  useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+    void fetchTemplateConfigs();
+  }, [fetchTemplateConfigs, mounted]);
+
+  useEffect(() => () => {
+    if (suggestionPollTimerRef.current !== null) {
+      window.clearInterval(suggestionPollTimerRef.current);
+    }
+    if (globalOptimizePollTimerRef.current !== null) {
+      window.clearInterval(globalOptimizePollTimerRef.current);
+    }
+    clearBatchAiPolling();
+  }, [clearBatchAiPolling]);
+
   const currentSnapshot = useMemo(
     () => buildResumeSnapshot(draftTitle.trim() || '我的简历', content, styleConfig, layout),
     [content, draftTitle, layout, styleConfig],
   );
   const hasUnsavedChanges = currentSnapshot !== lastSavedSnapshotRef.current;
+  const shouldUseEmptyStateTemplate = useMemo(
+    () => SUPPORTED_SECTION_IDS.every((sectionId) => getSectionFilledCount(sectionId, content) === 0),
+    [content],
+  );
+  const previewContent = shouldUseEmptyStateTemplate ? EMPTY_STATE_TEMPLATE_CONTENT : content;
+  const previewLayout = shouldUseEmptyStateTemplate ? EMPTY_STATE_TEMPLATE_LAYOUT : layout;
 
   const persistCurrentDraft = useCallback(
     async (options?: { silent?: boolean }) => {
       if (!token || !draftId) {
         if (!options?.silent) {
-          showToast('请先登录以保存简历');
-          router.push(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
+          openAuthRequiredDialog(COMMON_TOAST_COPY.loginRequired);
         }
         return false;
       }
@@ -721,7 +1065,7 @@ export function ResumeEditorPageClient() {
         setLayout(nextLayout);
         setLastSavedAt(updated.updatedAt);
         if (!options?.silent) {
-          showToast('简历已保存', 'success');
+          showToast(COMMON_TOAST_COPY.saved, 'success');
         }
         return true;
       } catch (error) {
@@ -731,8 +1075,531 @@ export function ResumeEditorPageClient() {
         setSaving(false);
       }
     },
-    [content, draftId, draftTitle, layout, styleConfig, token, router],
+    [content, draftId, draftTitle, layout, styleConfig, token, openAuthRequiredDialog],
   );
+
+  const fetchSuggestionList = useCallback(async () => {
+    if (!token || !draftId) {
+      return false;
+    }
+    try {
+      const response = await clientFetch<ResumeAiSuggestionListResponse>(
+        `/me/resume-drafts/${draftId}/ai-suggestions`,
+        {},
+        token,
+      );
+      const nextSuggestions = response.suggestions.reduce<Record<string, ResumeEntrySuggestionState>>((acc, item) => {
+        const drawerKey = getSuggestionDrawerKey(item.sectionId, item.entryId);
+        acc[drawerKey] = {
+          suggestions: item.suggestions,
+          loading: false,
+        };
+        return acc;
+      }, {});
+      const pendingSuggestions = response.pendingTargets.reduce<Record<string, ResumeEntrySuggestionState>>((acc, item) => {
+        const drawerKey = getSuggestionDrawerKey(item.sectionId, item.entryId);
+        if (!nextSuggestions[drawerKey]) {
+          acc[drawerKey] = {
+            suggestions: [],
+            loading: true,
+          };
+        }
+        return acc;
+      }, {});
+      setEntrySuggestions((prev) => mergeSuggestionLoadingState(prev, { ...nextSuggestions, ...pendingSuggestions }));
+      return response.pendingTargets.length > 0;
+    } catch {
+      return false;
+    }
+  }, [draftId, token]);
+
+  const markSuggestionTargetsLoading = useCallback((targets: Array<{ sectionId: ResumeSuggestionTargetSectionId; entryId?: string }>) => {
+    setEntrySuggestions((prev) => {
+      const next = { ...prev };
+      targets.forEach((target) => {
+        const drawerKey = getSuggestionDrawerKey(target.sectionId, target.entryId);
+        next[drawerKey] = {
+          suggestions: [],
+          loading: true,
+        };
+      });
+      return next;
+    });
+  }, []);
+
+  const startSuggestionPolling = useCallback(() => {
+    if (suggestionPollTimerRef.current !== null) {
+      window.clearInterval(suggestionPollTimerRef.current);
+    }
+    let attemptCount = 0;
+    suggestionPollTimerRef.current = window.setInterval(() => {
+      attemptCount += 1;
+      void fetchSuggestionList();
+      if (attemptCount >= 10 && suggestionPollTimerRef.current !== null) {
+        window.clearInterval(suggestionPollTimerRef.current);
+        suggestionPollTimerRef.current = null;
+        setEntrySuggestions((prev) => clearSuggestionLoadingState(prev));
+      }
+    }, 1500);
+  }, [fetchSuggestionList]);
+
+  useEffect(() => {
+    if (!draftId || !token) {
+      return;
+    }
+    void (async () => {
+      const hasPendingTargets = await fetchSuggestionList();
+      if (hasPendingTargets) {
+        startSuggestionPolling();
+      }
+    })();
+  }, [draftId, fetchSuggestionList, startSuggestionPolling, token]);
+
+  const handleUndoAiOptimize = useCallback(async () => {
+    if (!aiUndoState) {
+      return;
+    }
+    if (!token || !draftId) {
+      openAuthRequiredDialog('登录后才可撤销 AI 优化结果。');
+      return;
+    }
+    applyDraftToEditor(aiUndoState.previousDraft, {
+      activeSectionId: aiUndoState.sectionId,
+      keepAiState: true,
+    });
+    const restored = await clientFetch<ResumeDraftRecord>(
+      `/me/resume-drafts/${aiUndoState.previousDraft.id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: aiUndoState.previousDraft.title,
+          contentJson: aiUndoState.previousDraft.contentJson,
+          styleJson: aiUndoState.previousDraft.styleJson,
+          layoutJson: aiUndoState.previousDraft.layoutJson,
+        }),
+      },
+      token,
+    );
+    applyDraftToEditor(restored, {
+      activeSectionId: aiUndoState.sectionId,
+      keepAiState: true,
+    });
+    setAiUndoState(null);
+    void fetchSuggestionList();
+    startSuggestionPolling();
+    showToast(RESUME_TOAST_COPY.smartLayoutReverted, 'success');
+  }, [aiUndoState, applyDraftToEditor, draftId, fetchSuggestionList, router, startSuggestionPolling, token]);
+
+  const handleOptimizeEntry = useCallback(
+    async (sectionId: ResumeAiOptimizeEntrySectionId, entryId: string, selectedSuggestion?: string) => {
+      if (!token || !draftId) {
+        openAuthRequiredDialog('登录后才可使用 AI 优化功能。');
+        return;
+      }
+      if (!canUseEntryAi()) {
+        return;
+      }
+
+      const drawerKey = getDrawerKey(sectionId, entryId);
+      if (optimizingEntryKey || optimizingSectionKey || optimizingGlobal) {
+        return;
+      }
+
+      try {
+        setOptimizingEntryKey(drawerKey);
+        const saved = await persistCurrentDraft({ silent: true });
+        if (!saved) {
+          return;
+        }
+        const previousDraft = await clientFetch<ResumeDraftRecord>(`/me/resume-drafts/${draftId}`, {}, token);
+
+        const response = await clientFetch<ResumeAiOptimizeEntryResponse>(
+          `/me/resume-drafts/${draftId}/ai-optimize-entry`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              sectionId,
+              entryId,
+              tone: 'professional',
+              jobTarget: content.personal.expectedRole.trim(),
+              selectedSuggestion,
+            }),
+          },
+          token,
+        );
+
+        setAiUndoState({
+          scope: 'entry',
+          sectionId: sectionId as SupportedSectionId,
+          entryId,
+          previousDraft,
+        });
+        applyDraftToEditor(response.updatedDraft, {
+          activeSectionId: sectionId as SupportedSectionId,
+          keepAiState: true,
+        });
+        markSuggestionTargetsLoading([{ sectionId, entryId }]);
+        void fetchSuggestionList();
+        startSuggestionPolling();
+        showToast(RESUME_TOAST_COPY.aiOptimizeDone, 'success');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : RESUME_TOAST_COPY.aiOptimizeFailed);
+      } finally {
+        setOptimizingEntryKey(null);
+      }
+    },
+    [
+      applyDraftToEditor,
+      content.personal.expectedRole,
+      draftId,
+      canUseEntryAi,
+      optimizingEntryKey,
+      optimizingGlobal,
+      optimizingSectionKey,
+      fetchSuggestionList,
+      markSuggestionTargetsLoading,
+      persistCurrentDraft,
+      router,
+      startSuggestionPolling,
+      token,
+    ],
+  );
+
+  const handleOptimizeSection = useCallback(
+    async (sectionId: ResumeAiOptimizeSectionId, selectedSuggestion?: string) => {
+      if (!token || !draftId) {
+        openAuthRequiredDialog('登录后才可使用 AI 优化功能。');
+        return;
+      }
+
+      const drawerKey = getSuggestionDrawerKey(sectionId);
+      if (optimizingEntryKey || optimizingSectionKey || optimizingGlobal) {
+        return;
+      }
+      if (!canUseEntryAi()) {
+        return;
+      }
+
+      try {
+        setOptimizingSectionKey(drawerKey);
+        const saved = await persistCurrentDraft({ silent: true });
+        if (!saved) {
+          return;
+        }
+        const previousDraft = await clientFetch<ResumeDraftRecord>(`/me/resume-drafts/${draftId}`, {}, token);
+
+        const response = await clientFetch<ResumeAiOptimizeSectionResponse>(
+          `/me/resume-drafts/${draftId}/ai-optimize-section`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              sectionId,
+              tone: 'professional',
+              jobTarget: content.personal.expectedRole.trim(),
+              selectedSuggestion,
+            }),
+          },
+          token,
+        );
+
+        setAiUndoState({
+          scope: 'entry',
+          sectionId: sectionId === 'personalSummary' ? 'personal' : sectionId,
+          entryId: 'section',
+          previousDraft,
+        });
+        applyDraftToEditor(response.updatedDraft, {
+          activeSectionId: sectionId === 'personalSummary' ? 'personal' : sectionId,
+          keepAiState: true,
+        });
+        markSuggestionTargetsLoading([{ sectionId }]);
+        void fetchSuggestionList();
+        startSuggestionPolling();
+        showToast(RESUME_TOAST_COPY.aiOptimizeDone, 'success');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : RESUME_TOAST_COPY.aiOptimizeFailed);
+      } finally {
+        setOptimizingSectionKey(null);
+      }
+    },
+    [
+      applyDraftToEditor,
+      content.personal.expectedRole,
+      draftId,
+      canUseEntryAi,
+      optimizingEntryKey,
+      optimizingGlobal,
+      optimizingSectionKey,
+      fetchSuggestionList,
+      markSuggestionTargetsLoading,
+      persistCurrentDraft,
+      router,
+      startSuggestionPolling,
+      token,
+    ],
+  );
+
+  const handleOptimizeResume = useCallback(async () => {
+    if (!token || !draftId) {
+      openAuthRequiredDialog('登录后才可发起全文 AI 优化。');
+      return;
+    }
+
+    if (optimizingEntryKey || optimizingSectionKey || optimizingGlobal || translatingDirection || professionalOptimizing || batchAiTask) {
+      return;
+    }
+    if (!canUseGlobalAi()) {
+      return;
+    }
+
+    try {
+      setOptimizingGlobal(true);
+      const saved = await persistCurrentDraft({ silent: true });
+      if (!saved) {
+        setOptimizingGlobal(false);
+        return;
+      }
+
+      const response = await clientFetch<ResumeAiOptimizeGlobalSubmitResponse>(
+        `/me/resume-drafts/${draftId}/ai-optimize`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            tone: 'professional',
+            jobTarget: content.personal.expectedRole.trim(),
+          }),
+        },
+        token,
+      );
+
+      if (globalOptimizePollTimerRef.current !== null) {
+        window.clearInterval(globalOptimizePollTimerRef.current);
+      }
+      setAiUndoState(null);
+      showToast(RESUME_TOAST_COPY.aiTaskSubmitted, 'success');
+      globalOptimizePollTimerRef.current = window.setInterval(() => {
+        void (async () => {
+          try {
+            const task = await clientFetch<ResumeAiOptimizeGlobalTaskStatusResponse>(
+              `/me/resume-drafts/${draftId}/ai-optimize/tasks/${response.taskId}`,
+              {},
+              token,
+            );
+            if (task.status === 'processing') {
+              return;
+            }
+            if (globalOptimizePollTimerRef.current !== null) {
+              window.clearInterval(globalOptimizePollTimerRef.current);
+              globalOptimizePollTimerRef.current = null;
+            }
+            setOptimizingGlobal(false);
+            if (task.status === 'failed') {
+              showToast(task.errorMessage || RESUME_TOAST_COPY.aiOptimizeFailed);
+              return;
+            }
+            if (task.updatedDraft) {
+              applyDraftToEditor(task.updatedDraft, {
+                activeSectionId,
+                keepAiState: true,
+              });
+            }
+            if ((task.summary?.updatedFieldCount ?? 0) > 0) {
+              showToast(`已完成 ${task.summary?.updatedFieldCount ?? 0} 处内容优化`, 'success');
+              return;
+            }
+            showToast(RESUME_TOAST_COPY.taskNoChange, 'success');
+          } catch {
+            return;
+          }
+        })();
+      }, Math.max(response.pollingIntervalMs, 1500));
+    } catch (error) {
+      setOptimizingGlobal(false);
+      showToast(error instanceof Error ? error.message : RESUME_TOAST_COPY.aiOptimizeFailed);
+    }
+  }, [
+    activeSectionId,
+    applyDraftToEditor,
+    canUseGlobalAi,
+    content.personal.expectedRole,
+    draftId,
+    batchAiTask,
+    optimizingEntryKey,
+    optimizingGlobal,
+    optimizingSectionKey,
+    professionalOptimizing,
+    persistCurrentDraft,
+    router,
+    token,
+    translatingDirection,
+  ]);
+
+  const submitBatchAiAction = useCallback(
+    async (action: ResumeBatchAiAction) => {
+      if (!token || !draftId) {
+        openAuthRequiredDialog('登录后才可使用批量 AI 能力。');
+        return;
+      }
+
+      if (optimizingGlobal || optimizingEntryKey || optimizingSectionKey || translatingDirection || professionalOptimizing || batchAiTask) {
+        return;
+      }
+      if (!canUseEntryAi()) {
+        return;
+      }
+
+      let submitted = false;
+      try {
+        if (action.type === 'translate') {
+          setTranslatingDirection(action.direction);
+        } else {
+          setProfessionalOptimizing(true);
+        }
+        const saved = await persistCurrentDraft({ silent: true });
+        if (!saved) {
+          return;
+        }
+
+        const response =
+          action.type === 'translate'
+            ? await clientFetch<ResumeAiTranslateSubmitResponse>(
+                `/me/resume-drafts/${draftId}/ai-translate`,
+                {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    direction: action.direction,
+                    jobTarget: content.personal.expectedRole.trim(),
+                  }),
+                },
+                token,
+              )
+            : await clientFetch<ResumeAiProfessionalOptimizeSubmitResponse>(
+                `/me/resume-drafts/${draftId}/ai-professional-optimize`,
+                {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    tone: 'professional',
+                    jobTarget: content.personal.expectedRole.trim(),
+                  }),
+                },
+                token,
+              );
+
+        submitted = true;
+        setBatchAiTask({
+          taskId: response.taskId,
+          resumeId: response.resumeId,
+          sourceResumeId: response.sourceResumeId,
+          optimizeType: response.optimizeType,
+          pollingIntervalMs: response.pollingIntervalMs,
+        });
+        setActiveToolbarPanel(null);
+        await fetchDraftList();
+        showToast(
+          action.type === 'translate'
+            ? action.direction === 'zh-to-en'
+              ? '英文简历副本已创建，翻译任务正在后台执行'
+              : '中文简历副本已创建，翻译任务正在后台执行'
+            : '专业术语优化副本已创建，后台任务已开始执行',
+          'success',
+        );
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'AI 任务提交失败，请稍后重试');
+      } finally {
+        if (!submitted) {
+          setTranslatingDirection(null);
+          setProfessionalOptimizing(false);
+        }
+      }
+    },
+    [
+      canUseEntryAi,
+      content.personal.expectedRole,
+      draftId,
+      fetchDraftList,
+      optimizingEntryKey,
+      optimizingGlobal,
+      optimizingSectionKey,
+      professionalOptimizing,
+      persistCurrentDraft,
+      router,
+      token,
+      translatingDirection,
+      batchAiTask,
+    ],
+  );
+
+  const handleTranslateResume = useCallback((direction: ResumeAiTranslateDirection) => {
+    setPendingBatchAiAction({ type: 'translate', direction });
+  }, []);
+
+  const handleProfessionalOptimizeResume = useCallback(() => {
+    setPendingBatchAiAction({ type: 'professional' });
+  }, []);
+
+  const updateSectionLabel = useCallback((sectionId: ResumeSectionId, value: string) => {
+    if (sectionId === 'personal') {
+      return;
+    }
+    const normalizedValue = value.trim();
+    setContent((prev) => ({
+      ...prev,
+      sectionLabels: normalizedValue
+        ? { ...prev.sectionLabels, [sectionId]: normalizedValue }
+        : Object.fromEntries(Object.entries(prev.sectionLabels).filter(([key]) => key !== sectionId)),
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!batchAiTask || !token) {
+      return;
+    }
+
+    const pollTask = async () => {
+      try {
+        const endpoint =
+          batchAiTask.optimizeType === 'translate'
+            ? `/me/resume-drafts/${batchAiTask.resumeId}/ai-translate/tasks/${batchAiTask.taskId}`
+            : `/me/resume-drafts/${batchAiTask.resumeId}/ai-professional-optimize/tasks/${batchAiTask.taskId}`;
+        const task = await clientFetch<ResumeAiOptimizeGlobalTaskStatusResponse>(endpoint, {}, token);
+        if (task.status === 'processing') {
+          return;
+        }
+
+        clearBatchAiPolling();
+        setBatchAiTask(null);
+        setTranslatingDirection(null);
+        setProfessionalOptimizing(false);
+        await fetchDraftList();
+
+        if (task.status === 'failed') {
+          showToast(task.errorMessage || '后台任务执行失败，请稍后重试');
+          return;
+        }
+
+        if (task.updatedDraft && currentDraftIdRef.current === batchAiTask.sourceResumeId) {
+          applyDraftToEditor(task.updatedDraft, {
+            activeSectionId,
+            keepAiState: true,
+          });
+        }
+
+        const updatedCount = task.summary?.updatedFieldCount ?? 0;
+        const actionLabel = batchAiTask.optimizeType === 'translate' ? '翻译' : '专业术语优化';
+        showToast(updatedCount > 0 ? `${actionLabel}已完成，已更新 ${updatedCount} 处内容` : RESUME_TOAST_COPY.taskNoChange);
+      } catch {
+        return;
+      }
+    };
+
+    void pollTask();
+    clearBatchAiPolling();
+    batchAiPollTimerRef.current = window.setInterval(() => {
+      void pollTask();
+    }, Math.max(batchAiTask.pollingIntervalMs, 1500));
+
+    return clearBatchAiPolling;
+  }, [activeSectionId, applyDraftToEditor, batchAiTask, clearBatchAiPolling, fetchDraftList, token]);
 
   useEffect(() => {
     if (!draftId || !token || !mounted || !hasUnsavedChanges) {
@@ -810,7 +1677,7 @@ export function ResumeEditorPageClient() {
   }, [activeSectionPage, previewScale]);
 
   const moduleSections = useMemo(
-    () => SUPPORTED_SECTION_IDS.map((id) => layout.find((item) => item.id === id)).filter(Boolean) as ResumeLayoutItem[],
+    () => layout.filter((item) => SUPPORTED_SECTION_SET.has(item.id)),
     [layout],
   );
   const visibleModuleSections = useMemo(() => moduleSections.filter((item) => item.visible && !item.deleted), [moduleSections]);
@@ -821,6 +1688,13 @@ export function ResumeEditorPageClient() {
   const effectiveOverflow = (previewMetrics?.overflowHeight ?? 0) > 0;
   const previewPageCount = Math.max(previewMetrics?.pageCount ?? 1, 1);
   const currentPaperBackground = PAPER_BACKGROUND_OPTIONS.find((item) => item.value === styleConfig.paperBackgroundVariant)?.label ?? '纸张';
+  const batchAiBusy =
+    optimizingGlobal
+    || Boolean(optimizingEntryKey)
+    || Boolean(optimizingSectionKey)
+    || Boolean(translatingDirection)
+    || professionalOptimizing
+    || Boolean(batchAiTask);
 
   const jumpToSection = useCallback((sectionId: ResumeSectionId) => {
     if (!SUPPORTED_SECTION_SET.has(sectionId)) {
@@ -854,9 +1728,15 @@ export function ResumeEditorPageClient() {
       const okay = await persistCurrentDraft();
       if (okay) {
         setOpenDrawers((prev) => ({ ...prev, [drawerKey]: false }));
+        const suggestionTarget = getSuggestionTargetFromDrawerKey(drawerKey);
+        if (suggestionTarget) {
+          markSuggestionTargetsLoading([suggestionTarget]);
+        }
+        void fetchSuggestionList();
+        startSuggestionPolling();
       }
     },
-    [persistCurrentDraft],
+    [fetchSuggestionList, markSuggestionTargetsLoading, persistCurrentDraft, startSuggestionPolling],
   );
 
   const updatePersonalField = useCallback((field: keyof ResumeContent['personal'], value: string) => {
@@ -905,10 +1785,13 @@ export function ResumeEditorPageClient() {
 
   const moveLayoutItem = useCallback((sectionId: ResumeSectionId, direction: -1 | 1) => {
     setLayout((prev) => {
+      if (sectionId === 'personal') {
+        return prev;
+      }
       const activeIds = prev.filter((item) => item.visible && !item.deleted).map((item) => item.id);
       const currentIndex = activeIds.findIndex((id) => id === sectionId);
       const targetId = activeIds[currentIndex + direction];
-      if (currentIndex < 0 || !targetId) {
+      if (currentIndex < 0 || !targetId || targetId === 'personal') {
         return prev;
       }
 
@@ -924,8 +1807,8 @@ export function ResumeEditorPageClient() {
     });
   }, []);
 
-  const reorderLayoutItem = useCallback((fromId: ResumeSectionId, toId: ResumeSectionId) => {
-    if (fromId === toId) {
+  const reorderLayoutItem = useCallback((fromId: ResumeSectionId, toId: ResumeSectionId, position: 'before' | 'after' = 'before') => {
+    if (fromId === toId || fromId === 'personal' || toId === 'personal') {
       return;
     }
     setLayout((prev) => {
@@ -936,7 +1819,11 @@ export function ResumeEditorPageClient() {
         return prev;
       }
       const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
+      const adjustedToIndex = next.findIndex((item) => item.id === toId);
+      if (adjustedToIndex < 0) {
+        return prev;
+      }
+      next.splice(position === 'after' ? adjustedToIndex + 1 : adjustedToIndex, 0, moved);
       return sanitizeLayoutItems(next);
     });
   }, []);
@@ -954,6 +1841,7 @@ export function ResumeEditorPageClient() {
 
   const createNewDraft = useCallback(async () => {
     if (!token) {
+      openAuthRequiredDialog('登录后才可新建简历草稿。');
       return;
     }
     if (creatingDraft) {
@@ -984,16 +1872,20 @@ export function ResumeEditorPageClient() {
       await fetchDraftList();
       await loadDraftDetail(created.id);
       setActiveDraftManagerOpen(false);
-      showToast('已新建简历草稿', 'success');
+      showToast(RESUME_TOAST_COPY.draftCreated, 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : '新建简历失败');
     } finally {
       setCreatingDraft(false);
     }
-  }, [creatingDraft, draftList.length, draftListMeta.limit, draftListMeta.memberRoleCode, fetchDraftList, loadDraftDetail, router, token]);
+  }, [creatingDraft, draftList.length, draftListMeta.limit, draftListMeta.memberRoleCode, fetchDraftList, loadDraftDetail, openAuthRequiredDialog, token]);
 
   const switchDraft = useCallback(
     async (id: string) => {
+      if (!token) {
+        openAuthRequiredDialog('登录后才可切换和管理简历草稿。');
+        return;
+      }
       if (id === draftId) {
         setActiveDraftManagerOpen(false);
         return;
@@ -1005,7 +1897,7 @@ export function ResumeEditorPageClient() {
       await loadDraftDetail(id);
       setActiveDraftManagerOpen(false);
     },
-    [draftId, loadDraftDetail, persistCurrentDraft],
+    [draftId, loadDraftDetail, openAuthRequiredDialog, persistCurrentDraft, token],
   );
 
   const handleSmartSort = useCallback(() => {
@@ -1023,7 +1915,7 @@ export function ResumeEditorPageClient() {
 
     setHighlightedSections([]);
     setContent((prev) => sortResumeContentByStartDate(prev));
-    showToast('已完成智能排序');
+    showToast(RESUME_TOAST_COPY.smartSortDone);
   }, [content.education, content.internships, content.projects, jumpToSection]);
 
   const handleSmartLayout = useCallback(async () => {
@@ -1031,7 +1923,7 @@ export function ResumeEditorPageClient() {
       setStyleConfig(smartOnePageSnapshot);
       setSmartOnePageActive(false);
       setSmartOnePageSnapshot(null);
-      showToast('已撤回智能一页优化');
+      showToast(RESUME_TOAST_COPY.smartLayoutReverted);
       return;
     }
 
@@ -1045,7 +1937,7 @@ export function ResumeEditorPageClient() {
       };
       setStyleConfig(sanitizeStyleConfig(compactStyle));
       setSmartOnePageActive(true);
-      showToast('已为你适配单页简历');
+      showToast(RESUME_TOAST_COPY.smartLayoutDone);
       return;
     }
 
@@ -1070,7 +1962,7 @@ export function ResumeEditorPageClient() {
     }
 
     setSmartOnePageActive(true);
-    showToast('已为你适配单页简历');
+    showToast(RESUME_TOAST_COPY.smartLayoutDone);
   }, [measurePreview, smartOnePageActive, smartOnePageSnapshot, styleConfig]);
 
   const handleExportPdf = useCallback(async () => {
@@ -1079,13 +1971,12 @@ export function ResumeEditorPageClient() {
     }
 
     if (!token || !draftId) {
-      showToast('请先登录后下载 PDF 简历');
-      router.push(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
+      openAuthRequiredDialog('登录后才可导出简历。');
       return;
     }
 
     setExportingPdf(true);
-    showToast('正在生成 PDF，请稍候...');
+    showToast(RESUME_TOAST_COPY.pdfGenerating);
 
     try {
       const saved = await persistCurrentDraft({ silent: true });
@@ -1101,7 +1992,7 @@ export function ResumeEditorPageClient() {
         token,
       );
       downloadFilePayload(payload);
-      showToast('PDF 简历已开始下载', 'success');
+      showToast(RESUME_TOAST_COPY.pdfDownloadStarted, 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'PDF 导出失败');
     } finally {
@@ -1133,6 +2024,13 @@ export function ResumeEditorPageClient() {
         onApplyTemplate={applyTemplateStyle}
         onExportPdf={() => void handleExportPdf()}
         setMemberAccessMessage={setMemberAccessMessage}
+        sectionLabels={content.sectionLabels}
+        onUpdateSectionLabel={updateSectionLabel}
+        onTranslateResume={handleTranslateResume}
+        onProfessionalOptimizeResume={handleProfessionalOptimizeResume}
+        translatingDirection={translatingDirection}
+        professionalOptimizing={professionalOptimizing}
+        batchAiBusy={batchAiBusy}
       />
     ) : null;
 
@@ -1141,20 +2039,6 @@ export function ResumeEditorPageClient() {
       <main className="flex h-[calc(100vh-56px)] items-center justify-center bg-[#EEEEEE] px-4 py-6">
         <div className="flex min-h-[240px] w-full max-w-[680px] items-center justify-center rounded-[16px] border border-[#E5E6EB] bg-white text-sm text-slate-500 shadow-sm">
           正在初始化编辑器...
-        </div>
-      </main>
-    );
-  }
-
-  if (!token) {
-    return (
-      <main className="flex h-[calc(100vh-56px)] items-center justify-center bg-[#EEEEEE] px-4 py-6">
-        <div className="flex min-h-[240px] w-full max-w-[680px] flex-col items-center justify-center gap-3 rounded-[16px] border border-[#E5E6EB] bg-white text-center shadow-sm">
-          <LoaderCircle className="h-6 w-6 animate-spin text-brand" />
-          <div>
-            <p className="text-base font-semibold text-slate-900">正在跳转到登录页...</p>
-            <p className="mt-2 text-sm text-slate-500">简历优化功能仅对登录用户开放。</p>
-          </div>
         </div>
       </main>
     );
@@ -1198,12 +2082,18 @@ export function ResumeEditorPageClient() {
   }
 
   return (
-    <main className="h-[calc(100vh-56px)] overflow-hidden bg-[#EEF1F5] text-slate-900">
+    <main
+      className="h-[calc(100vh-56px)] overflow-hidden bg-[#EEF1F5] text-slate-900"
+      onPointerDownCapture={handleGuestPointerDownCapture}
+      onFocusCapture={handleGuestFocusCapture}
+      onBeforeInputCapture={handleGuestBeforeInputCapture}
+    >
       <section className="relative flex h-full flex-col overflow-hidden bg-[#EEF1F5]">
         <header className="relative z-30 h-[58px] shrink-0 border-b border-[#D8DEE8] bg-white px-4 shadow-[0_6px_20px_rgba(15,23,42,0.05)]">
           <div className="flex h-full min-w-0 items-center gap-3">
             <button
               type="button"
+              data-allow-guest="true"
               onClick={() => router.push('/')}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-[#F2F5F9] hover:text-slate-900"
               aria-label="返回主页"
@@ -1217,10 +2107,16 @@ export function ResumeEditorPageClient() {
               placeholder="请输入简历标题"
               className="h-9 w-[190px] shrink-0 border-transparent bg-transparent px-2 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-[#D8DEE8] focus:ring-[#D8DEE8]/20"
             />
-            <div className="hidden shrink-0 items-center gap-1.5 text-xs text-slate-500 lg:inline-flex">
-              <Save className={cn('h-3.5 w-3.5', saving && 'animate-pulse text-[#FF734A]', hasUnsavedChanges && !saving && 'text-[#FF734A]')} />
-              <span>{saving ? '保存中' : hasUnsavedChanges ? '待同步' : lastSavedAt ? `已保存 ${formatDate(lastSavedAt)}` : '未保存'}</span>
-            </div>
+            {isGuestPreview ? (
+              <div className="hidden shrink-0 rounded-full bg-brand/8 px-3 py-1 text-xs font-medium text-brand lg:inline-flex">
+                未登录预览模式：可浏览页面，填写与生成前需先登录
+              </div>
+            ) : (
+              <div className="hidden shrink-0 items-center gap-1.5 text-xs text-slate-500 lg:inline-flex">
+                <Save className={cn('h-3.5 w-3.5', saving && 'animate-pulse text-[#FF734A]', hasUnsavedChanges && !saving && 'text-[#FF734A]')} />
+                <span>{saving ? '保存中' : hasUnsavedChanges ? '待同步' : lastSavedAt ? `已保存 ${formatDate(lastSavedAt)}` : '未保存'}</span>
+              </div>
+            )}
 
             <div className="ml-auto min-w-0 pb-1 pt-1">
               <div className="flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap pr-1">
@@ -1291,7 +2187,7 @@ export function ResumeEditorPageClient() {
                 <ToolbarDropdownAnchor panel={activeToolbarPanel} name="templateStyle">
                   {(anchorRef) => (
                     <>
-                      <DarkToolbarButton label="模板样式" active={activeToolbarPanel === 'templateStyle'} badge="NEW" onClick={() => toggleToolbarPanel('templateStyle')} light />
+                      <DarkToolbarButton label="模板样式" active={activeToolbarPanel === 'templateStyle'} onClick={() => toggleToolbarPanel('templateStyle')} light />
                       {renderToolbarPanel('templateStyle', anchorRef)}
                     </>
                   )}
@@ -1370,6 +2266,7 @@ export function ResumeEditorPageClient() {
                     type="button"
                     onClick={() => void createNewDraft()}
                     disabled={creatingDraft}
+                      data-resume-guest-block="true"
                     className="mt-2 flex h-9 w-full items-center justify-center gap-1 rounded-xl bg-brand text-[11px] font-medium text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -1385,6 +2282,7 @@ export function ResumeEditorPageClient() {
                     key={section.id}
                     type="button"
                     onClick={() => jumpToSection(section.id)}
+                    data-allow-guest="true"
                     className={cn(
                       'flex h-[70px] w-full flex-col items-center justify-center gap-1 rounded-xl border text-[11px] transition',
                       active
@@ -1394,7 +2292,7 @@ export function ResumeEditorPageClient() {
                     )}
                   >
                     <Layers className="h-4 w-4" />
-                    <span className="line-clamp-2 text-center leading-4">{SECTION_COPY[section.id as SupportedSectionId].drawerTitle}</span>
+                    <span className="line-clamp-2 text-center leading-4">{getModuleManagerLabel(section.id, content.sectionLabels)}</span>
                   </button>
                 );
               })}
@@ -1405,7 +2303,7 @@ export function ResumeEditorPageClient() {
             <div className="mb-5 rounded-lg border border-[#E5EAF1] bg-[#F8FAFC] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">{SECTION_COPY[activeSectionId].drawerTitle}</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">{getModuleManagerLabel(activeSectionId, content.sectionLabels)}</h2>
                   <p className="mt-1 text-xs leading-5 text-slate-500">{SECTION_COPY[activeSectionId].summaryHint}</p>
                 </div>
                 <div className="text-right text-xs leading-5">
@@ -1422,12 +2320,32 @@ export function ResumeEditorPageClient() {
               setContent,
               draftId,
               token,
+              optimizingEntryKey,
+              optimizingSectionKey,
               updatePersonalField,
               setHighlightedSections,
               isDrawerOpen,
               toggleDrawer,
               openOnlyDrawer,
               onSaveDrawer: handleSaveDrawer,
+              onOptimizeEntry: handleOptimizeEntry,
+              onOptimizeSection: handleOptimizeSection,
+              getEntrySuggestions: (sectionId, entryId) => entrySuggestions[getSuggestionDrawerKey(sectionId, entryId)],
+              getUndoHandler: (scope, sectionId, entryId) => {
+                if (!aiUndoState) {
+                  return undefined;
+                }
+                if (scope !== aiUndoState.scope) {
+                  return undefined;
+                }
+                if (sectionId && aiUndoState.sectionId && sectionId !== aiUndoState.sectionId) {
+                  return undefined;
+                }
+                if (entryId && aiUndoState.entryId && entryId !== aiUndoState.entryId) {
+                  return undefined;
+                }
+                return () => void handleUndoAiOptimize();
+              },
             })}
           </section>
 
@@ -1438,9 +2356,9 @@ export function ResumeEditorPageClient() {
                   <div style={{ transform: `scale(${previewScale})`, transformOrigin: 'top center' }}>
                     <div ref={previewHostRef}>
                       <ResumeDocument
-                        content={content}
+                        content={previewContent}
                         styleConfig={styleConfig}
-                        layout={layout}
+                        layout={previewLayout}
                         onSectionClick={jumpToSection}
                         activeSectionId={activeSectionId}
                         onMetricsChange={handlePreviewMetricsChange}
@@ -1454,6 +2372,26 @@ export function ResumeEditorPageClient() {
           </aside>
         </section>
       </section>
+      <div className="fixed bottom-6 right-6 z-[80] flex flex-col items-end gap-3">
+        {aiUndoState?.scope === 'global' ? (
+          <button
+            type="button"
+            onClick={() => void handleUndoAiOptimize()}
+            className="inline-flex items-center gap-2 rounded-full border border-[#D8DEE8] bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.10)] transition hover:bg-slate-50"
+          >
+            撤回还原
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void handleOptimizeResume()}
+          disabled={batchAiBusy || !draftId}
+          className="inline-flex items-center gap-2 rounded-full bg-brand px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_48px_rgba(65,131,255,0.32)] transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-slate-400"
+        >
+          {optimizingGlobal ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+          {optimizingGlobal ? '正在优化整份简历...' : '一键AI优化简历'}
+        </button>
+      </div>
       {createLimitPromptOpen ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 px-4">
           <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
@@ -1481,6 +2419,17 @@ export function ResumeEditorPageClient() {
           </div>
         </div>
       ) : null}
+      {pendingBatchAiAction ? (
+        <BatchAiConfirmDialog
+          action={pendingBatchAiAction}
+          onCancel={() => setPendingBatchAiAction(null)}
+          onConfirm={() => {
+            const action = pendingBatchAiAction;
+            setPendingBatchAiAction(null);
+            void submitBatchAiAction(action);
+          }}
+        />
+      ) : null}
       <MemberAccessDialog
         open={Boolean(memberAccessMessage)}
         message={memberAccessMessage}
@@ -1488,6 +2437,14 @@ export function ResumeEditorPageClient() {
         onConfirm={() => {
           setMemberAccessMessage('');
           router.push('/membership');
+        }}
+      />
+      <AuthRequiredDialog
+        open={authRequiredDialogOpen}
+        onClose={() => setAuthRequiredDialogOpen(false)}
+        onConfirm={() => {
+          setAuthRequiredDialogOpen(false);
+          router.push(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
         }}
       />
     </main>
@@ -1516,6 +2473,13 @@ function ResumeToolbarPanel({
   onApplyTemplate,
   onExportPdf,
   setMemberAccessMessage,
+  sectionLabels,
+  onUpdateSectionLabel,
+  onTranslateResume,
+  onProfessionalOptimizeResume,
+  translatingDirection,
+  professionalOptimizing,
+  batchAiBusy,
 }: {
   anchorRef: RefObject<HTMLDivElement>;
   panel: Exclude<ToolbarPanel, null>;
@@ -1530,7 +2494,7 @@ function ResumeToolbarPanel({
   onClose: () => void;
   onJumpToSection: (sectionId: ResumeSectionId) => void;
   onMoveLayoutItem: (sectionId: ResumeSectionId, direction: -1 | 1) => void;
-  onReorderLayoutItem: (fromId: ResumeSectionId, toId: ResumeSectionId) => void;
+  onReorderLayoutItem: (fromId: ResumeSectionId, toId: ResumeSectionId, position?: 'before' | 'after') => void;
   draggingSectionId: ResumeSectionId | null;
   setDraggingSectionId: Dispatch<SetStateAction<ResumeSectionId | null>>;
   onRestoreLayoutItem: (sectionId: ResumeSectionId) => void;
@@ -1538,6 +2502,13 @@ function ResumeToolbarPanel({
   onApplyTemplate: (templateCode: ResumeTemplateCode | string) => void;
   onExportPdf: () => void;
   setMemberAccessMessage: Dispatch<SetStateAction<string>>;
+  sectionLabels: ResumeContent['sectionLabels'];
+  onUpdateSectionLabel: (sectionId: ResumeSectionId, value: string) => void;
+  onTranslateResume: (direction: ResumeAiTranslateDirection) => void;
+  onProfessionalOptimizeResume: () => void;
+  translatingDirection: ResumeAiTranslateDirection | null;
+  professionalOptimizing: boolean;
+  batchAiBusy: boolean;
 }) {
   if (panel === 'templateStyle') {
     return (
@@ -1577,14 +2548,16 @@ function ResumeToolbarPanel({
         <ModuleManagerPanel
           layout={layout}
           moduleSections={moduleSections}
-            activeSectionId={activeSectionId}
-            onJumpToSection={onJumpToSection}
-            onMoveLayoutItem={onMoveLayoutItem}
-            onReorderLayoutItem={onReorderLayoutItem}
-            draggingSectionId={draggingSectionId}
-            setDraggingSectionId={setDraggingSectionId}
-            onRestoreLayoutItem={onRestoreLayoutItem}
-            onUpdateLayoutItem={onUpdateLayoutItem}
+          sectionLabels={sectionLabels}
+          activeSectionId={activeSectionId}
+          onJumpToSection={onJumpToSection}
+          onMoveLayoutItem={onMoveLayoutItem}
+          onReorderLayoutItem={onReorderLayoutItem}
+          draggingSectionId={draggingSectionId}
+          setDraggingSectionId={setDraggingSectionId}
+          onRestoreLayoutItem={onRestoreLayoutItem}
+          onUpdateLayoutItem={onUpdateLayoutItem}
+          onUpdateSectionLabel={onUpdateSectionLabel}
         />
       </FloatingPanel>
     );
@@ -1608,12 +2581,30 @@ function ResumeToolbarPanel({
 
   if (panel === 'translate') {
     return (
-      <FloatingPanel anchorRef={anchorRef} align="right" className="w-[300px] max-w-[calc(100vw-32px)]" onClose={onClose}>
-        <DarkPanelSection title="翻译">
-          <DarkOptionButton label="中译英" description="生成英文简历草稿" onClick={() => showToast('翻译能力即将接入 AI 服务')} />
-          <DarkOptionButton label="英译中" description="还原中文求职表达" onClick={() => showToast('翻译能力即将接入 AI 服务')} />
-          <DarkOptionButton label={`专业术语优化 ${PREMIUM_BADGE}`} description="会员功能" onClick={() => setMemberAccessMessage('该功能需要开通会员')} />
-        </DarkPanelSection>
+      <FloatingPanel anchorRef={anchorRef} align="right" className="w-[320px] max-w-[calc(100vw-32px)]" onClose={onClose}>
+        <div className="space-y-4 p-4">
+          <DarkPanelSection title="翻译">
+          <DarkOptionButton
+            label={translatingDirection === 'zh-to-en' ? '中译英进行中...' : '中译英'}
+            description="生成英文简历草稿"
+            disabled={batchAiBusy}
+            onClick={() => void onTranslateResume('zh-to-en')}
+          />
+          <DarkOptionButton
+            label={translatingDirection === 'en-to-zh' ? '英译中进行中...' : '英译中'}
+            description="还原中文求职表达"
+            disabled={batchAiBusy}
+            onClick={() => void onTranslateResume('en-to-zh')}
+          />
+          <DarkOptionButton
+            label={professionalOptimizing ? '专业术语优化进行中...' : '专业术语优化'}
+            description="按目标岗位做专业表达升级"
+            badge={PREMIUM_BADGE}
+            disabled={batchAiBusy}
+            onClick={onProfessionalOptimizeResume}
+          />
+          </DarkPanelSection>
+        </div>
       </FloatingPanel>
     );
   }
@@ -1938,6 +2929,7 @@ function ThemeAndPaperPanel({
 function ModuleManagerPanel({
   layout,
   moduleSections,
+  sectionLabels,
   activeSectionId,
   onJumpToSection,
   onMoveLayoutItem,
@@ -1946,98 +2938,198 @@ function ModuleManagerPanel({
   setDraggingSectionId,
   onRestoreLayoutItem,
   onUpdateLayoutItem,
+  onUpdateSectionLabel,
 }: {
   layout: ResumeLayoutItem[];
   moduleSections: ResumeLayoutItem[];
+  sectionLabels: ResumeContent['sectionLabels'];
   activeSectionId: SupportedSectionId;
   onJumpToSection: (sectionId: ResumeSectionId) => void;
   onMoveLayoutItem: (sectionId: ResumeSectionId, direction: -1 | 1) => void;
-  onReorderLayoutItem: (fromId: ResumeSectionId, toId: ResumeSectionId) => void;
+  onReorderLayoutItem: (fromId: ResumeSectionId, toId: ResumeSectionId, position?: 'before' | 'after') => void;
   draggingSectionId: ResumeSectionId | null;
   setDraggingSectionId: Dispatch<SetStateAction<ResumeSectionId | null>>;
   onRestoreLayoutItem: (sectionId: ResumeSectionId) => void;
   onUpdateLayoutItem: (sectionId: ResumeSectionId, updates: Partial<ResumeLayoutItem>) => void;
+  onUpdateSectionLabel: (sectionId: ResumeSectionId, value: string) => void;
 }) {
+  const [editingSectionId, setEditingSectionId] = useState<ResumeSectionId | null>(null);
+  const [editingLabel, setEditingLabel] = useState('');
+  const [dragOverSectionId, setDragOverSectionId] = useState<ResumeSectionId | null>(null);
+  const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after'>('before');
   const activeModules = moduleSections.filter((item) => item.visible && !item.deleted);
   const optionalModules = RESUME_SECTION_DEFINITIONS.filter((item) => item.deletable);
   const restorableModules = optionalModules.filter((definition) => {
     const current = layout.find((item) => item.id === definition.id);
     return !current || current.deleted || !current.visible;
   });
+  const clearDraggingState = useCallback(() => {
+    setDraggingSectionId(null);
+    setDragOverSectionId(null);
+    setDragOverPosition('before');
+  }, [setDraggingSectionId]);
+  const resolveDropPosition = useCallback(
+    (clientY: number, rect: DOMRect, currentTargetId: ResumeSectionId) => {
+      const offsetY = clientY - rect.top;
+      const edgeZone = Math.min(Math.max(rect.height * 0.36, 18), Math.max(rect.height / 2 - 4, 18));
+      if (offsetY <= edgeZone) {
+        return 'before' as const;
+      }
+      if (offsetY >= rect.height - edgeZone) {
+        return 'after' as const;
+      }
+      if (dragOverSectionId === currentTargetId) {
+        return dragOverPosition;
+      }
+      return offsetY <= rect.height / 2 ? ('before' as const) : ('after' as const);
+    },
+    [dragOverPosition, dragOverSectionId],
+  );
 
   return (
     <div className="space-y-7 p-6">
       <div>
         <DarkPanelTitle>已有模块</DarkPanelTitle>
-        <p className="mt-2 text-sm text-slate-500">拖拽可调整模块顺序，左侧编辑区和右侧简历预览会实时同步。</p>
+        <p className="mt-2 text-sm text-slate-500">基本信息固定在顶部，其余模块支持自由拖拽排序，左侧编辑区和右侧简历预览会实时同步。</p>
       </div>
       <div className="space-y-3">
         {activeModules.map((item, index) => {
           const active = activeSectionId === item.id;
+          const isPinnedSection = item.id === 'personal';
+          const canDropOnCurrent = Boolean(draggingSectionId && draggingSectionId !== 'personal' && draggingSectionId !== item.id && !isPinnedSection);
+          const showDropBefore = Boolean(canDropOnCurrent && dragOverSectionId === item.id && dragOverPosition === 'before');
+          const showDropAfter = Boolean(canDropOnCurrent && dragOverSectionId === item.id && dragOverPosition === 'after');
           return (
-            <div
-              key={item.id}
-              draggable
-              onDragStart={() => setDraggingSectionId(item.id)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => {
-                if (draggingSectionId) {
-                  onReorderLayoutItem(draggingSectionId, item.id);
-                }
-                setDraggingSectionId(null);
-              }}
-              onDragEnd={() => setDraggingSectionId(null)}
-              className={cn(
-                'flex min-h-[52px] items-center gap-3 rounded-2xl border px-3.5 py-3 text-sm transition',
-                active
-                  ? 'border-brand/30 bg-brand/10 text-brand shadow-[0_8px_24px_rgba(255,128,2,0.16)]'
-                  : 'border-[#E5EAF1] bg-white text-slate-700 hover:border-brand/40 hover:bg-brand/10',
-                draggingSectionId === item.id && 'opacity-60',
-              )}
-            >
-              <button type="button" className="cursor-grab text-slate-400 hover:text-brand active:cursor-grabbing" aria-label="拖拽排序">
-                <GripVertical className="h-4 w-4" />
-              </button>
-              <button type="button" onClick={() => onJumpToSection(item.id)} className="min-w-0 flex-1 truncate text-left font-medium">
-                {getModuleManagerLabel(item.id)}
-              </button>
-              <button
-                type="button"
-                className="text-slate-400 transition hover:text-brand disabled:cursor-not-allowed disabled:opacity-35"
-                onClick={() => onMoveLayoutItem(item.id, -1)}
-                disabled={index === 0}
-                aria-label="上移模块"
+            <div key={item.id} className="relative space-y-2">
+              {showDropBefore ? <div className="absolute -top-1 left-3 right-3 z-10 h-0.5 rounded-full bg-brand shadow-[0_0_0_3px_rgba(255,128,2,0.12)]" /> : null}
+              <div
+                draggable={!isPinnedSection}
+                onDragStart={(event) => {
+                  if (isPinnedSection) {
+                    event.preventDefault();
+                    return;
+                  }
+                  event.dataTransfer.effectAllowed = 'move';
+                  setDraggingSectionId(item.id);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (!draggingSectionId || draggingSectionId === 'personal' || draggingSectionId === item.id || isPinnedSection) {
+                    return;
+                  }
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const nextPosition = resolveDropPosition(event.clientY, rect, item.id);
+                  if (dragOverSectionId !== item.id) {
+                    setDragOverSectionId(item.id);
+                  }
+                  if (dragOverPosition !== nextPosition) {
+                    setDragOverPosition(nextPosition);
+                  }
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setDragOverSectionId((prev) => (prev === item.id ? null : prev));
+                  }
+                }}
+                onDrop={() => {
+                  if (draggingSectionId && draggingSectionId !== item.id) {
+                    onReorderLayoutItem(draggingSectionId, item.id, dragOverPosition);
+                  }
+                  clearDraggingState();
+                }}
+                onDragEnd={clearDraggingState}
+                className={cn(
+                  'flex min-h-[52px] items-center gap-3 rounded-2xl border px-3.5 py-3 text-sm transition duration-150',
+                  active
+                    ? 'border-brand/30 bg-brand/10 text-brand shadow-[0_8px_24px_rgba(255,128,2,0.16)]'
+                    : 'border-[#E5EAF1] bg-white text-slate-700 hover:border-brand/40 hover:bg-brand/10',
+                  draggingSectionId === item.id && 'cursor-grabbing border-brand/30 bg-brand/5 opacity-55 shadow-[0_14px_36px_rgba(255,128,2,0.12)]',
+                  (showDropBefore || showDropAfter) && 'border-brand/40 bg-brand/5',
+                )}
               >
-                <ChevronUp className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                className="text-slate-400 transition hover:text-brand disabled:cursor-not-allowed disabled:opacity-35"
-                onClick={() => onMoveLayoutItem(item.id, 1)}
-                disabled={index === activeModules.length - 1}
-                aria-label="下移模块"
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              <button type="button" onClick={() => onJumpToSection(item.id)} className="text-slate-400 transition hover:text-brand" aria-label="编辑模块">
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onUpdateLayoutItem(item.id, { visible: false, deleted: false })}
-                className="text-slate-400 transition hover:text-slate-700"
-                aria-label="隐藏模块"
-              >
-                <EyeOff className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onUpdateLayoutItem(item.id, { visible: false, deleted: true })}
-                className="text-slate-400 transition hover:text-red-500"
-                aria-label="删除模块"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+                <button
+                  type="button"
+                  disabled={isPinnedSection}
+                  data-resume-guest-block="true"
+                  className={cn(
+                    'text-slate-400 transition hover:text-brand disabled:cursor-not-allowed disabled:opacity-35',
+                    draggingSectionId === item.id ? 'cursor-grabbing text-brand' : 'cursor-grab active:cursor-grabbing',
+                  )}
+                  aria-label="拖拽排序"
+                >
+                  <GripVertical className="h-4 w-4" />
+                </button>
+                <button type="button" onClick={() => onJumpToSection(item.id)} data-allow-guest="true" className="min-w-0 flex-1 truncate text-left font-medium">
+                  {getModuleManagerLabel(item.id, sectionLabels)}
+                </button>
+                <button
+                  type="button"
+                  className="text-slate-400 transition hover:text-brand disabled:cursor-not-allowed disabled:opacity-35"
+                  onClick={() => onMoveLayoutItem(item.id, -1)}
+                  disabled={isPinnedSection || index <= 1}
+                  data-resume-guest-block="true"
+                  aria-label="上移模块"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  className="text-slate-400 transition hover:text-brand disabled:cursor-not-allowed disabled:opacity-35"
+                  onClick={() => onMoveLayoutItem(item.id, 1)}
+                  disabled={isPinnedSection || index === activeModules.length - 1}
+                  data-resume-guest-block="true"
+                  aria-label="下移模块"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingSectionId(item.id);
+                    setEditingLabel(getModuleManagerLabel(item.id, sectionLabels));
+                  }}
+                  data-resume-guest-block="true"
+                  className="text-slate-400 transition hover:text-brand"
+                  aria-label="编辑模块名称"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateLayoutItem(item.id, { visible: false, deleted: false })}
+                  data-resume-guest-block="true"
+                  className="text-slate-400 transition hover:text-slate-700"
+                  aria-label="隐藏模块"
+                >
+                  <EyeOff className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateLayoutItem(item.id, { visible: false, deleted: true })}
+                  data-resume-guest-block="true"
+                  className="text-slate-400 transition hover:text-red-500"
+                  aria-label="删除模块"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+              {showDropAfter ? <div className="absolute -bottom-1 left-3 right-3 z-10 h-0.5 rounded-full bg-brand shadow-[0_0_0_3px_rgba(255,128,2,0.12)]" /> : null}
+              {editingSectionId === item.id && item.id !== 'personal' ? (
+                <div className="flex items-center gap-2 rounded-2xl border border-[#E5EAF1] bg-[#F8FAFC] p-3">
+                  <Input value={editingLabel} maxLength={24} onChange={(event) => setEditingLabel(event.target.value)} className="h-10" placeholder="输入模块展示名称" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateSectionLabel(item.id, editingLabel);
+                      setEditingSectionId(null);
+                    }}
+                    data-resume-guest-block="true"
+                    className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-brand px-3 text-sm font-medium text-white transition hover:bg-brand-dark"
+                  >
+                    保存
+                  </button>
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -2053,6 +3145,7 @@ function ModuleManagerPanel({
               key={item.id}
               type="button"
               onClick={() => onRestoreLayoutItem(item.id)}
+              data-resume-guest-block="true"
               className="flex h-12 w-full items-center gap-3 rounded-2xl border border-dashed border-brand/30 bg-brand/5 px-4 text-left text-sm font-medium text-slate-700 transition hover:bg-brand/10 hover:text-brand"
             >
               <Plus className="h-4 w-4" />
@@ -2087,7 +3180,7 @@ function PreviewGrid({
     <DarkPanelSection title={title}>
       <div className="grid grid-cols-2 gap-x-5 gap-y-6">
         {items.map((item) => (
-          <button key={item.value} type="button" onClick={() => onPick(item.value)} className="group text-left">
+          <button key={item.value} type="button" onClick={() => onPick(item.value)} data-resume-guest-block="true" className="group text-left">
             <div
               className={cn(
                 'relative h-[128px] overflow-hidden rounded-xl border bg-white p-4 transition',
@@ -2293,6 +3386,7 @@ function DarkToolbarButton({
       type="button"
       title={tooltip}
       onClick={onClick}
+      data-resume-guest-block="true"
       className={cn(
         'relative inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-medium transition',
         pill && 'rounded-full px-6',
@@ -2352,16 +3446,123 @@ function DarkPanelSection({ title, children }: { title: string; children: ReactN
   );
 }
 
-function DarkOptionButton({ label, description, onClick }: { label: string; description: string; onClick: () => void }) {
+function DarkOptionButton({
+  label,
+  description,
+  badge,
+  onClick,
+  disabled = false,
+}: {
+  label: string;
+  description: string;
+  badge?: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-xl border border-[#E5EAF1] bg-[#F8FAFC] px-4 py-3 text-left transition hover:border-brand/40 hover:bg-brand/10"
+      disabled={disabled}
+      data-resume-guest-block="true"
+      className={cn(
+        'w-full rounded-xl border px-4 py-3 text-left transition',
+        disabled
+          ? 'cursor-not-allowed border-[#E5EAF1] bg-slate-100'
+          : 'border-[#E5EAF1] bg-[#F8FAFC] hover:border-brand/40 hover:bg-brand/10',
+      )}
     >
-      <span className="block text-sm font-semibold text-slate-900">{label}</span>
-      <span className="mt-1 block text-xs text-slate-500">{description}</span>
+      <span className="flex items-center justify-between gap-3">
+        <span className={cn('block text-sm font-semibold', disabled ? 'text-slate-400' : 'text-slate-900')}>{label}</span>
+        {badge ? <span className="shrink-0 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">{badge}</span> : null}
+      </span>
+      <span className={cn('mt-1 block text-xs', disabled ? 'text-slate-400' : 'text-slate-500')}>{description}</span>
     </button>
+  );
+}
+
+function BatchAiConfirmDialog({
+  action,
+  onCancel,
+  onConfirm,
+}: {
+  action: ResumeBatchAiAction;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const actionLabel =
+    action.type === 'translate'
+      ? action.direction === 'zh-to-en'
+        ? '中译英'
+        : '英译中'
+      : '专业术语优化';
+
+  return (
+    <div className="fixed inset-0 z-[92] flex items-center justify-center bg-slate-950/45 px-4">
+      <div className="w-full max-w-lg rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+        <h3 className="text-xl font-semibold text-slate-900">确认发起{actionLabel}</h3>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          系统会在后台先复制当前简历，生成一份新副本，再对副本执行{actionLabel}。原简历不会被直接覆盖，任务提交后你无需停留在当前页面等待。
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-[#D8DEE8] px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="inline-flex h-10 items-center justify-center rounded-xl bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-dark"
+          >
+            确认并后台执行
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthRequiredDialog({
+  open,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/40 px-4 py-6">
+      <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+        <h3 className="text-xl font-semibold text-slate-900">登录后即可继续</h3>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          未登录状态下可先浏览简历优化页面内容与填写样式；当你开始填写、选择、编辑、导出或发起 AI 操作时，需要先登录账号。
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-[#D8DEE8] px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            关闭弹窗
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="inline-flex h-10 items-center justify-center rounded-xl bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-dark"
+          >
+            去登录
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2442,24 +3643,36 @@ function renderSectionEditor({
   setContent,
   draftId,
   token,
+  optimizingEntryKey,
+  optimizingSectionKey,
   updatePersonalField,
   setHighlightedSections,
   isDrawerOpen,
   toggleDrawer,
   openOnlyDrawer,
   onSaveDrawer,
+  onOptimizeEntry,
+  onOptimizeSection,
+  getEntrySuggestions,
+  getUndoHandler,
 }: {
   sectionId: SupportedSectionId;
   content: ResumeContent;
   setContent: Dispatch<SetStateAction<ResumeContent>>;
   draftId: string;
   token: string | null;
+  optimizingEntryKey: string | null;
+  optimizingSectionKey: string | null;
   updatePersonalField: (field: keyof ResumeContent['personal'], value: string) => void;
   setHighlightedSections: Dispatch<SetStateAction<ResumeSectionId[]>>;
   isDrawerOpen: (drawerKey: string) => boolean;
   toggleDrawer: (drawerKey: string) => void;
   openOnlyDrawer: (sectionId: ResumeSectionId, drawerKey: string) => void;
   onSaveDrawer: (drawerKey: string) => Promise<void>;
+  onOptimizeEntry: (sectionId: ResumeAiOptimizeEntrySectionId, entryId: string, selectedSuggestion?: string) => Promise<void>;
+  onOptimizeSection: (sectionId: ResumeAiOptimizeSectionId, selectedSuggestion?: string) => Promise<void>;
+  getEntrySuggestions: (sectionId: ResumeSuggestionTargetSectionId, entryId?: string) => ResumeEntrySuggestionState | undefined;
+  getUndoHandler: (scope: ResumeAiUndoScope, sectionId?: SupportedSectionId, entryId?: string) => (() => void) | undefined;
 }) {
   switch (sectionId) {
     case 'personal': {
@@ -2513,14 +3726,6 @@ function renderSectionEditor({
                 }
               />
             </FieldBlock>
-            <FieldBlock label="个人总结" className="md:col-span-2">
-              <ResumeRichTextEditor
-                value={content.personal.summary}
-                onChange={(value) => updatePersonalField('summary', value)}
-                placeholder="支持加粗、项目符号、数字排序，用于概括核心优势与亮点"
-                preset="paragraph"
-              />
-            </FieldBlock>
           </div>
         </DrawerCard>
       );
@@ -2536,6 +3741,12 @@ function renderSectionEditor({
                 title={`教育经历 ${index + 1}`}
                 open={isDrawerOpen(drawerKey)}
                 onToggle={() => toggleDrawer(drawerKey)}
+                onOptimize={() => void onOptimizeEntry('education', item.id)}
+                optimizing={optimizingEntryKey === drawerKey}
+                onUndo={getUndoHandler('entry', 'education', item.id)}
+                suggestions={getEntrySuggestions('education', item.id)?.suggestions ?? []}
+                suggestionsLoading={getEntrySuggestions('education', item.id)?.loading ?? false}
+                onSuggestionPick={(suggestion) => void onOptimizeEntry('education', item.id, suggestion)}
                 onDelete={() =>
                   setContent((prev) => ({
                     ...prev,
@@ -2650,6 +3861,10 @@ function renderSectionEditor({
               internships: updateItemField(prev.internships, id, key, value),
             }));
           }}
+          optimizingEntryKey={optimizingEntryKey}
+          onOptimize={onOptimizeEntry}
+          getSuggestions={getEntrySuggestions}
+          getUndoHandler={getUndoHandler}
           primaryFieldLabel="公司名称"
         />
       );
@@ -2688,16 +3903,27 @@ function renderSectionEditor({
               projects: updateItemField(prev.projects, id, key, value),
             }));
           }}
+          optimizingEntryKey={optimizingEntryKey}
+          onOptimize={onOptimizeEntry}
+          getSuggestions={getEntrySuggestions}
+          getUndoHandler={getUndoHandler}
           primaryFieldLabel="项目名称"
         />
       );
     case 'selfEvaluation': {
       const drawerKey = getDrawerKey('selfEvaluation');
+      const suggestionState = getEntrySuggestions('selfEvaluation');
       return (
         <DrawerCard
           title="个人总结"
           open={isDrawerOpen(drawerKey)}
           onToggle={() => toggleDrawer(drawerKey)}
+          onOptimize={() => void onOptimizeSection('selfEvaluation')}
+          optimizing={optimizingSectionKey === drawerKey}
+          onUndo={getUndoHandler('entry', 'selfEvaluation', 'section')}
+          suggestions={suggestionState?.suggestions ?? []}
+          suggestionsLoading={suggestionState?.loading ?? false}
+          onSuggestionPick={(suggestion) => void onOptimizeSection('selfEvaluation', suggestion)}
           onSave={() => void onSaveDrawer(drawerKey)}
         >
           <FieldBlock label="总结内容">
@@ -2723,6 +3949,12 @@ function renderSectionEditor({
                   title={`荣誉奖项 ${index + 1}`}
                   open={isDrawerOpen(drawerKey)}
                   onToggle={() => toggleDrawer(drawerKey)}
+                  onOptimize={() => void onOptimizeEntry('awards', item.id)}
+                  optimizing={optimizingEntryKey === drawerKey}
+                  onUndo={getUndoHandler('entry', 'awards', item.id)}
+                  suggestions={getEntrySuggestions('awards', item.id)?.suggestions ?? []}
+                  suggestionsLoading={getEntrySuggestions('awards', item.id)?.loading ?? false}
+                  onSuggestionPick={(suggestion) => void onOptimizeEntry('awards', item.id, suggestion)}
                   onDelete={() =>
                     setContent((prev) => ({
                       ...prev,
@@ -2785,6 +4017,12 @@ function renderSectionEditor({
                 title={`专业技能 ${index + 1}`}
                 open={isDrawerOpen(drawerKey)}
                 onToggle={() => toggleDrawer(drawerKey)}
+                onOptimize={() => void onOptimizeEntry('skills', item.id)}
+                optimizing={optimizingEntryKey === drawerKey}
+                onUndo={getUndoHandler('entry', 'skills', item.id)}
+                suggestions={getEntrySuggestions('skills', item.id)?.suggestions ?? []}
+                suggestionsLoading={getEntrySuggestions('skills', item.id)?.loading ?? false}
+                onSuggestionPick={(suggestion) => void onOptimizeEntry('skills', item.id, suggestion)}
                 onDelete={() =>
                   setContent((prev) => ({
                     ...prev,
@@ -2833,6 +4071,12 @@ function renderSectionEditor({
                   title={`语言能力 ${index + 1}`}
                   open={isDrawerOpen(drawerKey)}
                   onToggle={() => toggleDrawer(drawerKey)}
+                  onOptimize={() => void onOptimizeEntry('languages', item.id)}
+                  optimizing={optimizingEntryKey === drawerKey}
+                  onUndo={getUndoHandler('entry', 'languages', item.id)}
+                  suggestions={getEntrySuggestions('languages', item.id)?.suggestions ?? []}
+                  suggestionsLoading={getEntrySuggestions('languages', item.id)?.loading ?? false}
+                  onSuggestionPick={(suggestion) => void onOptimizeEntry('languages', item.id, suggestion)}
                   onDelete={() =>
                     setContent((prev) => ({
                       ...prev,
@@ -2916,6 +4160,10 @@ function renderSectionEditor({
               campusRoles: updateItemField(prev.campusRoles, id, key, value),
             }))
           }
+          optimizingEntryKey={optimizingEntryKey}
+          onOptimize={onOptimizeEntry}
+          getSuggestions={getEntrySuggestions}
+          getUndoHandler={getUndoHandler}
           primaryFieldLabel="组织 / 社团"
         />
       );
@@ -3001,6 +4249,10 @@ function ExperienceEditorSection<T extends {
   onDelete,
   onChange,
   onDateChange,
+  optimizingEntryKey,
+  onOptimize,
+  getSuggestions,
+  getUndoHandler,
 }: {
   sectionId: 'internships' | 'projects' | 'campusRoles';
   title: string;
@@ -3015,6 +4267,10 @@ function ExperienceEditorSection<T extends {
   onDelete: (id: string) => void;
   onChange: (id: string, key: keyof T, value: string) => void;
   onDateChange: (id: string, key: keyof T, value: string) => void;
+  optimizingEntryKey: string | null;
+  onOptimize: (sectionId: ResumeAiOptimizeEntrySectionId, entryId: string, selectedSuggestion?: string) => Promise<void>;
+  getSuggestions: (sectionId: ResumeAiOptimizeEntrySectionId, entryId: string) => ResumeEntrySuggestionState | undefined;
+  getUndoHandler: (scope: ResumeAiUndoScope, sectionId?: SupportedSectionId, entryId?: string) => (() => void) | undefined;
 }) {
   const primaryKey = (sectionId === 'projects' ? 'projectName' : sectionId === 'campusRoles' ? 'organization' : 'companyName') as keyof T;
 
@@ -3022,12 +4278,19 @@ function ExperienceEditorSection<T extends {
     <div className="space-y-4">
       {items.map((item, index) => {
         const drawerKey = getDrawerKey(sectionId, item.id);
+        const suggestionState = getSuggestions(sectionId, item.id);
         return (
           <DrawerCard
             key={item.id}
             title={`${title} ${index + 1}`}
             open={isDrawerOpen(drawerKey)}
             onToggle={() => toggleDrawer(drawerKey)}
+            onOptimize={() => void onOptimize(sectionId, item.id)}
+            optimizing={optimizingEntryKey === drawerKey}
+            onUndo={getUndoHandler('entry', sectionId, item.id)}
+            suggestions={suggestionState?.suggestions ?? []}
+            suggestionsLoading={suggestionState?.loading ?? false}
+            onSuggestionPick={(suggestion: string) => void onOptimize(sectionId, item.id, suggestion)}
             onDelete={() => onDelete(item.id)}
             onSave={() => void onSaveDrawer(drawerKey)}
           >
@@ -3063,6 +4326,12 @@ function DrawerCard({
   title,
   open,
   onToggle,
+  onOptimize,
+  optimizing = false,
+  onUndo,
+  suggestions = [],
+  suggestionsLoading: _suggestionsLoading = false,
+  onSuggestionPick,
   onDelete,
   onSave,
   children,
@@ -3070,6 +4339,12 @@ function DrawerCard({
   title: string;
   open: boolean;
   onToggle: () => void;
+  onOptimize?: () => void;
+  optimizing?: boolean;
+  onUndo?: () => void;
+  suggestions?: string[];
+  suggestionsLoading?: boolean;
+  onSuggestionPick?: (suggestion: string) => void;
   onDelete?: () => void;
   onSave: () => void;
   children: ReactNode;
@@ -3079,8 +4354,20 @@ function DrawerCard({
       <div className="flex items-center justify-between gap-3 bg-[#F7F8FA] px-4 py-3">
         <p className="text-sm font-medium text-slate-900">{title}</p>
         <div className="flex items-center gap-1.5">
+          {onOptimize ? (
+            <button
+              type="button"
+              onClick={onOptimize}
+              disabled={optimizing}
+              data-resume-guest-block="true"
+              className="inline-flex h-8 items-center gap-1 rounded-md border border-transparent px-2.5 text-xs text-brand transition hover:border-brand/20 hover:bg-brand/10 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              {optimizing ? '优化中...' : 'AI优化'}
+            </button>
+          ) : null}
           {onDelete ? (
-            <IconButton label={`清空 ${title}`} onClick={onDelete}>
+            <IconButton label={`清空 ${title}`} onClick={onDelete} guestBlocked>
               <Trash2 className="h-4 w-4 text-slate-500" />
             </IconButton>
           ) : null}
@@ -3092,10 +4379,45 @@ function DrawerCard({
       {open ? (
         <div className="space-y-4 px-4 py-4">
           {children}
-          <div className="flex justify-end">
+          {onSuggestionPick ? (
+            <div className="rounded-xl border border-brand/40 bg-white p-3 shadow-[0_10px_28px_rgba(65,131,255,0.08)] transition hover:border-brand/60 hover:bg-brand/5 hover:shadow-[0_14px_36px_rgba(65,131,255,0.12)]">
+              <p className="text-xs font-semibold text-brand">AI优化建议</p>
+              {(_suggestionsLoading || optimizing) ? (
+                <p className="mt-3 text-xs text-brand/80">正在基于当前已保存内容生成 2-3 条优化建议...</p>
+              ) : suggestions.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {suggestions.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => onSuggestionPick(suggestion)}
+                      data-resume-guest-block="true"
+                      className="rounded-full border border-brand/40 bg-white px-3 py-1.5 text-xs text-brand transition hover:border-brand/60 hover:bg-brand/10"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-brand/80">保存当前模块后，系统会自动评估并展示优化方向。</p>
+              )}
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-3">
+            {onUndo ? (
+              <button
+                type="button"
+                onClick={onUndo}
+                data-resume-guest-block="true"
+                className="inline-flex h-9 items-center rounded-md border border-[#D8DEE8] px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                撤回还原
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onSave}
+              data-resume-guest-block="true"
               className="inline-flex h-9 items-center rounded-md bg-brand px-5 text-sm font-medium text-white transition hover:bg-brand-dark"
             >
               保存
@@ -3110,10 +4432,12 @@ function DrawerCard({
 function IconButton({
   label,
   onClick,
+  guestBlocked = false,
   children,
 }: {
   label: string;
   onClick: () => void;
+  guestBlocked?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -3121,6 +4445,7 @@ function IconButton({
       type="button"
       aria-label={label}
       onClick={onClick}
+      data-resume-guest-block={guestBlocked ? 'true' : undefined}
       className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-slate-400 transition hover:border-[#E5E6EB] hover:bg-[#F0F1F3] hover:text-slate-600"
     >
       {children}
@@ -3133,6 +4458,7 @@ function AddDrawerButton({ onClick, children }: { onClick: () => void; children:
     <button
       type="button"
       onClick={onClick}
+      data-resume-guest-block="true"
       className="flex w-full items-center justify-center rounded-md border border-dashed border-[#D1D5DB] bg-[#F9FAFB] px-4 py-3 text-sm text-slate-600 transition hover:border-brand hover:bg-brand/10 hover:text-brand"
     >
       {children}
@@ -3145,6 +4471,7 @@ function EmptySectionBlock({ onClick, children }: { onClick: () => void; childre
     <button
       type="button"
       onClick={onClick}
+      data-resume-guest-block="true"
       className="flex h-32 w-full items-center justify-center rounded-md border border-dashed border-[#D1D5DB] bg-[#F9FAFB] text-sm text-slate-600 transition hover:border-brand hover:bg-brand/10 hover:text-brand"
     >
       {children}
@@ -3180,11 +4507,11 @@ function ImageUploadField({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [avatarCropState, setAvatarCropState] = useState<AvatarCropState | null>(null);
-  const isAvatarScene = scene === OSS_IMAGE_UPLOAD_SCENES.avatar;
+  const [cropState, setCropState] = useState<AvatarCropState | null>(null);
+  const cropConfig = IMAGE_CROP_CONFIGS[scene];
 
-  const closeAvatarCropModal = useCallback(() => {
-    setAvatarCropState((current) => {
+  const closeCropModal = useCallback(() => {
+    setCropState((current) => {
       if (current) {
         URL.revokeObjectURL(current.sourceUrl);
       }
@@ -3205,28 +4532,21 @@ function ImageUploadField({
       return;
     }
 
-    if (!isAvatarScene && file.size > 2 * 1024 * 1024) {
-      showToast('图片大小请控制在 2MB 以内');
-      return;
-    }
-
     try {
-      if (isAvatarScene) {
+      if (cropConfig) {
         const { width, height } = await readImageDimensions(file);
-        setAvatarCropState({
-          file,
-          sourceUrl: URL.createObjectURL(file),
-          imageWidth: width,
-          imageHeight: height,
-          zoom: AVATAR_CROP_MIN_ZOOM,
-          offsetX: 0,
-          offsetY: 0,
+        const sourceUrl = URL.createObjectURL(file);
+        setCropState((current) => {
+          if (current) {
+            URL.revokeObjectURL(current.sourceUrl);
+          }
+          return createInitialImageCropState(file, sourceUrl, width, height, cropConfig);
         });
         return;
       }
 
       if (!token) {
-        showToast('请先登录后再上传图片');
+        showToast(COMMON_TOAST_COPY.loginRequired);
         return;
       }
 
@@ -3237,7 +4557,7 @@ function ImageUploadField({
         objectKey: session.objectKey,
         previewUrl: uploadedPreviewUrl,
       });
-      showToast('图片上传成功', 'success');
+      showToast(RESUME_TOAST_COPY.imageUploaded, 'success');
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : '图片上传失败';
       if (errorMessage.includes('OSS 暂未完成环境配置')) {
@@ -3259,21 +4579,21 @@ function ImageUploadField({
     }
   };
 
-  const handleAvatarCropConfirm = useCallback(async () => {
-    if (!avatarCropState) {
+  const handleCropConfirm = useCallback(async () => {
+    if (!cropState) {
       return;
     }
     if (!token) {
-      showToast('请先登录后再上传图片');
+      showToast(COMMON_TOAST_COPY.loginRequired);
       return;
     }
 
     setUploading(true);
     try {
-      const croppedFile = await buildCroppedAvatarFile(avatarCropState);
+      const croppedFile = await buildCroppedImageFile(cropState);
       const imageMeta = {
-        width: AVATAR_CROP_OUTPUT_WIDTH,
-        height: AVATAR_CROP_OUTPUT_HEIGHT,
+        width: cropState.cropConfig.outputWidth,
+        height: cropState.cropConfig.outputHeight,
       };
       const session = await requestOssUploadSession({
         token,
@@ -3287,8 +4607,8 @@ function ImageUploadField({
         objectKey: session.objectKey,
         previewUrl: uploadedPreviewUrl,
       });
-      closeAvatarCropModal();
-      showToast('头像上传成功', 'success');
+      closeCropModal();
+      showToast(cropState.cropConfig.successMessage, 'success');
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : '图片上传失败';
       if (errorMessage.includes('OSS 暂未完成环境配置')) {
@@ -3308,7 +4628,7 @@ function ImageUploadField({
     } finally {
       setUploading(false);
     }
-  }, [avatarCropState, bizId, closeAvatarCropModal, onChange, scene, token]);
+  }, [bizId, closeCropModal, cropState, onChange, scene, token]);
 
   const displayValue = previewUrl || (isDirectPreviewValue(value) ? value : '');
 
@@ -3325,6 +4645,7 @@ function ImageUploadField({
             inputRef.current?.click();
           }}
           disabled={uploading}
+          data-resume-guest-block="true"
           className="inline-flex h-10 items-center gap-2 rounded-md border border-dashed border-[#D1D5DB] bg-white px-3 text-sm text-slate-600 transition hover:border-brand hover:bg-brand/10 hover:text-brand"
         >
           {uploading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -3335,6 +4656,7 @@ function ImageUploadField({
             type="button"
             onClick={() => onChange({ objectKey: '', previewUrl: '' })}
             disabled={uploading}
+            data-resume-guest-block="true"
             className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#E5E6EB] bg-white text-slate-500 transition hover:border-[#FF734A] hover:text-[#FF734A]"
             aria-label="移除图片"
           >
@@ -3342,35 +4664,33 @@ function ImageUploadField({
           </button>
         ) : null}
       </div>
-      {isAvatarScene ? (
-        <p className="text-xs leading-5 text-slate-500">支持任意尺寸和比例原图，确认裁剪后将按 3:4 标准头像上传。</p>
-      ) : null}
+      {cropConfig ? <p className="text-xs leading-5 text-slate-500">{cropConfig.helperText}</p> : null}
       <div
         className="flex items-center justify-center overflow-hidden rounded-2xl border border-[#E5E6EB] bg-[#F9FAFB] shadow-sm"
         style={{
           width: '80px',
-          aspectRatio: isAvatarScene ? '295 / 413' : '1 / 1',
+          aspectRatio: cropConfig?.previewAspectRatio ?? '1 / 1',
         }}
       >
         {displayValue ? (<>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={displayValue} alt="上传预览" className="h-full w-full object-cover" style={{ objectPosition: isAvatarScene ? 'center top' : 'center' }} />
+          <img src={displayValue} alt="上传预览" className="h-full w-full object-cover" style={{ objectPosition: cropConfig?.previewObjectPosition ?? 'center' }} />
         </>) : <ImageIcon className="h-6 w-6 text-slate-400" aria-hidden="true" />}
       </div>
-      {isAvatarScene && avatarCropState ? (
-        <AvatarCropModal
-          cropState={avatarCropState}
+      {cropState ? (
+        <ImageCropModal
+          cropState={cropState}
           uploading={uploading}
-          onChange={setAvatarCropState}
-          onCancel={closeAvatarCropModal}
-          onConfirm={() => void handleAvatarCropConfirm()}
+          onChange={setCropState}
+          onCancel={closeCropModal}
+          onConfirm={() => void handleCropConfirm()}
         />
       ) : null}
     </div>
   );
 }
 
-function AvatarCropModal({
+function ImageCropModal({
   cropState,
   uploading,
   onChange,
@@ -3383,50 +4703,81 @@ function AvatarCropModal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
-  const cropBounds = getAvatarCropBounds(cropState);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const interactionRef = useRef<AvatarCropInteraction | null>(null);
+  const previewSize = getImageCropPreviewSize(cropState);
+  const cropRect = getImageCropRect(cropState);
+  const previewScale = previewSize.width / cropState.imageWidth;
 
   const updateCropState = useCallback(
     (updater: (current: AvatarCropState) => AvatarCropState) => {
-      onChange((current) => (current ? clampAvatarCropState(updater(current)) : current));
+      onChange((current) => (current ? clampImageCropState(updater(current)) : current));
     },
     [onChange],
   );
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    dragStartRef.current = {
-      x: event.clientX,
-      y: event.clientY,
-      offsetX: cropState.offsetX,
-      offsetY: cropState.offsetY,
-    };
-  };
+  const startInteraction = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, handle: AvatarCropHandle) => {
+      event.preventDefault();
+      event.stopPropagation();
+      stageRef.current?.setPointerCapture(event.pointerId);
+      interactionRef.current = {
+        pointerId: event.pointerId,
+        handle,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        cropRect,
+      };
+    },
+    [cropRect],
+  );
 
-  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragStartRef.current) {
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const interaction = interactionRef.current;
+      if (!interaction || interaction.pointerId !== event.pointerId) {
+        return;
+      }
+
+      const deltaX = (event.clientX - interaction.startClientX) / previewScale;
+      const deltaY = (event.clientY - interaction.startClientY) / previewScale;
+
+      updateCropState((current) => {
+        if (interaction.handle === 'move') {
+          return {
+            ...current,
+            cropX: interaction.cropRect.x + deltaX,
+            cropY: interaction.cropRect.y + deltaY,
+          };
+        }
+
+        return resizeImageCropFromHandle(current, interaction, deltaX, deltaY);
+      });
+    },
+    [previewScale, updateCropState],
+  );
+
+  const stopDragging = useCallback((event?: ReactPointerEvent<HTMLDivElement>) => {
+    const interaction = interactionRef.current;
+    if (!interaction) {
       return;
     }
-    const nextOffsetX = dragStartRef.current.offsetX + event.clientX - dragStartRef.current.x;
-    const nextOffsetY = dragStartRef.current.offsetY + event.clientY - dragStartRef.current.y;
-    updateCropState((current) => ({
-      ...current,
-      offsetX: nextOffsetX,
-      offsetY: nextOffsetY,
-    }));
-  };
-
-  const stopDragging = () => {
-    dragStartRef.current = null;
-  };
+    if (event && interaction.pointerId !== event.pointerId) {
+      return;
+    }
+    if (stageRef.current?.hasPointerCapture(interaction.pointerId)) {
+      stageRef.current.releasePointerCapture(interaction.pointerId);
+    }
+    interactionRef.current = null;
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 px-4 py-6">
       <div className="w-full max-w-3xl rounded-[28px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.28)]">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-xl font-semibold text-slate-900">裁剪头像</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-500">请将头像调整到 3:4 裁剪框内，确认后仅上传裁剪成品。</p>
+            <h3 className="text-xl font-semibold text-slate-900">{cropState.cropConfig.title}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500">{cropState.cropConfig.description}</p>
           </div>
           <button
             type="button"
@@ -3441,57 +4792,71 @@ function AvatarCropModal({
 
         <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="flex flex-1 justify-center">
-            <div
-              className="relative overflow-hidden rounded-[24px] bg-[#0F172A]"
-              style={{
-                width: `${AVATAR_CROP_VIEWPORT_WIDTH}px`,
-                height: `${AVATAR_CROP_VIEWPORT_HEIGHT}px`,
-              }}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={stopDragging}
-              onPointerLeave={stopDragging}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={cropState.sourceUrl}
-                alt="头像裁剪预览"
-                draggable={false}
-                className="pointer-events-none absolute select-none"
+            <div className="flex min-h-[420px] w-full items-center justify-center rounded-[24px] bg-[#0F172A] p-4">
+              <div
+                ref={stageRef}
+                className="relative select-none overflow-hidden rounded-[20px]"
                 style={{
-                  width: `${cropBounds.width}px`,
-                  height: `${cropBounds.height}px`,
-                  left: `${cropBounds.left}px`,
-                  top: `${cropBounds.top}px`,
+                  width: `${previewSize.width}px`,
+                  height: `${previewSize.height}px`,
+                  touchAction: 'none',
                 }}
-              />
-              <div className="pointer-events-none absolute inset-0 border border-white/80 shadow-[inset_0_0_0_9999px_rgba(15,23,42,0.24)]" />
+                onPointerMove={handlePointerMove}
+                onPointerUp={stopDragging}
+                onPointerCancel={stopDragging}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={cropState.sourceUrl}
+                  alt="图片裁剪预览"
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain"
+                />
+                <div
+                  role="presentation"
+                  className="absolute rounded-[20px] border-2 border-white/90"
+                  style={{
+                    left: `${cropRect.x * previewScale}px`,
+                    top: `${cropRect.y * previewScale}px`,
+                    width: `${cropRect.width * previewScale}px`,
+                    height: `${cropRect.height * previewScale}px`,
+                    boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.48)',
+                  }}
+                >
+                  <div className="absolute inset-[10px] cursor-move" onPointerDown={(event) => startInteraction(event, 'move')} />
+                  <div className="absolute -left-2 -top-2 h-4 w-4 cursor-nwse-resize" onPointerDown={(event) => startInteraction(event, 'top-left')} />
+                  <div className="absolute -right-2 -top-2 h-4 w-4 cursor-nesw-resize" onPointerDown={(event) => startInteraction(event, 'top-right')} />
+                  <div className="absolute -bottom-2 -left-2 h-4 w-4 cursor-nesw-resize" onPointerDown={(event) => startInteraction(event, 'bottom-left')} />
+                  <div className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize" onPointerDown={(event) => startInteraction(event, 'bottom-right')} />
+                  <div className="absolute inset-x-3 -top-2 h-4 cursor-ns-resize" onPointerDown={(event) => startInteraction(event, 'top')} />
+                  <div className="absolute inset-x-3 -bottom-2 h-4 cursor-ns-resize" onPointerDown={(event) => startInteraction(event, 'bottom')} />
+                  <div className="absolute inset-y-3 -left-2 w-4 cursor-ew-resize" onPointerDown={(event) => startInteraction(event, 'left')} />
+                  <div className="absolute inset-y-3 -right-2 w-4 cursor-ew-resize" onPointerDown={(event) => startInteraction(event, 'right')} />
+                  <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-white/35" />
+                  <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/35" />
+                  <div className="pointer-events-none absolute left-1/2 top-0 h-3 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/90 bg-white/85" />
+                  <div className="pointer-events-none absolute bottom-0 left-1/2 h-3 w-8 -translate-x-1/2 translate-y-1/2 rounded-full border border-white/90 bg-white/85" />
+                  <div className="pointer-events-none absolute left-0 top-1/2 h-8 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/90 bg-white/85" />
+                  <div className="pointer-events-none absolute right-0 top-1/2 h-8 w-3 translate-x-1/2 -translate-y-1/2 rounded-full border border-white/90 bg-white/85" />
+                  <div className="pointer-events-none absolute left-0 top-0 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/90 bg-white" />
+                  <div className="pointer-events-none absolute right-0 top-0 h-3 w-3 translate-x-1/2 -translate-y-1/2 rounded-full border border-white/90 bg-white" />
+                  <div className="pointer-events-none absolute bottom-0 left-0 h-3 w-3 -translate-x-1/2 translate-y-1/2 rounded-full border border-white/90 bg-white" />
+                  <div className="pointer-events-none absolute bottom-0 right-0 h-3 w-3 translate-x-1/2 translate-y-1/2 rounded-full border border-white/90 bg-white" />
+                </div>
+              </div>
             </div>
           </div>
 
           <div className="w-full lg:w-[280px]">
             <div className="rounded-2xl bg-[#F8FAFC] p-4">
-              <p className="text-sm font-medium text-slate-900">缩放图片</p>
-              <input
-                type="range"
-                min={AVATAR_CROP_MIN_ZOOM}
-                max={AVATAR_CROP_MAX_ZOOM}
-                step="0.01"
-                value={cropState.zoom}
-                onChange={(event) =>
-                  updateCropState((current) => ({
-                    ...current,
-                    zoom: Number(event.target.value),
-                  }))
-                }
-                className="mt-4 w-full accent-brand"
-              />
-              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                <span>缩小</span>
-                <span>{Math.round(cropState.zoom * 100)}%</span>
-                <span>放大</span>
-              </div>
-              <p className="mt-4 text-xs leading-5 text-slate-500">拖动图片调整位置，系统会输出统一 3:4 的标准头像成品。</p>
+              <p className="text-sm font-medium text-slate-900">交互说明</p>
+              <p className="mt-3 text-xs leading-6 text-slate-500">
+                裁剪框比例固定不变。
+                <br />
+                拖动中间区域可移动位置。
+                <br />
+                鼠标移到边缘或角点后按住拖动，可同比例放大或缩小裁剪框。
+              </p>
             </div>
 
             <div className="mt-5 flex justify-end gap-3">
@@ -3519,58 +4884,214 @@ function AvatarCropModal({
   );
 }
 
-function clampAvatarCropState(state: AvatarCropState) {
-  const bounds = getAvatarCropBounds(state);
-  const maxOffsetX = Math.max((bounds.width - AVATAR_CROP_VIEWPORT_WIDTH) / 2, 0);
-  const maxOffsetY = Math.max((bounds.height - AVATAR_CROP_VIEWPORT_HEIGHT) / 2, 0);
+function clampImageCropState(state: AvatarCropState) {
+  const cropScale = clampNumber(state.cropScale, state.cropConfig.minScale, state.cropConfig.maxScale);
+  const { width, height } = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, cropScale);
   return {
     ...state,
-    zoom: Math.min(Math.max(state.zoom, AVATAR_CROP_MIN_ZOOM), AVATAR_CROP_MAX_ZOOM),
-    offsetX: Math.min(Math.max(state.offsetX, -maxOffsetX), maxOffsetX),
-    offsetY: Math.min(Math.max(state.offsetY, -maxOffsetY), maxOffsetY),
+    cropScale,
+    cropX: clampNumber(state.cropX, 0, Math.max(state.imageWidth - width, 0)),
+    cropY: clampNumber(state.cropY, 0, Math.max(state.imageHeight - height, 0)),
   };
 }
 
-function getAvatarCropBounds(state: AvatarCropState) {
-  const baseScale = Math.max(
-    AVATAR_CROP_VIEWPORT_WIDTH / state.imageWidth,
-    AVATAR_CROP_VIEWPORT_HEIGHT / state.imageHeight,
-  );
-  const scale = baseScale * state.zoom;
-  const width = state.imageWidth * scale;
-  const height = state.imageHeight * scale;
-  const left = (AVATAR_CROP_VIEWPORT_WIDTH - width) / 2 + state.offsetX;
-  const top = (AVATAR_CROP_VIEWPORT_HEIGHT - height) / 2 + state.offsetY;
-  return { width, height, left, top };
+function getImageCropPreviewSize(state: AvatarCropState) {
+  const scale = Math.min(AVATAR_CROP_STAGE_MAX_WIDTH / state.imageWidth, AVATAR_CROP_STAGE_MAX_HEIGHT / state.imageHeight);
+  return {
+    width: state.imageWidth * scale,
+    height: state.imageHeight * scale,
+  };
 }
 
-async function buildCroppedAvatarFile(state: AvatarCropState) {
+function getImageCropRectSize(cropConfig: ImageCropConfig, imageWidth: number, imageHeight: number, cropScale: number) {
+  const normalizedScale = clampNumber(cropScale, cropConfig.minScale, cropConfig.maxScale);
+  const targetRatio = cropConfig.targetRatio;
+
+  if (imageWidth / imageHeight >= targetRatio) {
+    const maxHeight = imageHeight;
+    return {
+      width: maxHeight * targetRatio * normalizedScale,
+      height: maxHeight * normalizedScale,
+    };
+  }
+
+  const maxWidth = imageWidth;
+  return {
+    width: maxWidth * normalizedScale,
+    height: (maxWidth / targetRatio) * normalizedScale,
+  };
+}
+
+function getImageCropRect(state: AvatarCropState) {
+  const normalizedState = clampImageCropState(state);
+  const { width, height } = getImageCropRectSize(
+    normalizedState.cropConfig,
+    normalizedState.imageWidth,
+    normalizedState.imageHeight,
+    normalizedState.cropScale,
+  );
+  return {
+    x: normalizedState.cropX,
+    y: normalizedState.cropY,
+    width,
+    height,
+  };
+}
+
+function resizeImageCropFromHandle(
+  state: AvatarCropState,
+  interaction: AvatarCropInteraction,
+  deltaX: number,
+  deltaY: number,
+) {
+  const { cropRect, handle } = interaction;
+  const maxSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, state.cropConfig.maxScale);
+  const centerX = cropRect.x + cropRect.width / 2;
+  const centerY = cropRect.y + cropRect.height / 2;
+
+  switch (handle) {
+    case 'left': {
+      const nextScale = clampNumber((cropRect.width - deltaX) / maxSize.width, state.cropConfig.minScale, state.cropConfig.maxScale);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: cropRect.x + cropRect.width - nextSize.width,
+        cropY: centerY - nextSize.height / 2,
+      });
+    }
+    case 'right': {
+      const nextScale = clampNumber((cropRect.width + deltaX) / maxSize.width, state.cropConfig.minScale, state.cropConfig.maxScale);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: cropRect.x,
+        cropY: centerY - nextSize.height / 2,
+      });
+    }
+    case 'top': {
+      const nextScale = clampNumber((cropRect.height - deltaY) / maxSize.height, state.cropConfig.minScale, state.cropConfig.maxScale);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: centerX - nextSize.width / 2,
+        cropY: cropRect.y + cropRect.height - nextSize.height,
+      });
+    }
+    case 'bottom': {
+      const nextScale = clampNumber((cropRect.height + deltaY) / maxSize.height, state.cropConfig.minScale, state.cropConfig.maxScale);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: centerX - nextSize.width / 2,
+        cropY: cropRect.y,
+      });
+    }
+    case 'top-left': {
+      const nextScale = getImageCropScaleFromCandidates(state, cropRect.width - deltaX, cropRect.height - deltaY);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: cropRect.x + cropRect.width - nextSize.width,
+        cropY: cropRect.y + cropRect.height - nextSize.height,
+      });
+    }
+    case 'top-right': {
+      const nextScale = getImageCropScaleFromCandidates(state, cropRect.width + deltaX, cropRect.height - deltaY);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: cropRect.x,
+        cropY: cropRect.y + cropRect.height - nextSize.height,
+      });
+    }
+    case 'bottom-left': {
+      const nextScale = getImageCropScaleFromCandidates(state, cropRect.width - deltaX, cropRect.height + deltaY);
+      const nextSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, nextScale);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: cropRect.x + cropRect.width - nextSize.width,
+        cropY: cropRect.y,
+      });
+    }
+    case 'bottom-right': {
+      const nextScale = getImageCropScaleFromCandidates(state, cropRect.width + deltaX, cropRect.height + deltaY);
+      return clampImageCropState({
+        ...state,
+        cropScale: nextScale,
+        cropX: cropRect.x,
+        cropY: cropRect.y,
+      });
+    }
+    default:
+      return state;
+  }
+}
+
+function getImageCropScaleFromCandidates(state: AvatarCropState, nextWidth: number, nextHeight: number) {
+  const maxSize = getImageCropRectSize(state.cropConfig, state.imageWidth, state.imageHeight, state.cropConfig.maxScale);
+  return clampNumber(
+    Math.max(nextWidth / maxSize.width, nextHeight / maxSize.height),
+    state.cropConfig.minScale,
+    state.cropConfig.maxScale,
+  );
+}
+
+function createInitialImageCropState(
+  file: File,
+  sourceUrl: string,
+  imageWidth: number,
+  imageHeight: number,
+  cropConfig: ImageCropConfig,
+): AvatarCropState {
+  const initialSize = getImageCropRectSize(cropConfig, imageWidth, imageHeight, cropConfig.defaultScale);
+  return clampImageCropState({
+    file,
+    sourceUrl,
+    imageWidth,
+    imageHeight,
+    cropConfig,
+    cropScale: cropConfig.defaultScale,
+    cropX: (imageWidth - initialSize.width) / 2,
+    cropY: (imageHeight - initialSize.height) / 2,
+  });
+}
+
+async function buildCroppedImageFile(state: AvatarCropState) {
   const image = await loadImageElement(state.sourceUrl);
-  const bounds = getAvatarCropBounds(state);
+  const cropRect = getImageCropRect(state);
   const canvas = document.createElement('canvas');
-  canvas.width = AVATAR_CROP_OUTPUT_WIDTH;
-  canvas.height = AVATAR_CROP_OUTPUT_HEIGHT;
+  canvas.width = state.cropConfig.outputWidth;
+  canvas.height = state.cropConfig.outputHeight;
   const context = canvas.getContext('2d');
   if (!context) {
-    throw new Error('浏览器暂不支持头像裁剪，请更换浏览器后重试');
+    throw new Error('浏览器暂不支持图片裁剪，请更换浏览器后重试');
   }
 
   context.fillStyle = '#FFFFFF';
   context.fillRect(0, 0, canvas.width, canvas.height);
-  const scaleX = canvas.width / AVATAR_CROP_VIEWPORT_WIDTH;
-  const scaleY = canvas.height / AVATAR_CROP_VIEWPORT_HEIGHT;
   context.drawImage(
     image,
-    bounds.left * scaleX,
-    bounds.top * scaleY,
-    bounds.width * scaleX,
-    bounds.height * scaleY,
+    cropRect.x,
+    cropRect.y,
+    cropRect.width,
+    cropRect.height,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
   );
 
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((result) => {
       if (!result) {
-        reject(new Error('头像裁剪失败，请重新调整后再试'));
+        reject(new Error('图片裁剪失败，请重新调整后再试'));
         return;
       }
       resolve(result);
@@ -3603,6 +5124,10 @@ async function readImageDimensions(file: File) {
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function DateRangeFields({
@@ -3661,7 +5186,10 @@ function getSectionDataSummary(sectionId: ResumeSectionId, content: ResumeConten
   }
 }
 
-function getModuleManagerLabel(sectionId: ResumeSectionId) {
+function getModuleManagerLabel(sectionId: ResumeSectionId, sectionLabels?: ResumeContent['sectionLabels']) {
+  if (sectionId !== 'personal') {
+    return getSectionLabel(sectionId, sectionLabels);
+  }
   return SECTION_COPY[sectionId as SupportedSectionId]?.drawerTitle ?? getSectionLabelFallback(sectionId);
 }
 
@@ -3817,7 +5345,7 @@ function sanitizeLayoutItems(layout: ResumeLayoutItem[]) {
     ordered.push({ id, visible: true, deleted: false });
   });
 
-  return ordered.map((item) => {
+  const normalized = ordered.map((item) => {
     if (REQUIRED_SECTION_SET.has(item.id)) {
       return { ...item, visible: true, deleted: false };
     }
@@ -3827,6 +5355,12 @@ function sanitizeLayoutItems(layout: ResumeLayoutItem[]) {
       deleted: item.deleted === true,
     };
   });
+
+  const personalItem = normalized.find((item) => item.id === 'personal');
+  if (!personalItem) {
+    return normalized;
+  }
+  return [personalItem, ...normalized.filter((item) => item.id !== 'personal')];
 }
 
 function normalizeThemeColor(color: string) {
@@ -3867,6 +5401,59 @@ function waitForDomPaint() {
 
 function getDrawerKey(sectionId: ResumeSectionId, itemId = 'single') {
   return `${sectionId}:${itemId}`;
+}
+
+function getSuggestionDrawerKey(sectionId: ResumeSuggestionTargetSectionId, entryId = 'section') {
+  if (sectionId === 'personalSummary') {
+    return 'personalSummary:section';
+  }
+  return getDrawerKey(sectionId as ResumeSectionId, entryId);
+}
+
+function getSuggestionTargetFromDrawerKey(drawerKey: string): { sectionId: ResumeSuggestionTargetSectionId; entryId?: string } | null {
+  const [sectionId, entryId] = drawerKey.split(':');
+  if (!sectionId) {
+    return null;
+  }
+  if (sectionId === 'personal') {
+    return { sectionId: 'personalSummary' };
+  }
+  if (sectionId === 'selfEvaluation') {
+    return { sectionId: 'selfEvaluation' };
+  }
+  if (
+    sectionId === 'education'
+    || sectionId === 'internships'
+    || sectionId === 'projects'
+    || sectionId === 'campusRoles'
+    || sectionId === 'awards'
+    || sectionId === 'languages'
+    || sectionId === 'skills'
+  ) {
+    return entryId && entryId !== 'single'
+      ? { sectionId: sectionId as ResumeAiOptimizeEntrySectionId, entryId }
+      : null;
+  }
+  return null;
+}
+
+function mergeSuggestionLoadingState(
+  previous: Record<string, ResumeEntrySuggestionState>,
+  nextSuggestions: Record<string, ResumeEntrySuggestionState>,
+) {
+  const next = { ...nextSuggestions };
+  Object.entries(previous).forEach(([key, value]) => {
+    if (!next[key] && value.loading) {
+      next[key] = { suggestions: [], loading: true };
+    }
+  });
+  return next;
+}
+
+function clearSuggestionLoadingState(previous: Record<string, ResumeEntrySuggestionState>) {
+  return Object.fromEntries(
+    Object.entries(previous).map(([key, value]) => [key, { ...value, loading: false }]),
+  ) as Record<string, ResumeEntrySuggestionState>;
 }
 
 function resetItemValues<T extends { id: string }>(item: T): T {

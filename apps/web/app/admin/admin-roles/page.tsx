@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminListResponse, AdminManagedRoleItem, AdminPermissionCatalogItem } from '@/types';
@@ -63,7 +64,7 @@ export default function AdminRolesPage() {
       setData(roleResult);
       setCatalog(permissionResult);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '角色权限加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('角色权限'));
     } finally {
       setLoading(false);
     }
@@ -112,11 +113,11 @@ export default function AdminRolesPage() {
       const result = selectedId
         ? await clientFetch<AdminManagedRoleItem>(`/admin/admin-roles/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await clientFetch<AdminManagedRoleItem>('/admin/admin-roles', { method: 'POST', body: JSON.stringify(payload) });
-      setMessage(selectedId ? '角色已更新' : '角色已创建');
+      setMessage(selectedId ? ADMIN_TOAST_COPY.updated('角色') : ADMIN_TOAST_COPY.created('角色'));
       fillForm(result);
       await loadData(selectedId ? data.pagination.page : 1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '角色保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('角色'));
     } finally {
       setSaving(false);
     }
@@ -127,11 +128,11 @@ export default function AdminRolesPage() {
     if (!window.confirm('确认删除当前角色吗？')) return;
     try {
       await clientFetch(`/admin/admin-roles/${selectedId}`, { method: 'DELETE' });
-      setMessage('角色已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('角色'));
       resetForm();
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '角色删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('角色'));
     }
   };
 

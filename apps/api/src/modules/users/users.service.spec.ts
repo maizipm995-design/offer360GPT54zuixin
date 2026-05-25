@@ -122,7 +122,7 @@ describe('UsersService', () => {
     expect(invalidateJobsRecommendationCacheByUserId).toHaveBeenCalledWith('user-1');
   });
 
-  it('首页引导弹窗按四项核心信息动态判断是否需要弹出', async () => {
+  it('首页引导弹窗按八项字段完成状态动态判断是否需要弹出', async () => {
     const prisma = {
       user: {
         findUnique: vi.fn().mockResolvedValue({
@@ -154,6 +154,76 @@ describe('UsersService', () => {
 
     expect(overview.profileOnboardingRequired).toBe(true);
     expect(overview.needsProfileOnboarding).toBe(true);
+    expect(overview.profileOnboardingStatus).toEqual({
+      name: true,
+      intentionCity: true,
+      intentionJob: false,
+      intentionCompany: true,
+      schoolName: false,
+      major: true,
+      graduationYear: false,
+      degree: true,
+    });
+  });
+
+  it('概览判定会合并已保存的资料状态，八项齐全后不再重复弹窗', async () => {
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'user-1',
+          phone: '13800000000',
+          myInviteCode: 'INV001',
+          profile: { name: '张三', degree: '本科', major: '计算机', schoolName: '清华大学', graduationYear: 2027 },
+          preference: {
+            intentionCity: ['北京'],
+            intentionJob: ['  '],
+            intentionCompany: ['字节跳动'],
+          },
+          membership: null,
+          wallet: null,
+        }),
+      },
+      memberRole: {
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+    const normalizationService = {
+      normalizeOptionalValueForStorage: vi.fn().mockResolvedValue(undefined),
+      normalizePreferencesForStorage: vi.fn().mockImplementation(async (domain: string, input?: string[] | null) => {
+        if (domain === 'LOCATION') {
+          return input ?? [];
+        }
+        if (domain === 'JOB_TITLE') {
+          return ['前端开发'];
+        }
+        if (domain === 'COMPANY') {
+          return input ?? [];
+        }
+        return input ?? [];
+      }),
+    };
+    const service = new UsersService(prisma as never, normalizationService as never, {} as never);
+
+    const overview = await service.getOverview('user-1');
+
+    expect(overview.profileOnboardingRequired).toBe(false);
+    expect(overview.needsProfileOnboarding).toBe(false);
+    expect(overview.profileOnboardingStatus).toEqual({
+      name: true,
+      intentionCity: true,
+      intentionJob: true,
+      intentionCompany: true,
+      schoolName: true,
+      major: true,
+      graduationYear: true,
+      degree: true,
+    });
+    expect(overview.normalizedPreference).toEqual({
+      intentionCity: ['北京'],
+      intentionJob: ['前端开发'],
+      intentionCompany: ['字节跳动'],
+    });
   });
 
   it('消费首页资料引导后会关闭首次弹窗标记', async () => {

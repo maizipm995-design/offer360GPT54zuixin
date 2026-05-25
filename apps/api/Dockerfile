@@ -37,19 +37,23 @@ RUN npm run build --workspace @offer360/shared
 RUN npm run db:generate
 RUN npm run build:api
 
+FROM builder AS production-deps
+RUN npm prune --omit=dev --workspaces --include-workspace-root && npm cache clean --force
+
 FROM base AS runner
 ENV NODE_ENV=production
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV PRISMA_QUERY_ENGINE_LIBRARY=/opt/prisma-engines/libquery_engine.so.node
 ENV PRISMA_SCHEMA_ENGINE_BINARY=/opt/prisma-engines/schema-engine
-COPY --from=builder /opt/prisma-engines /opt/prisma-engines
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
-COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=production-deps /opt/prisma-engines /opt/prisma-engines
+COPY --from=production-deps /app/package.json ./package.json
+COPY --from=production-deps /app/package-lock.json ./package-lock.json
+COPY --from=production-deps /app/node_modules ./node_modules
+COPY --from=production-deps /app/apps/api/package.json ./apps/api/package.json
+COPY --from=production-deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=production-deps /app/apps/api/dist ./apps/api/dist
+COPY --from=production-deps /app/apps/api/prisma ./apps/api/prisma
+COPY --from=production-deps /app/packages/shared/package.json ./packages/shared/package.json
+COPY --from=production-deps /app/packages/shared/dist ./packages/shared/dist
 EXPOSE 4000
 CMD ["npm", "run", "start", "--workspace", "@offer360/api"]

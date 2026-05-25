@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { buildQuery, downloadFilePayload, splitInputTags } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminFileDownloadPayload, AdminImportResult, AdminListResponse, AdminUserItem } from '@/types';
@@ -69,7 +70,7 @@ export default function AdminUsersPage() {
       const result = await clientFetch<AdminListResponse<AdminUserItem>>(`/admin/users?${queryString}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '用户数据加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('用户数据'));
     } finally {
       setLoading(false);
     }
@@ -139,11 +140,11 @@ export default function AdminUsersPage() {
       const result = selectedId
         ? await clientFetch<AdminUserItem>(`/admin/users/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await clientFetch<AdminUserItem>('/admin/users', { method: 'POST', body: JSON.stringify(payload) });
-      setMessage(selectedId ? '用户信息已更新' : '用户已创建');
+      setMessage(selectedId ? ADMIN_TOAST_COPY.updated('用户信息') : ADMIN_TOAST_COPY.created('用户'));
       fillForm(result);
       await loadData(selectedId ? page : 1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '用户保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('用户'));
     } finally {
       setSaving(false);
     }
@@ -154,11 +155,11 @@ export default function AdminUsersPage() {
     if (!window.confirm('确认删除当前用户吗？删除后关联资料和会员记录会一起清除。')) return;
     try {
       await clientFetch(`/admin/users/${selectedId}`, { method: 'DELETE' });
-      setMessage('用户已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('用户'));
       resetForm();
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '用户删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('用户'));
     }
   };
 
@@ -170,11 +171,11 @@ export default function AdminUsersPage() {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       });
-      setMessage(status === 'active' ? '用户已恢复启用' : '用户已冻结');
+      setMessage(status === 'active' ? ADMIN_TOAST_COPY.enabled('用户') : ADMIN_TOAST_COPY.disabled('用户'));
       fillForm(result.user);
       await loadData(page, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '用户状态更新失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.statusUpdateFailed('用户'));
     } finally {
       setStatusSaving(false);
     }
@@ -183,7 +184,7 @@ export default function AdminUsersPage() {
   const handleResetPassword = async () => {
     if (!selectedUser) return;
     if (!resetPassword.trim()) {
-      setMessage('请先填写要重置的新密码');
+      setMessage(ADMIN_TOAST_COPY.passwordRequired);
       return;
     }
 
@@ -193,10 +194,10 @@ export default function AdminUsersPage() {
         method: 'PATCH',
         body: JSON.stringify({ newPassword: resetPassword.trim() }),
       });
-      setMessage('用户密码已重置');
+      setMessage(ADMIN_TOAST_COPY.passwordResetDone);
       setResetPassword('');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '用户密码重置失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.operationFailed('用户密码重置'));
     } finally {
       setPasswordResetting(false);
     }
@@ -207,9 +208,9 @@ export default function AdminUsersPage() {
       setDownloadingTemplate(true);
       const payload = await clientFetch<AdminFileDownloadPayload>('/admin/users/template');
       downloadFilePayload(payload);
-      setMessage('用户导入模板已下载');
+      setMessage(ADMIN_TOAST_COPY.templateDownloaded('用户导入'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '模板下载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('模板'));
     } finally {
       setDownloadingTemplate(false);
     }
@@ -221,9 +222,9 @@ export default function AdminUsersPage() {
       const queryString = buildQuery(filters);
       const payload = await clientFetch<AdminFileDownloadPayload>(`/admin/users/export${queryString ? `?${queryString}` : ''}`);
       downloadFilePayload(payload);
-      setMessage('用户筛选结果已导出');
+      setMessage(ADMIN_TOAST_COPY.exportDone('用户筛选结果'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '导出失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('用户数据'));
     } finally {
       setExporting(false);
     }
@@ -241,7 +242,7 @@ export default function AdminUsersPage() {
       setImportFileName(file.name);
       setImportCsvText(text);
       setImportResult(null);
-      setMessage(`已载入文件：${file.name}`);
+      setMessage(ADMIN_TOAST_COPY.fileLoaded(file.name));
     } catch {
       clearImportSelection();
       setMessage('读取导入文件失败，请重新选择 CSV 文件');
@@ -250,7 +251,7 @@ export default function AdminUsersPage() {
 
   const handleImportSubmit = async () => {
     if (!importCsvText.trim()) {
-      setMessage('请先选择待导入的 CSV 文件');
+      setMessage(ADMIN_TOAST_COPY.templateFileRequired('CSV 文件'));
       return;
     }
 
@@ -261,10 +262,10 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ csvText: importCsvText }),
       });
       setImportResult(result);
-      setMessage(`导入完成：共 ${result.total} 行，成功 ${result.success} 行，失败 ${result.failed} 行`);
+      setMessage(ADMIN_TOAST_COPY.importCompleted(result.total, result.success, result.failed));
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '用户导入失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.operationFailed('用户导入'));
     } finally {
       setImporting(false);
     }

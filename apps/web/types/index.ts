@@ -31,9 +31,10 @@ export interface JobItem {
   deliveryType?: 'email' | 'website' | null;
   majorRequirement?: string | null;
   deadlineAt?: string | null;
-  announcementUrl?: string | null;
-  deliveryUrl?: string | null;
-  recruitmentLink?: string | null;
+  hasAnnouncement: boolean;
+  hasDelivery: boolean;
+  canViewAnnouncement: boolean;
+  canDeliver: boolean;
   announcementTitle?: string | null;
   industry?: string | null;
   graduationSession?: string | null;
@@ -247,6 +248,16 @@ export interface PersonalOverview {
   inviteCode: string;
   needsProfileOnboarding: boolean;
   profileOnboardingRequired: boolean;
+  profileOnboardingStatus: {
+    name: boolean;
+    intentionCity: boolean;
+    intentionJob: boolean;
+    intentionCompany: boolean;
+    schoolName: boolean;
+    major: boolean;
+    graduationYear: boolean;
+    degree: boolean;
+  };
   isMember: boolean;
   memberLevel?: MemberLevel | null;
   memberLevelLabel?: string;
@@ -586,6 +597,7 @@ export interface AdminAiModelConfigItem {
   globalPromptTemplate?: string | null;
   entryPromptTemplate?: string | null;
   professionalPromptTemplate?: string | null;
+  assessmentPromptTemplate?: string | null;
   enabled: boolean;
   isDefault: boolean;
   remark?: string | null;
@@ -836,6 +848,202 @@ export interface AdminOperationLogItem {
   ip?: string | null;
   userAgent?: string | null;
   createdAt: string;
+}
+
+export interface AdminJobsRiskFreezeItem {
+  key: string;
+  scope: 'user' | 'ip' | 'device';
+  identifier: string;
+  reason: string;
+  controlType?: 'cooldown' | 'restrict' | 'freeze';
+  source?: 'automatic' | 'manual';
+  ruleKey?: string | null;
+  evidence?: string | null;
+  createdAt?: string | null;
+  level?: 1 | 2 | 3 | 4;
+  ttlSeconds: number;
+}
+
+export interface AdminJobsRiskControlItem extends AdminJobsRiskFreezeItem {
+  controlType: 'cooldown' | 'restrict' | 'freeze';
+  level: 1 | 2 | 3 | 4;
+}
+
+export interface AdminJobsRiskLogItem {
+  id: string;
+  jobId: string;
+  userId?: string | null;
+  userPhone?: string;
+  membershipId?: string | null;
+  memberLevel?: string | null;
+  action: string;
+  requestStatus: string;
+  accessTokenId?: string | null;
+  redirectTargetType?: string | null;
+  limitHit: boolean;
+  riskHit: boolean;
+  reviewStatus: 'not_required' | 'pending' | 'processing' | 'resolved' | 'dismissed';
+  reviewConclusion?: string | null;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
+  reviewedByAdminName?: string | null;
+  riskReasonCategory?: string;
+  riskLevel?: 1 | 2 | 3 | 4;
+  riskLevelLabel?: string;
+  riskDispositionType?: 'cooldown' | 'restrict' | 'freeze';
+  riskDispositionLabel?: string;
+  riskDispositionSummary?: string;
+  ip?: string | null;
+  userAgent?: string | null;
+  deviceId?: string | null;
+  sessionId?: string | null;
+  failureReason?: string | null;
+  consumedAt?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  activeFreezeScopes: string[];
+  activeControls?: Array<{
+    key: string;
+    scope: 'user' | 'ip' | 'device';
+    identifier: string;
+    controlType: 'cooldown' | 'restrict' | 'freeze';
+    controlLabel: string;
+    level: 1 | 2 | 3 | 4;
+    levelLabel: string;
+    reason: string;
+    ttlSeconds: number;
+  }>;
+}
+
+export interface AdminJobsRiskControlResponse {
+  summary: {
+    totalLast24h: number;
+    deniedLast24h: number;
+    limitLast24h: number;
+    riskLast24h: number;
+    activeFreezeCount: number;
+    activeControlCount: number;
+    pendingReviewCount: number;
+    processingReviewCount: number;
+  };
+  activeFreezes: AdminJobsRiskFreezeItem[];
+  activeControls: AdminJobsRiskControlItem[];
+  list: AdminJobsRiskLogItem[];
+  pagination: AdminPagination;
+}
+
+export interface AdminJobsRiskConfig {
+  accessLimits: {
+    detail: {
+      perMinute: number;
+      perTenMinutes: number;
+      perHour: number;
+      perDay: number;
+    };
+    viewAnnouncement: {
+      perMinute: number;
+      perTenMinutes: number;
+      perHour: number;
+      perDay: number;
+    };
+    deliver: {
+      perMinute: number;
+      perTenMinutes: number;
+      perHour: number;
+      perDay: number;
+    };
+    scopeMultiplier: {
+      user: number;
+      ip: number;
+      device: number;
+      session: number;
+    };
+  };
+  controls: {
+    dailyQuotaExceeded: {
+      restrictSeconds: number;
+    };
+    repeatedLimitHits: {
+      windowSeconds: number;
+      userThreshold: number;
+      ipThreshold: number;
+      deviceThreshold: number;
+      userCooldownSeconds: number;
+      ipRestrictSeconds: number;
+      deviceRestrictSeconds: number;
+    };
+    distinctJobBurst: {
+      windowSeconds: number;
+      userThreshold: number;
+      ipThreshold: number;
+      deviceThreshold: number;
+      restrictSeconds: number;
+    };
+    nightBurst: {
+      windowSeconds: number;
+      userThreshold: number;
+      ipThreshold: number;
+      deviceThreshold: number;
+      freezeSeconds: number;
+      startHour: number;
+      endHour: number;
+    };
+    sharedIpUsers: {
+      windowSeconds: number;
+      threshold: number;
+      freezeSeconds: number;
+    };
+    sharedDeviceUsers: {
+      windowSeconds: number;
+      threshold: number;
+      freezeSeconds: number;
+    };
+    userIpRotation: {
+      windowSeconds: number;
+      threshold: number;
+      freezeSeconds: number;
+    };
+    regularPageScan: {
+      windowSeconds: number;
+      userThreshold: number;
+      ipThreshold: number;
+      deviceThreshold: number;
+      sessionThreshold: number;
+      maxGapSeconds: number;
+      cooldownSeconds: number;
+    };
+    jobEnumeration: {
+      windowSeconds: number;
+      userThreshold: number;
+      ipThreshold: number;
+      deviceThreshold: number;
+      sessionThreshold: number;
+      restrictSeconds: number;
+    };
+    escalation: {
+      windowSeconds: number;
+      distinctRuleThreshold: number;
+      severeHitThreshold: number;
+      freezeSeconds: number;
+    };
+  };
+}
+
+export interface AdminJobsRiskControlDetailResponse {
+  item: AdminJobsRiskLogItem;
+  activeFreezes: AdminJobsRiskFreezeItem[];
+  activeControls: AdminJobsRiskControlItem[];
+  relatedLogs: AdminJobsRiskLogItem[];
+  signals: {
+    sameUserLast24h: number;
+    sameIpLast24h: number;
+    sameDeviceLast24h: number;
+    distinctIpsForUserLast24h: number;
+    distinctUsersForIpLast24h: number;
+    distinctUsersForDeviceLast24h: number;
+    recentRiskReasons: string[];
+  };
 }
 
 export interface AdminAuthSession {

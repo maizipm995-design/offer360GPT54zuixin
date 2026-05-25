@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery, toDateInputValue } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminListResponse, AdminRedeemBatchItem, MemberLevel } from '@/types';
@@ -72,7 +73,7 @@ export default function AdminRedeemBatchesPage() {
       );
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换码批次加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('兑换码批次'));
     } finally {
       setLoading(false);
     }
@@ -129,11 +130,11 @@ export default function AdminRedeemBatchesPage() {
         ? await clientFetch<AdminRedeemBatchItem>(`/admin/redeem-batches/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await clientFetch<AdminRedeemBatchItem>('/admin/redeem-batches', { method: 'POST', body: JSON.stringify(payload) });
 
-      setMessage(selectedBatch ? '兑换码批次已更新' : `兑换码批次 ${result.batchNo} 已创建`);
+      setMessage(selectedBatch ? ADMIN_TOAST_COPY.updated('兑换码批次') : `兑换码批次 ${result.batchNo} 已创建`);
       fillForm(result);
       await loadData(selectedBatch ? page : 1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换码批次保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('兑换码批次'));
     } finally {
       setSaving(false);
     }

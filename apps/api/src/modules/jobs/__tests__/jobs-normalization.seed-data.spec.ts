@@ -53,7 +53,7 @@ describe('jobs-normalization.seed-data', () => {
 
   it('四个非 LOCATION 域主表首轮补数覆盖预期范围并保留兼容锚点', () => {
     expect(jobTitleTermRound1SeedItems).toHaveLength(39);
-    expect(companyTermRound1SeedItems).toHaveLength(16);
+    expect(companyTermRound1SeedItems).toHaveLength(23);
     expect(degreeTermRound1SeedItems).toHaveLength(5);
     expect(majorTermRound1SeedItems).toHaveLength(24);
 
@@ -63,7 +63,20 @@ describe('jobs-normalization.seed-data', () => {
     const majorNames = majorTermRound1SeedItems.map((item) => item.canonicalName);
 
     expect(jobTitleNames).toEqual(expect.arrayContaining(['开发', '研发', '后端', '前端', '产品', '运营', '财务', '管培生']));
-    expect(companyNames).toEqual(expect.arrayContaining(['中国烟草', '国家电网', '字节跳动', '中国移动', '建设银行']));
+    expect(companyNames).toEqual(
+      expect.arrayContaining([
+        '烟草',
+        '电网',
+        '字节',
+        '移动',
+        '建设银行',
+        '石油',
+        '石化',
+        '海油',
+        '航空',
+        '航天',
+      ]),
+    );
     expect(degreeNames).toEqual(['中专', '专科', '本科', '硕士', '博士']);
     expect(majorNames).toEqual(expect.arrayContaining(['计算机', '人工智能', '电子信息', '财务', '法学', '物流供应链']));
 
@@ -117,10 +130,15 @@ describe('jobs-normalization.seed-data', () => {
     );
     expect(companyAliasRound1SeedItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ canonicalName: '字节跳动', aliasName: '字节', matchMode: 'contains' }),
+        expect.objectContaining({ canonicalName: '字节', aliasName: '字节跳动', matchMode: 'exact' }),
         expect.objectContaining({ canonicalName: '建设银行', aliasName: '建行', matchMode: 'exact' }),
-        expect.objectContaining({ canonicalName: '中国烟草', aliasName: '中烟', matchMode: 'contains' }),
-        expect.objectContaining({ canonicalName: '中国移动', aliasName: '移动', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '烟草', aliasName: '中国烟草', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '移动', aliasName: '中国移动', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '石油', aliasName: '中国石油', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '石化', aliasName: '中国石化', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '海油', aliasName: '中国海油', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '航空', aliasName: '中国航空工业集团', matchMode: 'exact' }),
+        expect.objectContaining({ canonicalName: '航天', aliasName: '中国航天科技集团', matchMode: 'exact' }),
       ]),
     );
     expect(degreeAliasRound1SeedItems).toEqual(

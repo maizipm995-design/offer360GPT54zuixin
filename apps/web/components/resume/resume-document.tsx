@@ -370,7 +370,14 @@ function ResumeFlow({
                 return null;
               case 'education':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     {renderableEducation.map((item) => (
                       <div key={item.id} className="flex flex-col" style={{ gap: 'var(--resume-entry-body-gap)' }}>
                         <div className="flex items-start justify-between" style={{ gap: 'var(--resume-divider-entry-gap)' }}>
@@ -397,25 +404,53 @@ function ResumeFlow({
                 );
               case 'internships':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     {renderableInternships.map((item) => renderExperienceItem(item, styleConfig, typography, onSectionClick, sectionId))}
                   </SectionCard>
                 );
               case 'projects':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     {renderableProjects.map((item) => renderProjectItem(item, styleConfig, typography, onSectionClick, sectionId))}
                   </SectionCard>
                 );
               case 'skills':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     <SkillList key={styleConfig.skillVariant} items={renderableSkills} styleConfig={styleConfig} typography={typography} />
                   </SectionCard>
                 );
               case 'awards':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     <div className="flex flex-col" style={{ gap: 'var(--resume-item-gap)' }}>
                       {renderableAwards.map((item) => (
                         <div key={item.id} className="flex flex-col" style={{ gap: 'var(--resume-entry-body-gap)', fontSize: `${typography.bodySizePt}pt`, color: RESUME_BODY_TEXT_COLOR }}>
@@ -437,7 +472,14 @@ function ResumeFlow({
                 );
               case 'languages':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     <div className="flex flex-col" style={{ gap: 'var(--resume-item-gap)' }}>
                       {renderableLanguages.map((item) => (
                         <div key={item.id} className="flex flex-col" style={{ gap: 'var(--resume-entry-body-gap)', fontSize: `${typography.bodySizePt}pt`, color: RESUME_BODY_TEXT_COLOR }}>
@@ -452,19 +494,40 @@ function ResumeFlow({
                 );
               case 'campusRoles':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     {renderableCampusRoles.map((item) => renderCampusRoleItem(item, styleConfig, typography, onSectionClick, sectionId))}
                   </SectionCard>
                 );
               case 'selfEvaluation':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     {renderRichTextBlock(content.selfEvaluation, styleConfig, typography, 'paragraph')}
                   </SectionCard>
                 );
               case 'links':
                 return (
-                  <SectionCard key={sectionId} sectionId={sectionId} styleConfig={styleConfig} typography={typography} onSectionClick={onSectionClick}>
+                  <SectionCard
+                    key={sectionId}
+                    sectionId={sectionId}
+                    sectionLabels={content.sectionLabels}
+                    styleConfig={styleConfig}
+                    typography={typography}
+                    onSectionClick={onSectionClick}
+                  >
                     <div className="flex flex-col" style={{ gap: 'var(--resume-item-gap)' }}>
                       {renderableLinks.map((item) => (
                         <div key={item.id} style={{ fontSize: `${typography.bodySizePt}pt`, color: RESUME_BODY_TEXT_COLOR }}>
@@ -491,12 +554,14 @@ function ResumeFlow({
 
 function SectionCard({
   sectionId,
+  sectionLabels,
   styleConfig,
   typography,
   onSectionClick,
   children,
 }: {
   sectionId: ResumeSectionId;
+  sectionLabels?: Partial<Record<ResumeSectionId, string>>;
   styleConfig: ResumeStyleConfig;
   typography: ResumeTypography;
   onSectionClick?: (sectionId: ResumeSectionId) => void;
@@ -521,7 +586,13 @@ function SectionCard({
         }
       }}
     >
-      <SectionTitle key={titleVariant} title={getSectionLabel(sectionId)} variant={titleVariant} styleConfig={styleConfig} typography={typography} />
+      <SectionTitle
+        key={titleVariant}
+        title={getSectionLabel(sectionId, sectionLabels)}
+        variant={titleVariant}
+        styleConfig={styleConfig}
+        typography={typography}
+      />
       <div className="flex flex-col" style={{ gap: 'var(--resume-section-card-gap)' }}>{children}</div>
     </section>
   );
@@ -555,25 +626,6 @@ function ResumeHeader({
         : 'right';
   const logoPlacement = avatarPlacement === 'left' ? 'right' : 'left';
 
-  const summaryBlock = (inverse = false, compact = false) => {
-    if (!content.personal.summary) {
-      return null;
-    }
-    const summaryClassName = compact ? 'max-w-[92%]' : 'max-w-[90%]';
-
-    return (
-      <div className={summaryClassName} style={{ marginTop: '2pt', textAlign: 'left' }}>
-        {renderRichTextBlock(
-          content.personal.summary,
-          styleConfig,
-          typography,
-          'paragraph',
-          inverse ? 'text-white/90' : undefined,
-        )}
-      </div>
-    );
-  };
-
   const renderInfoBlock = ({
     inverse = false,
     compact = false,
@@ -584,7 +636,7 @@ function ResumeHeader({
     centerContainer?: boolean;
   }) => (
     <div className={cn('flex min-w-0', centerContainer ? 'justify-center' : 'justify-start')}>
-      <div className="flex min-w-0 flex-col" style={{ gap: '2pt', textAlign: 'left' }}>
+      <div className={cn('flex min-w-0 flex-col', compact ? 'max-w-[92%]' : 'max-w-[90%]')} style={{ gap: '2pt', textAlign: 'left' }}>
         <NameBlock name={content.personal.name} typography={typography} color={inverse ? '#fff' : RESUME_PRIMARY_TEXT_COLOR} />
         <BasicInfo
           items={infoItems}
@@ -594,7 +646,6 @@ function ResumeHeader({
           inverse={inverse}
           justifyClass="justify-start"
         />
-        {summaryBlock(inverse, compact)}
       </div>
     </div>
   );

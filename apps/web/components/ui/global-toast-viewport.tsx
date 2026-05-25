@@ -2,7 +2,26 @@
 
 import { useToastStore } from '@/store/toast-store';
 import { cn } from '@/lib/utils';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleAlert, Info } from 'lucide-react';
+
+const TOAST_STYLE_MAP = {
+  success: {
+    container: 'bg-emerald-600 text-white shadow-[0_18px_48px_rgba(5,150,105,0.28)]',
+    icon: <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-100" />,
+  },
+  info: {
+    container: 'border border-sky-200 bg-sky-50 text-sky-900 shadow-[0_12px_32px_rgba(14,165,233,0.12)]',
+    icon: <Info className="h-5 w-5 shrink-0 text-sky-600" />,
+  },
+  warning: {
+    container: 'bg-amber-500 text-white shadow-[0_18px_48px_rgba(245,158,11,0.28)]',
+    icon: <CircleAlert className="h-5 w-5 shrink-0 text-amber-100" />,
+  },
+  error: {
+    container: 'bg-red-600 text-white shadow-[0_18px_48px_rgba(220,38,38,0.38)]',
+    icon: <AlertCircle className="h-5 w-5 shrink-0 text-red-100" />,
+  },
+} as const;
 
 export function GlobalToastViewport() {
   const toasts = useToastStore((state) => state.toasts);
@@ -19,16 +38,10 @@ export function GlobalToastViewport() {
             key={item.id}
             className={cn(
               'flex items-center gap-3 rounded-2xl px-5 py-3.5 text-sm font-semibold leading-relaxed transition-all animate-in slide-in-from-bottom-2 md:text-left',
-              item.type === 'error'
-                ? 'bg-red-600 text-white shadow-[0_18px_48px_rgba(220,38,38,0.38)]'
-                : 'border border-slate-100 bg-white text-[#FF7D00] shadow-[0_12px_32px_rgba(0,0,0,0.08)]',
+              TOAST_STYLE_MAP[item.type].container,
             )}
           >
-            {item.type === 'error' ? (
-              <AlertCircle className="h-5 w-5 shrink-0 text-red-100" />
-            ) : (
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
-            )}
+            {TOAST_STYLE_MAP[item.type].icon}
             <span className="flex-1">{item.message}</span>
           </div>
         ))}

@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { requestAdminOssUploadSession, uploadFileToOss } from '@/lib/oss';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
@@ -49,7 +50,7 @@ export default function AdminMembershipContentPage() {
           DEFAULT_LOCATION;
         setSelectedLocation(nextLocation);
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'HTML 内容位置加载失败');
+        setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('HTML 内容位置'));
       } finally {
         setLoadingPositions(false);
       }
@@ -71,7 +72,7 @@ export default function AdminMembershipContentPage() {
         setHtmlContent(result.htmlContent);
         setPreviewHtml(result.previewHtml || result.htmlContent);
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'HTML 内容加载失败');
+        setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('HTML 内容'));
       } finally {
         setLoadingContent(false);
       }
@@ -95,9 +96,9 @@ export default function AdminMembershipContentPage() {
       setContent(result);
       setHtmlContent(result.htmlContent);
       setPreviewHtml(result.previewHtml || result.htmlContent);
-      setMessage(`${result.locationLabel}已保存`);
+      setMessage(ADMIN_TOAST_COPY.saved(result.locationLabel));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'HTML 内容保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('HTML 内容'));
     } finally {
       setSaving(false);
     }
@@ -120,9 +121,9 @@ export default function AdminMembershipContentPage() {
       const uploaded = await uploadFileToOss(session, file);
       setHtmlContent((prev) => appendHtmlImage(prev, uploaded.objectReference, file.name));
       setPreviewHtml((prev) => appendHtmlImage(prev || htmlContent, uploaded.signedUrl || uploaded.objectReference, file.name));
-      setMessage(`${selectedPosition.label}图片已上传并插入 HTML`);
+      setMessage(ADMIN_TOAST_COPY.imageInserted(`${selectedPosition.label}图片`));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '图片上传失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.uploadFailed('图片'));
     } finally {
       setUploadingImage(false);
     }

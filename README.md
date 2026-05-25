@@ -26,7 +26,7 @@
 - 根目录 `docker-compose.yml`：本地基础启动、功能验证、快速演示
 - 根目录 `docker-compose.dev.yml`：隔离开发环境、联调环境
 - `deploy/prod`：生产发布专用配置，后续 CI/CD、回滚、数据库迁移都会收敛到这里
-- 自动化部署手册：`docs/自动化部署改造手册.md`
+- 自动化部署手册：`docs/自动化标准部署手册.md`
 - 数据库迁移规范：`docs/数据库迁移与回滚规范.md`
 - 生产参数与 CI Secrets 清单：`docs/生产环境参数与CI-Secrets清单.md`
 

@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery, downloadFilePayload } from '@/lib/admin';
 import { clientFetch, clientUpload, type ClientUploadProgress } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import {
@@ -295,7 +296,7 @@ export default function AdminNormalizationDictionaryPage() {
       const result = await clientFetch<AdminListResponse<AdminNormalizationTermItem>>(`/admin/normalization-terms?${queryString}`);
       setTermData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '标准词列表加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('标准词列表'));
     } finally {
       setTermLoading(false);
     }
@@ -308,7 +309,7 @@ export default function AdminNormalizationDictionaryPage() {
       const result = await clientFetch<AdminListResponse<AdminNormalizationAliasItem>>(`/admin/normalization-terms/${termId}/aliases?${queryString}`);
       setAliasData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '别名列表加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('别名列表'));
     } finally {
       setAliasLoading(false);
     }
@@ -321,7 +322,7 @@ export default function AdminNormalizationDictionaryPage() {
       const result = await clientFetch<AdminListResponse<AdminLocationHierarchyItem>>(`/admin/location-hierarchies?${queryString}`);
       setHierarchyData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '省市关系列表加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('省市关系列表'));
     } finally {
       setHierarchyLoading(false);
     }
@@ -330,7 +331,7 @@ export default function AdminNormalizationDictionaryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     void Promise.all([loadSummary(), loadTerms(1, termFilters), loadHierarchies(1, hierarchyFilters), loadLocationOptions()]).catch((error) => {
-      setMessage(error instanceof Error ? error.message : '后台词典页面初始化失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('标准化词典页面'));
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -411,7 +412,7 @@ export default function AdminNormalizationDictionaryPage() {
 
       setSelectedTerm(result);
       setTermForm(buildTermForm(result));
-      setMessage(selectedTerm ? '标准词已更新' : '标准词已创建');
+      setMessage(selectedTerm ? ADMIN_TOAST_COPY.updated('标准词') : ADMIN_TOAST_COPY.created('标准词'));
       await Promise.all([
         loadSummary(),
         loadTerms(selectedTerm ? termData.pagination.page || 1 : 1, termFilters),
@@ -419,7 +420,7 @@ export default function AdminNormalizationDictionaryPage() {
         loadHierarchies(hierarchyData.pagination.page || 1, hierarchyFilters),
       ]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '标准词保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('标准词'));
     } finally {
       setTermSaving(false);
     }
@@ -433,7 +434,7 @@ export default function AdminNormalizationDictionaryPage() {
       if (selectedTerm?.id === item.id) {
         closeTermModal();
       }
-      setMessage('标准词已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('标准词'));
       await Promise.all([
         loadSummary(),
         loadTerms(1, termFilters),
@@ -441,7 +442,7 @@ export default function AdminNormalizationDictionaryPage() {
         loadHierarchies(1, hierarchyFilters),
       ]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '标准词删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('标准词'));
     } finally {
       setTermDeleting(false);
     }
@@ -454,7 +455,7 @@ export default function AdminNormalizationDictionaryPage() {
 
   const handleAliasSubmit = async () => {
     if (!selectedTerm) {
-      setMessage('请先保存标准词后再维护别名');
+      setMessage(ADMIN_TOAST_COPY.selectSavedItemFirst('标准词'));
       return;
     }
     try {
@@ -477,14 +478,14 @@ export default function AdminNormalizationDictionaryPage() {
           }));
       setSelectedAlias(null);
       setAliasForm(emptyAliasForm);
-      setMessage(selectedAlias ? '别名已更新' : '别名已创建');
+      setMessage(selectedAlias ? ADMIN_TOAST_COPY.updated('别名') : ADMIN_TOAST_COPY.created('别名'));
       await Promise.all([
         loadAliases(selectedTerm.id, aliasFilters),
         loadSummary(),
         loadTerms(termData.pagination.page || 1, termFilters),
       ]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '别名保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('别名'));
     } finally {
       setAliasSaving(false);
     }
@@ -500,14 +501,14 @@ export default function AdminNormalizationDictionaryPage() {
         setSelectedAlias(null);
         setAliasForm(emptyAliasForm);
       }
-      setMessage('别名已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('别名'));
       await Promise.all([
         loadAliases(selectedTerm.id, aliasFilters),
         loadSummary(),
         loadTerms(termData.pagination.page || 1, termFilters),
       ]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '别名删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('别名'));
     } finally {
       setAliasDeleting(false);
     }
@@ -530,14 +531,14 @@ export default function AdminNormalizationDictionaryPage() {
             method: 'POST',
             body: JSON.stringify(payload),
           }));
-      setMessage(selectedHierarchy ? '省市关系已更新' : '省市关系已创建');
+      setMessage(selectedHierarchy ? ADMIN_TOAST_COPY.updated('省市关系') : ADMIN_TOAST_COPY.created('省市关系'));
       closeHierarchyModal();
       await Promise.all([
         loadSummary(),
         loadHierarchies(selectedHierarchy ? hierarchyData.pagination.page || 1 : 1, hierarchyFilters),
       ]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '省市关系保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('省市关系'));
     } finally {
       setHierarchySaving(false);
     }
@@ -551,10 +552,10 @@ export default function AdminNormalizationDictionaryPage() {
       if (selectedHierarchy?.id === item.id) {
         closeHierarchyModal();
       }
-      setMessage('省市关系已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('省市关系'));
       await Promise.all([loadSummary(), loadHierarchies(1, hierarchyFilters)]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '省市关系删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('省市关系'));
     } finally {
       setHierarchyDeleting(false);
     }
@@ -580,9 +581,9 @@ export default function AdminNormalizationDictionaryPage() {
       setDownloadingTemplate(true);
       const payload = await clientFetch<AdminFileDownloadPayload>('/admin/normalization/template');
       downloadFilePayload(payload);
-      setMessage('标准化词典模板已下载');
+      setMessage(ADMIN_TOAST_COPY.templateDownloaded('标准化词典'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '模板下载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('模板'));
     } finally {
       setDownloadingTemplate(false);
     }
@@ -593,9 +594,9 @@ export default function AdminNormalizationDictionaryPage() {
       setExporting(true);
       const payload = await clientFetch<AdminFileDownloadPayload>('/admin/normalization/export');
       downloadFilePayload(payload);
-      setMessage('标准化词典已导出');
+      setMessage(ADMIN_TOAST_COPY.exportDone('标准化词典'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '导出失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('标准化词典'));
     } finally {
       setExporting(false);
     }
@@ -621,7 +622,7 @@ export default function AdminNormalizationDictionaryPage() {
     setImportResult(null);
     setImportProgress(0);
     setImportStatusText(`已选择 ${file.name}（${formatFileSize(file.size)}），点击“开始导入”后将自动处理三张 Sheet。`);
-    setMessage(`已选择词典导入文件：${file.name}`);
+    setMessage(ADMIN_TOAST_COPY.fileSelected(file.name));
   };
 
   const handleImportProgress = (progress: ClientUploadProgress) => {
@@ -643,7 +644,7 @@ export default function AdminNormalizationDictionaryPage() {
 
   const handleImportSubmit = async () => {
     if (!importFile) {
-      setMessage('请先选择待导入的 Excel 文件');
+      setMessage(ADMIN_TOAST_COPY.templateFileRequired('Excel 文件'));
       return;
     }
     try {
@@ -659,7 +660,7 @@ export default function AdminNormalizationDictionaryPage() {
       setImportResult(result);
       setImportProgress(100);
       setImportStatusText(`导入完成：共 ${result.total} 行，成功 ${result.success} 行，失败 ${result.failed} 行。`);
-      setMessage(`词典导入完成：成功 ${result.success} 行，失败 ${result.failed} 行`);
+      setMessage(ADMIN_TOAST_COPY.importCompleted(result.total, result.success, result.failed));
       await Promise.all([
         loadSummary(),
         loadTerms(1, termFilters),

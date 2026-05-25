@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { buildQuery, downloadFilePayload } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import {
@@ -121,7 +122,7 @@ export default function AdminRedeemCodesPage() {
       const result = await clientFetch<AdminRedeemCodeListResponse>(`/admin/redeem-codes?${buildQuery({ ...nextFilters, page: nextPage, limit: 10 })}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换码列表加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('兑换码列表'));
     } finally {
       setLoading(false);
     }
@@ -133,7 +134,7 @@ export default function AdminRedeemCodesPage() {
       const result = await clientFetch<AdminRedeemRecordListResponse>(`/admin/redeem-records?${buildQuery({ ...nextFilters, page: nextPage, limit: 8 })}`);
       setRecords(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换记录加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('兑换记录'));
     } finally {
       setRecordsLoading(false);
     }
@@ -175,7 +176,7 @@ export default function AdminRedeemCodesPage() {
   const handleSubmit = async () => {
     if (!selectedCode) return;
     if (!canOperate) {
-      setMessage('当前状态的兑换码不支持手动操作');
+      setMessage('当前状态下的兑换码暂不支持操作');
       return;
     }
 
@@ -186,11 +187,11 @@ export default function AdminRedeemCodesPage() {
         method: 'PATCH',
         body: JSON.stringify(payload),
       });
-      setMessage(nextStatus === 'void' ? '兑换码已作废' : '兑换码已恢复为未使用');
+      setMessage(nextStatus === 'void' ? ADMIN_TOAST_COPY.disabled('兑换码') : ADMIN_TOAST_COPY.enabled('兑换码'));
       handleSelect(result);
       await Promise.all([loadCodes(page, filters), loadRecords(recordPage, recordFilters)]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换码操作失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.operationFailed('兑换码'));
     } finally {
       setSaving(false);
     }
@@ -201,9 +202,9 @@ export default function AdminRedeemCodesPage() {
       setExporting(true);
       const payload = await clientFetch<AdminFileDownloadPayload>(`/admin/redeem-codes/export?${buildQuery(filters)}`);
       downloadFilePayload(payload);
-      setMessage('全部兑换码已导出，已包含会员等级、时长类型与状态信息');
+      setMessage(ADMIN_TOAST_COPY.exportDone('兑换码数据'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换码导出失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.exportFailed('兑换码'));
     } finally {
       setExporting(false);
     }
@@ -235,7 +236,7 @@ export default function AdminRedeemCodesPage() {
       setMessage(`已生成批次 ${result.batchNo}，共 ${result.quantity} 个${result.memberLevelLabel}${result.cardType}`);
       await Promise.all([loadCodes(1, filters), loadBatchOptions()]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '兑换码生成失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.operationFailed('兑换码生成'));
     } finally {
       setGenerating(false);
     }

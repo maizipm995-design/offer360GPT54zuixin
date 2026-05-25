@@ -4,6 +4,14 @@ import * as $OpenApi from '@alicloud/openapi-client';
 import * as $Util from '@alicloud/tea-util';
 import { env } from '../../config/env';
 
+interface SmsSendResult {
+  requestId: string;
+  bizId: string;
+  code: string;
+  deliveryMode: 'aliyun' | 'mock';
+  debugCode?: string;
+}
+
 @Injectable()
 export class AliyunSmsService {
   private client: Dysmsapi20170525 | null = null;
@@ -24,13 +32,26 @@ export class AliyunSmsService {
   }
 
   async sendVerificationCode(phone: string, code: string) {
-    if (!env.aliyunSmsAccessKeyId || !env.aliyunSmsAccessKeySecret || !env.aliyunSmsSignName || !env.aliyunSmsTemplateCode) {
+    const hasSmsConfig = Boolean(
+      env.aliyunSmsAccessKeyId
+      && env.aliyunSmsAccessKeySecret
+      && env.aliyunSmsSignName
+      && env.aliyunSmsTemplateCode
+      && env.aliyunSmsTemplateParamName,
+    );
+
+    if (!hasSmsConfig) {
+      if (env.nodeEnv !== 'development') {
+        throw new ServiceUnavailableException('短信服务未配置');
+      }
       console.log(`[Mock SMS] Sending verification code ${code} to ${phone}`);
       return {
         requestId: 'mock-request-id',
         bizId: 'mock-biz-id',
         code: 'OK',
-      };
+        deliveryMode: 'mock',
+        debugCode: code,
+      } satisfies SmsSendResult;
     }
 
     const client = this.getClient();
@@ -57,6 +78,7 @@ export class AliyunSmsService {
       requestId: response.body?.requestId ?? '',
       bizId: response.body?.bizId ?? '',
       code: responseCode,
-    };
+      deliveryMode: 'aliyun',
+    } satisfies SmsSendResult;
   }
 }

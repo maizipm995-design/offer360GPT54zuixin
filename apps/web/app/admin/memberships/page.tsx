@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { buildQuery, toDateInputValue } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminListResponse, AdminMembershipItem, MemberLevel } from '@/types';
@@ -53,7 +54,7 @@ export default function AdminMembershipsPage() {
       );
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '会员数据加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('会员数据'));
     } finally {
       setLoading(false);
     }
@@ -100,11 +101,11 @@ export default function AdminMembershipsPage() {
       await (selectedId
         ? clientFetch<AdminMembershipItem>(`/admin/memberships/${selectedId}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : clientFetch<AdminMembershipItem>('/admin/memberships', { method: 'POST', body: JSON.stringify(payload) }));
-      setMessage(selectedId ? '会员信息已更新' : '会员已开通');
+      setMessage(selectedId ? ADMIN_TOAST_COPY.updated('会员信息') : '会员已开通');
       resetForm();
       await loadData(selectedId ? page : 1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '会员保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('会员'));
     } finally {
       setSaving(false);
     }
@@ -115,11 +116,11 @@ export default function AdminMembershipsPage() {
     if (!window.confirm('确认删除该会员记录吗？')) return;
     try {
       await clientFetch(`/admin/memberships/${selectedId}`, { method: 'DELETE' });
-      setMessage('会员记录已删除');
+      setMessage(ADMIN_TOAST_COPY.deleted('会员记录'));
       resetForm();
       await loadData(1, filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '会员记录删除失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('会员记录'));
     }
   };
 

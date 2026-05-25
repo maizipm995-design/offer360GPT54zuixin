@@ -46,10 +46,6 @@ export class UsersService {
           intentionCompany: Array.isArray(user.preference.intentionCompany) ? user.preference.intentionCompany as string[] : [],
         }
       : null;
-    const profileOnboardingRequired = !user.profile?.name?.trim()
-      || !preference?.intentionCity?.length
-      || !preference?.intentionJob?.length
-      || !preference?.intentionCompany?.length;
     const [permissionMaps, normalizedPreference, normalizedProfile] = await Promise.all([
       getMemberRolePermissionMaps(this.prisma),
       preference ? this.buildNormalizedPreferencePayload(preference) : Promise.resolve(null),
@@ -60,6 +56,13 @@ export class UsersService {
           ]).then(([degree, major]) => ({ degree, major }))
         : Promise.resolve(null),
     ]);
+    const profileOnboardingStatus = this.buildProfileOnboardingStatus({
+      profile: user.profile,
+      normalizedProfile,
+      preference,
+      normalizedPreference,
+    });
+    const profileOnboardingRequired = Object.values(profileOnboardingStatus).some((completed) => !completed);
     const access = buildMemberAccessSnapshot(user.membership, permissionMaps.effectivePermissionMap, now);
     const currentMembership = this.serializeActiveMembership(user.membership, now, access);
 
@@ -69,6 +72,7 @@ export class UsersService {
       inviteCode: user.myInviteCode,
       needsProfileOnboarding: profileOnboardingRequired,
       profileOnboardingRequired,
+      profileOnboardingStatus,
       profile: user.profile,
       normalizedProfile,
       preference,
@@ -261,6 +265,49 @@ export class UsersService {
 
   private sanitizePreferenceValues(values: string[]) {
     return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+  }
+
+  private buildProfileOnboardingStatus(input: {
+    profile?: {
+      name?: string | null;
+      schoolName?: string | null;
+      graduationYear?: number | null;
+      degree?: string | null;
+      major?: string | null;
+    } | null;
+    normalizedProfile?: {
+      degree?: string | null;
+      major?: string | null;
+    } | null;
+    preference?: {
+      intentionCity: string[];
+      intentionJob: string[];
+      intentionCompany: string[];
+    } | null;
+    normalizedPreference?: {
+      intentionCity: string[];
+      intentionJob: string[];
+      intentionCompany: string[];
+    } | null;
+  }) {
+    return {
+      name: Boolean(input.profile?.name?.trim()),
+      intentionCity: this.hasAnyCompletedPreference(input.preference?.intentionCity, input.normalizedPreference?.intentionCity),
+      intentionJob: this.hasAnyCompletedPreference(input.preference?.intentionJob, input.normalizedPreference?.intentionJob),
+      intentionCompany: this.hasAnyCompletedPreference(input.preference?.intentionCompany, input.normalizedPreference?.intentionCompany),
+      schoolName: Boolean(input.profile?.schoolName?.trim()),
+      major: this.hasAnyCompletedValue(input.profile?.major, input.normalizedProfile?.major),
+      graduationYear: Boolean(input.profile?.graduationYear),
+      degree: this.hasAnyCompletedValue(input.profile?.degree, input.normalizedProfile?.degree),
+    };
+  }
+
+  private hasAnyCompletedPreference(...groups: Array<string[] | undefined | null>) {
+    return groups.some((group) => (group ?? []).some((item) => Boolean(item?.trim())));
+  }
+
+  private hasAnyCompletedValue(...values: Array<string | undefined | null>) {
+    return values.some((value) => Boolean(value?.trim()));
   }
 
   async updatePhone(userId: string, dto: UpdatePhoneDto) {

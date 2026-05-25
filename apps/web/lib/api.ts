@@ -1,5 +1,7 @@
 const browserApiBase = '/api/proxy';
 const serverApiBase = process.env.INTERNAL_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+const DEVICE_ID_STORAGE_KEY = 'offer360:device-id';
+const SESSION_ID_STORAGE_KEY = 'offer360:session-id';
 
 if (!serverApiBase) {
   throw new Error('Missing INTERNAL_API_BASE_URL or NEXT_PUBLIC_API_BASE_URL in root .env');
@@ -32,6 +34,32 @@ function buildRequestErrorMessage(status: number, payload: ApiEnvelope<unknown> 
   return message || `请求失败（${status}）`;
 }
 
+function getBrowserRiskId(storage: Storage, key: string, prefix: string) {
+  const current = storage.getItem(key);
+  if (current?.trim()) {
+    return current.trim();
+  }
+  const next = `${prefix}-${crypto.randomUUID()}`;
+  storage.setItem(key, next);
+  return next;
+}
+
+function attachClientRiskHeaders(headers: Headers) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (!headers.has('x-device-id')) {
+      headers.set('x-device-id', getBrowserRiskId(window.localStorage, DEVICE_ID_STORAGE_KEY, 'device'));
+    }
+    if (!headers.has('x-session-id')) {
+      headers.set('x-session-id', getBrowserRiskId(window.sessionStorage, SESSION_ID_STORAGE_KEY, 'session'));
+    }
+  } catch {
+    // 忽略浏览器存储不可用场景，避免影响主流程请求
+  }
+}
+
 async function unwrapResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
   const result = text ? parseJsonSafely(text) : null;
@@ -44,7 +72,6 @@ async function unwrapResponse<T>(response: Response): Promise<T> {
 export async function serverGet<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${serverApiBase}${path}`, {
     ...init,
-    cache: 'no-store',
   });
   return unwrapResponse<T>(response);
 }
@@ -58,6 +85,7 @@ export async function clientFetch<T>(path: string, options?: RequestInit, token?
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
+  attachClientRiskHeaders(headers);
 
   const response = await fetch(`${browserApiBase}${path}`, {
     ...options,

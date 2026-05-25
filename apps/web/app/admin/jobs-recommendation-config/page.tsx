@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminJobsRecommendationConfigItem } from '@/types';
@@ -111,7 +112,7 @@ export default function AdminJobsRecommendationConfigPage() {
         setConfig(result);
         setForm(toFormState(result));
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : '专属推荐权重配置加载失败');
+        setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('专属推荐权重配置'));
       } finally {
         setLoading(false);
       }
@@ -135,9 +136,9 @@ export default function AdminJobsRecommendationConfigPage() {
       });
       setConfig(result);
       setForm(toFormState(result));
-      setMessage('专属推荐权重配置已保存');
+      setMessage(ADMIN_TOAST_COPY.saved('专属推荐权重配置'));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '专属推荐权重配置保存失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.saveFailed('专属推荐权重配置'));
     } finally {
       setSaving(false);
     }

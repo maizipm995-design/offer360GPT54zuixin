@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma.service';
 import { JobsModule } from '../jobs/jobs.module';
 import { MembershipsModule } from '../memberships/memberships.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { ResumeAiModule } from '../resume-ai/resume-ai.module';
 import { StorageModule } from '../storage/storage.module';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
@@ -37,6 +38,7 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy';
     JobsModule,
     MembershipsModule,
     PaymentsModule,
+    ResumeAiModule,
     StorageModule,
   ],
   controllers: [

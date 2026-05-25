@@ -23,18 +23,28 @@ const TWO_MB = 2 * 1024 * 1024;
 const FIVE_MB = 5 * 1024 * 1024;
 
 const MIME_EXTENSION_MAP: Record<string, string> = {
+  'image/gif': 'gif',
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
   'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
 };
 
 const EXTENSION_MIME_MAP: Record<string, string> = {
+  gif: 'image/gif',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
   webp: 'image/webp',
   pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
 
 const SCENE_RULES: Record<OssUploadScene, OssUploadSceneRule> = {
@@ -205,6 +215,10 @@ export class StorageService {
     return url;
   }
 
+  isConfigured() {
+    return Boolean(env.ossRegion && env.ossBucket && env.ossAccessKeyId && env.ossAccessKeySecret);
+  }
+
   async createSignedDownloadUrl(
     objectKey: string,
     fileName: string,
@@ -266,6 +280,14 @@ export class StorageService {
       bucket: env.ossBucket,
       objectKey,
     };
+  }
+
+  async deleteObject(objectKey: string) {
+    const normalizedObjectKey = this.extractObjectKeyFromValue(objectKey);
+    if (!normalizedObjectKey || !this.isConfigured()) {
+      return;
+    }
+    await this.getOssClient().delete(normalizedObjectKey);
   }
 
   private async buildSignedObjectUrlPayload(dto: CreateOssSignedObjectUrlDto) {
@@ -510,7 +532,8 @@ export class StorageService {
       if (!mappedMime) {
         throw new BadRequestException('当前文件扩展名不在允许范围内');
       }
-      if (mappedMime !== normalizedMime) {
+      const mimeProvided = normalizedMime && normalizedMime !== 'application/octet-stream';
+      if (mimeProvided && mappedMime !== normalizedMime) {
         throw new BadRequestException('文件扩展名与 MIME 类型不匹配');
       }
       return normalizedExt === 'jpeg' ? 'jpg' : normalizedExt;

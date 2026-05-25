@@ -1,10 +1,20 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleDestroy, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  OnModuleDestroy,
+  Optional,
+  UnauthorizedException,
+  forwardRef,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { InputJsonValue } from '@prisma/client/runtime/library';
 import type { Browser } from 'puppeteer-core';
 import { env } from '../../config/env';
 import { getUserMemberAccess, type MemberRoleCode } from '../../common/utils/member-access';
 import { PrismaService } from '../../prisma.service';
+import { ResumeAiService } from '../resume-ai/resume-ai.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateResumeDraftDto } from './dto/create-resume-draft.dto';
 import {
@@ -36,6 +46,9 @@ export class ResumeService implements OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly storageService: StorageService,
+    @Optional()
+    @Inject(forwardRef(() => ResumeAiService))
+    private readonly resumeAiService: ResumeAiService | null,
   ) {}
 
   async onModuleDestroy() {
@@ -94,6 +107,33 @@ export class ResumeService implements OnModuleDestroy {
     return this.hydrateDraftAssets(this.normalizeDraft(draft, globalVerticalSpacing));
   }
 
+  async duplicate(userId: string, id: string, options?: { titleSuffix?: string }) {
+    const sourceDraft = await this.ensureOwnedDraft(userId, id);
+    const access = await getUserMemberAccess(this.prisma, userId);
+    const limit = this.getDraftLimit(access.memberRoleCode);
+    const count = await this.prisma.resumeDraft.count({ where: { userId } });
+    if (count >= limit) {
+      throw new BadRequestException(`当前账号最多创建 ${limit} 份简历，请先删除旧简历后再新建`);
+    }
+
+    const { globalVerticalSpacing } = await getResumeTemplateConfigsBundle(this.prisma);
+    const duplicateTitle = this.buildDuplicatedTitle(sourceDraft.title, options?.titleSuffix, count);
+    const duplicated = await this.prisma.resumeDraft.create({
+      data: {
+        userId,
+        title: duplicateTitle,
+        templateCode: sourceDraft.templateCode,
+        status: sourceDraft.status,
+        contentJson: sourceDraft.contentJson as InputJsonValue,
+        styleJson: sourceDraft.styleJson as InputJsonValue,
+        layoutJson: sourceDraft.layoutJson as InputJsonValue,
+        lastValidatedAt: null,
+      },
+    });
+
+    return this.hydrateDraftAssets(this.normalizeDraft(duplicated, globalVerticalSpacing));
+  }
+
   async getDetail(userId: string, id: string) {
     const draft = await this.ensureOwnedDraft(userId, id);
     const { globalVerticalSpacing } = await getResumeTemplateConfigsBundle(this.prisma);
@@ -112,26 +152,57 @@ export class ResumeService implements OnModuleDestroy {
   }
 
   async update(userId: string, id: string, dto: UpdateResumeDraftDto) {
-    await this.ensureOwnedDraft(userId, id);
+    const existingDraft = await this.ensureOwnedDraft(userId, id);
     const { globalVerticalSpacing } = await getResumeTemplateConfigsBundle(this.prisma);
+    const nextContentJson = dto.contentJson === undefined
+      ? undefined
+      : this.sanitizeDraftContentForStorage(dto.contentJson);
+    const resumeAiService = this.resumeAiService;
+    const changedSuggestionTargets = nextContentJson !== undefined && resumeAiService
+      ? resumeAiService.collectChangedSuggestionTargets(existingDraft.contentJson, nextContentJson)
+      : [];
 
-    const updatedDraft = await this.prisma.resumeDraft.update({
-      where: { id },
-      data: {
-        title: dto.title?.trim() || undefined,
-        contentJson: this.toPrismaJson(this.sanitizeDraftContentForStorage(dto.contentJson)),
-        styleJson: this.toPrismaJson(
-          dto.styleJson === undefined
-            ? undefined
-            : normalizeResumeStyleJson(dto.styleJson, {
-                globalVerticalSpacing,
-                ignoreLegacyLineHeight: true,
-              }),
-        ),
-        layoutJson: this.toPrismaJson(dto.layoutJson),
-        lastValidatedAt: null,
-      },
-    });
+    const updateData = {
+      title: dto.title?.trim() || undefined,
+      contentJson: this.toPrismaJson(nextContentJson),
+      styleJson: this.toPrismaJson(
+        dto.styleJson === undefined
+          ? undefined
+          : normalizeResumeStyleJson(dto.styleJson, {
+              globalVerticalSpacing,
+              ignoreLegacyLineHeight: true,
+            }),
+      ),
+      layoutJson: this.toPrismaJson(dto.layoutJson),
+      lastValidatedAt: null,
+    };
+
+    const updatedDraft = changedSuggestionTargets.length
+      ? (
+        await this.prisma.$transaction([
+          this.prisma.resumeDraft.update({
+            where: { id },
+            data: updateData,
+          }),
+          this.prisma.resumeAiSuggestion.deleteMany({
+            where: {
+              resumeId: id,
+              OR: changedSuggestionTargets.map((target) => ({
+                sectionId: target.sectionId,
+                entryId: target.entryId,
+              })),
+            },
+          }),
+        ])
+      )[0]
+      : await this.prisma.resumeDraft.update({
+        where: { id },
+        data: updateData,
+      });
+
+    if (changedSuggestionTargets.length && nextContentJson !== undefined && resumeAiService) {
+      void resumeAiService.refreshSuggestionsForTargets(id, nextContentJson, changedSuggestionTargets);
+    }
 
     return this.hydrateDraftAssets(this.normalizeDraft(updatedDraft, globalVerticalSpacing));
   }
@@ -237,6 +308,13 @@ export class ResumeService implements OnModuleDestroy {
       return normalized;
     }
     return count === 0 ? '我的简历' : `我的简历 ${count + 1}`;
+  }
+
+  private buildDuplicatedTitle(title: string, titleSuffix: string | undefined, count: number) {
+    const normalizedTitle = title.trim() || this.buildDraftTitle(undefined, count);
+    const normalizedSuffix = titleSuffix?.trim() || ' - 副本';
+    const nextTitle = `${normalizedTitle}${normalizedSuffix}`.slice(0, 120).trim();
+    return nextTitle || this.buildDraftTitle(undefined, count);
   }
 
   private normalizeFilename(title: string) {

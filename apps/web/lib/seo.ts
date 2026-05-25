@@ -3,6 +3,31 @@ import type { ServiceItem } from '@/types';
 
 const DEFAULT_SITE_URL = 'https://www.offer360.cn';
 const DEFAULT_SITE_NAME = 'Offer360';
+const DEFAULT_SITE_TITLE = 'Offer360 - 中国校招招聘信息汇总平台与大学生求职平台';
+const DEFAULT_SITE_DESCRIPTION =
+  'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，覆盖校招招聘信息、实习岗位、简历AI优化、面试辅导、笔试真题、面试逐字稿与求职全流程服务。';
+const DEFAULT_SITE_KEYWORDS = [
+  'offer360',
+  '中国校招招聘信息汇总平台',
+  '校招信息汇总',
+  '大学生求职',
+  '应届生招聘',
+  '实习岗位',
+  '春招秋招',
+  '简历AI优化',
+  '面试辅导',
+  '笔试真题',
+  '面试逐字稿',
+];
+const DEFAULT_SITE_TOPICS = [
+  '校招招聘信息',
+  '实习招聘',
+  '简历AI优化',
+  '面试辅导',
+  '笔试真题',
+  '面试逐字稿',
+  '求职全流程服务',
+];
 const FAVICON_URL = 'https://i.postimg.cc/h4scGvF6/sun-lao-shilogo-64X64.png';
 const SEARCH_LOGO_URL = 'https://i.postimg.cc/J05Dn45v/sun-lao-shilogo-192X192.png';
 const DEFAULT_OG_IMAGE = FAVICON_URL;
@@ -16,13 +41,53 @@ function normalizeBaseUrl(input?: string | null) {
   return value.replace(/\/+$/, '');
 }
 
+function isLoopbackOrPrivateHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  return (
+    normalized === 'localhost'
+    || normalized === '0.0.0.0'
+    || normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === 'host.docker.internal'
+    || /^127\./.test(normalized)
+    || /^10\./.test(normalized)
+    || /^192\.168\./.test(normalized)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(normalized)
+  );
+}
+
+function resolvePublicBaseUrl(input?: string | null) {
+  const value = normalizeBaseUrl(input);
+  if (!value) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (process.env.NODE_ENV === 'production') {
+      if (parsed.protocol !== 'https:' || isLoopbackOrPrivateHostname(parsed.hostname)) {
+        return '';
+      }
+    }
+
+    const normalizedPath = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '');
+    return `${parsed.origin}${normalizedPath}`;
+  } catch {
+    return '';
+  }
+}
+
 export function getSiteUrl() {
-  const siteUrl = normalizeBaseUrl(process.env.WEB_APP_BASE_URL);
+  const siteUrl = resolvePublicBaseUrl(process.env.WEB_APP_BASE_URL);
   if (siteUrl) {
     return siteUrl;
   }
 
-  const apiBaseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL);
+  const apiBaseUrl = resolvePublicBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL);
   if (apiBaseUrl) {
     return apiBaseUrl.replace(/\/api$/i, '');
   }
@@ -46,6 +111,7 @@ export function buildPageMetadata({
   keywords,
   robots,
   image,
+  seoContent,
 }: {
   title: string;
   description: string;
@@ -53,9 +119,15 @@ export function buildPageMetadata({
   keywords?: string[];
   robots?: Metadata['robots'];
   image?: string;
+  seoContent?: string | string[];
 }): Metadata {
   const url = getAbsoluteUrl(path);
   const ogImage = image || getDefaultOgImage();
+  const normalizedSeoContent = Array.isArray(seoContent)
+    ? seoContent.filter(Boolean)
+    : seoContent
+      ? [seoContent]
+      : [];
 
   return {
     title,
@@ -87,6 +159,11 @@ export function buildPageMetadata({
       description,
       images: [ogImage],
     },
+    other: normalizedSeoContent.length > 0
+      ? {
+          'seo-content': normalizedSeoContent,
+        }
+      : undefined,
   };
 }
 
@@ -95,11 +172,11 @@ export function buildRootMetadata(): Metadata {
     metadataBase: new URL(getSiteUrl()),
     manifest: '/manifest.webmanifest',
     title: {
-      default: 'Offer360 - 2026-2027届校招信息汇总与大学生求职平台',
+      default: DEFAULT_SITE_TITLE,
       template: '%s - Offer360',
     },
-    description: 'Offer360 专注大学生应届生求职，实时汇总校招、春招、秋招、实习、内推网申信息。',
-    keywords: ['offer360', '校招信息汇总', '大学生求职', '应届生招聘', '实习岗位', '春招秋招', '内推网申'],
+    description: DEFAULT_SITE_DESCRIPTION,
+    keywords: DEFAULT_SITE_KEYWORDS,
     authors: [{ name: DEFAULT_SITE_NAME }],
     creator: DEFAULT_SITE_NAME,
     publisher: DEFAULT_SITE_NAME,
@@ -127,8 +204,8 @@ export function buildRootMetadata(): Metadata {
       },
     },
     openGraph: {
-      title: 'Offer360 - 2026-2027届校招信息汇总与大学生求职平台',
-      description: 'Offer360 专注大学生应届生求职，实时汇总校招、春招、秋招、实习、内推网申信息。',
+      title: DEFAULT_SITE_TITLE,
+      description: DEFAULT_SITE_DESCRIPTION,
       url: getAbsoluteUrl('/'),
       siteName: DEFAULT_SITE_NAME,
       locale: 'zh_CN',
@@ -144,8 +221,8 @@ export function buildRootMetadata(): Metadata {
     },
     twitter: {
       card: 'summary_large_image',
-      title: 'Offer360 - 2026-2027届校招信息汇总与大学生求职平台',
-      description: 'Offer360 专注大学生应届生求职，实时汇总校招、春招、秋招、实习、内推网申信息。',
+      title: DEFAULT_SITE_TITLE,
+      description: DEFAULT_SITE_DESCRIPTION,
       images: [getDefaultOgImage()],
     },
   };
@@ -158,6 +235,10 @@ export function buildOrganizationSchema() {
     name: DEFAULT_SITE_NAME,
     url: getAbsoluteUrl('/'),
     logo: SEARCH_LOGO_URL,
+    description: DEFAULT_SITE_DESCRIPTION,
+    areaServed: 'CN',
+    slogan: '校招招聘信息汇总与大学生求职全流程服务平台',
+    knowsAbout: DEFAULT_SITE_TOPICS,
   };
 }
 
@@ -168,6 +249,13 @@ export function buildWebsiteSchema() {
     name: DEFAULT_SITE_NAME,
     url: getAbsoluteUrl('/'),
     inLanguage: 'zh-CN',
+    description: DEFAULT_SITE_DESCRIPTION,
+    publisher: {
+      '@type': 'Organization',
+      name: DEFAULT_SITE_NAME,
+      url: getAbsoluteUrl('/'),
+    },
+    about: DEFAULT_SITE_TOPICS,
   };
 }
 
@@ -184,12 +272,58 @@ export function buildBreadcrumbSchema(items: Array<{ name: string; path: string 
   };
 }
 
+export function buildWebPageSchema({
+  title,
+  description,
+  path,
+  type = 'WebPage',
+}: {
+  title: string;
+  description: string;
+  path: string;
+  type?: 'WebPage' | 'CollectionPage' | 'AboutPage';
+}) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': type,
+    name: title,
+    description,
+    url: getAbsoluteUrl(path),
+    inLanguage: 'zh-CN',
+    isPartOf: {
+      '@type': 'WebSite',
+      name: DEFAULT_SITE_NAME,
+      url: getAbsoluteUrl('/'),
+    },
+    about: DEFAULT_SITE_TOPICS,
+  };
+}
+
+export function buildServiceListSchema(services: ServiceItem[]) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: 'Offer360 求职服务列表',
+    itemListOrder: 'https://schema.org/ItemListOrderAscending',
+    numberOfItems: services.length,
+    itemListElement: services.map((service, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      url: getAbsoluteUrl(`/services/${encodeURIComponent(service.id)}`),
+      name: service.name,
+      description: service.description,
+    })),
+  };
+}
+
 export function buildServiceSchema(service: ServiceItem) {
   return {
     '@context': 'https://schema.org',
     '@type': 'Service',
     name: service.name,
     description: service.description,
+    areaServed: 'CN',
+    serviceType: '大学生求职服务',
     provider: {
       '@type': 'Organization',
       name: DEFAULT_SITE_NAME,

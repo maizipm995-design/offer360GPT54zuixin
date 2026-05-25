@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { buildQuery, downloadCsv } from '@/lib/admin';
 import { clientFetch } from '@/lib/api';
+import { ADMIN_TOAST_COPY } from '@/lib/toast-copy';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useGlobalToast } from '@/store/toast-store';
 import { AdminCommissionLogListResponse } from '@/types';
@@ -39,7 +40,7 @@ export default function AdminCommissionLogsPage() {
       const result = await clientFetch<AdminCommissionLogListResponse>(`/admin/commission-logs?${buildQuery({ ...nextFilters, page, limit: 10 })}`);
       setData(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '激励金流水加载失败');
+      setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.loadFailed('激励金流水'));
     } finally {
       setLoading(false);
     }

@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { ResumeAiModule } from '../resume-ai/resume-ai.module';
 import { StorageModule } from '../storage/storage.module';
 import { PrismaService } from '../../prisma.service';
 import { ResumeController } from './resume.controller';
@@ -7,7 +8,7 @@ import { ResumePrintController } from './resume-print.controller';
 import { ResumeService } from './resume.service';
 
 @Module({
-  imports: [AuthModule, StorageModule],
+  imports: [AuthModule, StorageModule, forwardRef(() => ResumeAiModule)],
   controllers: [ResumeController, ResumePrintController],
   providers: [ResumeService, PrismaService],
   exports: [ResumeService],

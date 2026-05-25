@@ -27,27 +27,65 @@ export interface UploadedAdminJobFile {
   mimetype?: string;
 }
 
+type JobImportFieldKey =
+  | 'companyFullName'
+  | 'enterpriseNature'
+  | 'degreeRequirement'
+  | 'workLocation'
+  | 'jobName'
+  | 'majorRequirement'
+  | 'recruitmentType'
+  | 'deadlineAt'
+  | 'announcementUrl'
+  | 'deliveryUrl'
+  | 'graduationSession'
+  | 'referralCode'
+  | 'announcementTitle'
+  | 'industry'
+  | 'entryDate';
+
+type JobImportColumn = {
+  key: JobImportFieldKey;
+  header: string;
+  required: boolean;
+  aliases: string[];
+};
+
 const JOB_EXCEL_HEADERS = [
   '企业/单位全称',
   '企业性质',
   '学历要求',
   '工作地点',
   '岗位名称',
-  '岗位类别',
+  '专业需求',
   '招聘类型',
   '截止日期',
   '公告链接',
   '投递链接',
-  '相关专业',
+  '毕业届别',
   '内推码',
   '招聘公告标题',
   '行业',
   '录入日期',
 ] as const;
 
-const JOB_EXCEL_HEADER_ALIASES: Partial<Record<(typeof JOB_EXCEL_HEADERS)[number], string[]>> = {
-  相关专业: ['相关专业', '毕业届别'],
-};
+const JOB_IMPORT_COLUMNS: JobImportColumn[] = [
+  { key: 'companyFullName', header: '企业/单位全称', required: true, aliases: ['企业/单位全称', '企业全称', '单位全称', '公司全称', '公司名称'] },
+  { key: 'enterpriseNature', header: '企业性质', required: false, aliases: ['企业性质', '单位性质'] },
+  { key: 'degreeRequirement', header: '学历要求', required: false, aliases: ['学历要求', '学历'] },
+  { key: 'workLocation', header: '工作地点', required: false, aliases: ['工作地点', '工作城市', '地点'] },
+  { key: 'jobName', header: '岗位名称', required: false, aliases: ['岗位名称', '职位名称', '岗位', '职位'] },
+  { key: 'majorRequirement', header: '专业需求', required: false, aliases: ['专业需求', '专业要求', '相关专业', '岗位类别'] },
+  { key: 'recruitmentType', header: '招聘类型', required: false, aliases: ['招聘类型', '招聘批次', '岗位类型'] },
+  { key: 'deadlineAt', header: '截止日期', required: false, aliases: ['截止日期', '截止时间', '报名截止日期', '报名截止时间'] },
+  { key: 'announcementUrl', header: '公告链接', required: false, aliases: ['公告链接', '公告地址', '公告网址'] },
+  { key: 'deliveryUrl', header: '投递链接', required: false, aliases: ['投递链接', '投递地址', '投递网址', '网申链接', '申请链接'] },
+  { key: 'graduationSession', header: '毕业届别', required: false, aliases: ['毕业届别', '毕业届别要求', '届别', '毕业年份', '毕业年份/届别'] },
+  { key: 'referralCode', header: '内推码', required: false, aliases: ['内推码', '推荐码', '内推口令'] },
+  { key: 'announcementTitle', header: '招聘公告标题', required: false, aliases: ['招聘公告标题', '公告标题', '标题'] },
+  { key: 'industry', header: '行业', required: false, aliases: ['行业', '所属行业'] },
+  { key: 'entryDate', header: '录入日期', required: false, aliases: ['录入日期', '入库日期', '发布日期'] },
+];
 
 const EXCEL_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const JOB_IMPORT_BATCH_SIZE = 200;
@@ -87,7 +125,7 @@ export class AdminBulkService {
         this.readString(item.degreeRequirement),
         this.readString(item.workLocation),
         this.readString(item.jobName),
-        this.readString(item.jobCategory),
+        this.readString(item.majorRequirement),
         this.readString(item.recruitmentType),
         this.formatExcelDate(item.deadlineAt),
         this.readString(item.announcementUrl),
@@ -111,7 +149,7 @@ export class AdminBulkService {
       throw new BadRequestException('请上传包含表头和数据行的招聘公告 Excel 文件');
     }
 
-    this.assertJobExcelHeaders(rows[0]);
+    const headerIndexMap = this.resolveJobHeaderIndexMap(rows[0]);
 
     const errors: ImportErrorItem[] = [];
     const preparedRows: PreparedJobImportRow[] = [];
@@ -124,27 +162,27 @@ export class AdminBulkService {
       }
 
       total += 1;
-      const rowMap = this.toSheetRowMap(JOB_EXCEL_HEADERS, row);
+      const rowMap = this.toJobSheetRowMap(headerIndexMap, row);
 
       try {
         preparedRows.push({
           row: index + 1,
           data: this.adminService.buildJobCreateInput({
-            companyFullName: this.readRowValue(rowMap, '企业/单位全称'),
-            enterpriseNature: this.readRowValue(rowMap, '企业性质'),
-            degreeRequirement: this.readRowValue(rowMap, '学历要求'),
-            workLocation: this.readRowValue(rowMap, '工作地点'),
-            jobName: this.readRowValue(rowMap, '岗位名称'),
-            jobCategory: this.readRowValue(rowMap, '岗位类别'),
-            recruitmentType: this.readRowValue(rowMap, '招聘类型'),
-            deadlineAt: this.readRowDateValue(rowMap, '截止日期'),
-            announcementUrl: this.readRowValue(rowMap, '公告链接'),
-            deliveryUrl: this.readRowValue(rowMap, '投递链接'),
-            graduationSession: this.readRowValue(rowMap, '相关专业'),
-            referralCode: this.readRowValue(rowMap, '内推码'),
-            announcementTitle: this.readRowValue(rowMap, '招聘公告标题'),
-            industry: this.readRowValue(rowMap, '行业'),
-            entryDate: this.readRowDateValue(rowMap, '录入日期'),
+            companyFullName: this.readJobRowValue(rowMap, 'companyFullName'),
+            enterpriseNature: this.readJobRowValue(rowMap, 'enterpriseNature'),
+            degreeRequirement: this.readJobRowValue(rowMap, 'degreeRequirement'),
+            workLocation: this.readJobRowValue(rowMap, 'workLocation'),
+            jobName: this.readJobRowValue(rowMap, 'jobName'),
+            majorRequirement: this.readJobRowValue(rowMap, 'majorRequirement'),
+            recruitmentType: this.readJobRowValue(rowMap, 'recruitmentType'),
+            deadlineAt: this.readJobRowDateValue(rowMap, 'deadlineAt'),
+            announcementUrl: this.readJobRowValue(rowMap, 'announcementUrl'),
+            deliveryUrl: this.readJobRowValue(rowMap, 'deliveryUrl'),
+            graduationSession: this.readJobRowValue(rowMap, 'graduationSession'),
+            referralCode: this.readJobRowValue(rowMap, 'referralCode'),
+            announcementTitle: this.readJobRowValue(rowMap, 'announcementTitle'),
+            industry: this.readJobRowValue(rowMap, 'industry'),
+            entryDate: this.readJobRowDateValue(rowMap, 'entryDate'),
           }),
         });
       } catch (error) {
@@ -341,42 +379,62 @@ export class AdminBulkService {
     }
   }
 
-  private assertJobExcelHeaders(headers: SheetCellValue[]) {
-    const normalizedHeaders = headers.map((item) => this.normalizeHeader(item));
-    const expectedHeaders = Array.from(JOB_EXCEL_HEADERS);
-    const isValid = normalizedHeaders.length >= expectedHeaders.length
-      && expectedHeaders.every((header, index) => {
-        const aliases = JOB_EXCEL_HEADER_ALIASES[header] ?? [header];
-        return aliases.includes(normalizedHeaders[index] ?? '');
-      });
+  private resolveJobHeaderIndexMap(headers: SheetCellValue[]) {
+    const normalizedHeaderIndexMap = new Map<string, number>();
+    headers.forEach((headerValue, index) => {
+      const normalizedHeader = this.normalizeHeader(headerValue);
+      if (!normalizedHeader || normalizedHeaderIndexMap.has(normalizedHeader)) {
+        return;
+      }
+      normalizedHeaderIndexMap.set(normalizedHeader, index);
+    });
 
-    if (!isValid) {
-      throw new BadRequestException(`Excel 模板列头不匹配，请严格使用系统下载模板。正确列头顺序为：${expectedHeaders.join('、')}（其中“相关专业”兼容旧列名“毕业届别”）。`);
+    const fieldIndexMap = new Map<JobImportFieldKey, number>();
+    for (const column of JOB_IMPORT_COLUMNS) {
+      const matchedAlias = column.aliases
+        .map((alias) => this.normalizeHeader(alias))
+        .find((alias) => normalizedHeaderIndexMap.has(alias));
+      if (matchedAlias) {
+        fieldIndexMap.set(column.key, normalizedHeaderIndexMap.get(matchedAlias)!);
+      }
     }
+
+    const missingRequiredHeaders = JOB_IMPORT_COLUMNS
+      .filter((column) => column.required && !fieldIndexMap.has(column.key))
+      .map((column) => column.header);
+    if (missingRequiredHeaders.length) {
+      const detectedHeaders = headers.map((item) => this.normalizeHeader(item)).filter(Boolean);
+      throw new BadRequestException(
+        `Excel 缺少必填列头：${missingRequiredHeaders.join('、')}。系统已识别列头：${detectedHeaders.join('、') || '无'}。`,
+      );
+    }
+
+    return fieldIndexMap;
   }
 
-  private toSheetRowMap(headers: readonly string[], row: SheetCellValue[]) {
-    return new Map(headers.map((header, index) => [header, row[index]]));
+  private toJobSheetRowMap(headerIndexMap: Map<JobImportFieldKey, number>, row: SheetCellValue[]) {
+    return new Map(Array.from(headerIndexMap.entries()).map(([key, index]) => [key, row[index]]));
   }
 
   private toCsvRowMap(headers: string[], row: string[]) {
     return new Map(headers.map((header, index) => [header.trim(), row[index]?.trim() ?? '']));
   }
 
-  private readRowValue(rowMap: Map<string, SheetCellValue>, key: string) {
+  private readJobRowValue(rowMap: Map<JobImportFieldKey, SheetCellValue>, key: JobImportFieldKey) {
     return this.normalizeCellText(rowMap.get(key));
   }
 
-  private readRowDateValue(rowMap: Map<string, SheetCellValue>, key: string) {
+  private readJobRowDateValue(rowMap: Map<JobImportFieldKey, SheetCellValue>, key: JobImportFieldKey) {
+    const column = JOB_IMPORT_COLUMNS.find((item) => item.key === key);
     try {
-      return normalizeJobTextDate(rowMap.get(key), { fieldLabel: key, emptyValue: '' }) || '';
+      return normalizeJobTextDate(rowMap.get(key), { fieldLabel: column?.header ?? key, emptyValue: '' }) || '';
     } catch (error) {
-      throw new BadRequestException(error instanceof Error ? error.message : `${key}格式不正确`);
+      throw new BadRequestException(error instanceof Error ? error.message : `${column?.header ?? key}格式不正确`);
     }
   }
 
   private normalizeHeader(value: SheetCellValue) {
-    return this.normalizeCellText(value).replace(/^\uFEFF/, '');
+    return this.normalizeCellText(value).replace(/^\uFEFF/, '').replace(/\s+/g, '');
   }
 
   private normalizeCellText(value: SheetCellValue) {

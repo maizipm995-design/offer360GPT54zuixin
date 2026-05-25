@@ -1,11 +1,21 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
+import { RedisService } from '../../common/redis/redis.service';
+import {
+  getJobsRiskConfig,
+  saveJobsRiskConfig,
+} from '../../common/utils/jobs-risk-config';
 import { getMembershipRemainingDays } from '../../common/utils/membership-time';
 import { normalizeStoredMemberLevel, resolveMembershipState } from '../../common/utils/member-access';
 import { PrismaService } from '../../prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { ADMIN_PERMISSION_CATALOG, ADMIN_PERMISSION_KEY_SET } from './admin-permissions';
+import type { CurrentAdminPayload } from './decorators/current-admin.decorator';
+
+const JOB_RISK_FREEZE_REGISTRY_KEY = 'jobs:freeze:registry';
+const JOB_RISK_CONTROL_REGISTRY_KEY = 'jobs:risk:control:registry';
+const JOB_RISK_REVIEW_STATUS = ['not_required', 'pending', 'processing', 'resolved', 'dismissed'] as const;
 
 interface PaginationInput {
   page: number;
@@ -13,15 +23,47 @@ interface PaginationInput {
   skip: number;
 }
 
+type JobAccessLogAdminDelegate = {
+  findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, any>>>;
+  findUnique: (args: Record<string, unknown>) => Promise<Record<string, any> | null>;
+  count: (args?: Record<string, unknown>) => Promise<number>;
+  update: (args: Record<string, unknown>) => Promise<Record<string, any>>;
+};
+type JobsRiskFreezeScope = 'user' | 'ip' | 'device';
+type JobsRiskControlType = 'cooldown' | 'restrict' | 'freeze';
+type ParsedJobsRiskFreezePayload = {
+  reason: string;
+  createdAt?: string | null;
+  source: 'automatic' | 'manual';
+  ruleKey?: string | null;
+  evidence?: string | null;
+  level?: 1 | 2 | 3 | 4 | null;
+  controlType?: JobsRiskControlType | null;
+};
+
 @Injectable()
 export class AdminGovernanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly paymentsService: PaymentsService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private get jobAccessLogDelegate(): JobAccessLogAdminDelegate {
+    return (this.prisma as PrismaService & { jobAnnouncementAccessLog: JobAccessLogAdminDelegate }).jobAnnouncementAccessLog;
+  }
 
   getPermissionCatalog() {
     return ADMIN_PERMISSION_CATALOG;
+  }
+
+  async getJobsRiskConfig() {
+    return getJobsRiskConfig(this.prisma, { forceRefresh: true });
+  }
+
+  async updateJobsRiskConfig(body: Record<string, unknown>) {
+    const rawConfig = (body.config ?? body) as Record<string, unknown>;
+    return saveJobsRiskConfig(this.prisma, rawConfig);
   }
 
   async getAdminUsers(query: Record<string, string | undefined>) {
@@ -399,6 +441,360 @@ export class AdminGovernanceService {
     };
   }
 
+  async getJobsRiskControls(query: Record<string, string | undefined>) {
+    const pagination = this.getPagination(query);
+    const keyword = query.keyword?.trim();
+    const where: Record<string, unknown> = {};
+    const and: Array<Record<string, unknown>> = [];
+
+    if (keyword) {
+      and.push({
+        OR: [
+          { jobId: { contains: keyword } },
+          { userId: { contains: keyword } },
+          { accessTokenId: { contains: keyword } },
+          { failureReason: { contains: keyword } },
+          { ip: { contains: keyword } },
+          { deviceId: { contains: keyword } },
+          { sessionId: { contains: keyword } },
+          { user: { is: { phone: { contains: keyword } } } },
+        ],
+      });
+    }
+    if (query.action) {
+      and.push({ action: query.action });
+    }
+    if (query.requestStatus) {
+      and.push({ requestStatus: query.requestStatus });
+    }
+    if (query.userId) {
+      and.push({ userId: query.userId });
+    }
+    if (query.limitHit === 'true') {
+      and.push({ limitHit: true });
+    }
+    if (query.riskHit === 'true') {
+      and.push({ riskHit: true });
+    }
+    if (query.reviewStatus && JOB_RISK_REVIEW_STATUS.includes(query.reviewStatus as (typeof JOB_RISK_REVIEW_STATUS)[number])) {
+      and.push({ reviewStatus: query.reviewStatus });
+    }
+    if (query.scope === 'user') {
+      and.push({ userId: { not: null } });
+    }
+    if (query.scope === 'ip') {
+      and.push({ ip: { not: null } });
+    }
+    if (query.scope === 'device') {
+      and.push({ deviceId: { not: null } });
+    }
+    if (query.riskLevel) {
+      const riskLevel = this.readOptionalNumber(query.riskLevel, 0);
+      if ([1, 2, 3, 4].includes(riskLevel)) {
+        and.push(this.buildJobsRiskLevelWhere(riskLevel as 1 | 2 | 3 | 4));
+      }
+    }
+    if (query.frozenOnly === 'true') {
+      and.push({
+        OR: [
+          { riskHit: true },
+          { requestStatus: 'denied' },
+        ],
+      });
+    }
+
+    if (and.length === 1) {
+      Object.assign(where, and[0]);
+    } else if (and.length > 1) {
+      where.AND = and;
+    }
+
+    const activeControls = await this.getActiveJobsRiskControls();
+    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [list, total, totalLast24h, deniedLast24h, limitLast24h, riskLast24h, pendingReviewCount, processingReviewCount] = await Promise.all([
+      this.jobAccessLogDelegate.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              phone: true,
+            },
+          },
+          reviewedByAdminUser: {
+            select: {
+              id: true,
+              realName: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: pagination.skip,
+        take: pagination.limit,
+      }),
+      this.jobAccessLogDelegate.count({ where }),
+      this.jobAccessLogDelegate.count({ where: { createdAt: { gte: last24Hours } } }),
+      this.jobAccessLogDelegate.count({ where: { createdAt: { gte: last24Hours }, requestStatus: 'denied' } }),
+      this.jobAccessLogDelegate.count({ where: { createdAt: { gte: last24Hours }, limitHit: true } }),
+      this.jobAccessLogDelegate.count({ where: { createdAt: { gte: last24Hours }, riskHit: true } }),
+      this.jobAccessLogDelegate.count({ where: { reviewStatus: 'pending' } }),
+      this.jobAccessLogDelegate.count({ where: { reviewStatus: 'processing' } }),
+    ]);
+
+    return {
+      summary: {
+        totalLast24h,
+        deniedLast24h,
+        limitLast24h,
+        riskLast24h,
+        activeFreezeCount: activeControls.filter((item) => item.controlType === 'freeze').length,
+        activeControlCount: activeControls.length,
+        pendingReviewCount,
+        processingReviewCount,
+      },
+      activeFreezes: activeControls.filter((item) => item.controlType === 'freeze'),
+      activeControls,
+      list: list.map((item: Record<string, any>) => this.toJobsRiskLogItem(item, activeControls)),
+      pagination: this.toPagination(total, pagination),
+    };
+  }
+
+  async getJobsRiskControlDetail(id: string) {
+    const accessLogId = this.readBigIntId(id, '风控记录不存在');
+    const activeControls = await this.getActiveJobsRiskControls();
+    const detail = await this.jobAccessLogDelegate.findUnique({
+      where: { id: accessLogId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            phone: true,
+          },
+        },
+        reviewedByAdminUser: {
+          select: {
+            id: true,
+            realName: true,
+            username: true,
+          },
+        },
+      },
+    });
+
+    if (!detail) {
+      throw new NotFoundException('风控记录不存在');
+    }
+
+    const relatedOr = [
+      detail.userId ? { userId: detail.userId } : undefined,
+      detail.ip ? { ip: detail.ip } : undefined,
+      detail.deviceId ? { deviceId: detail.deviceId } : undefined,
+    ].filter(Boolean) as Array<Record<string, unknown>>;
+    const relatedWhere: Record<string, unknown> = relatedOr.length ? { OR: relatedOr } : { id: accessLogId };
+    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [relatedLogs, sameUserLast24h, sameIpLast24h, sameDeviceLast24h, recentScopeRows] = await Promise.all([
+      this.jobAccessLogDelegate.findMany({
+        where: relatedWhere,
+        include: {
+          user: { select: { id: true, phone: true } },
+          reviewedByAdminUser: { select: { id: true, realName: true, username: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+      }),
+      detail.userId ? this.jobAccessLogDelegate.count({ where: { userId: detail.userId, createdAt: { gte: last24Hours } } }) : 0,
+      detail.ip ? this.jobAccessLogDelegate.count({ where: { ip: detail.ip, createdAt: { gte: last24Hours } } }) : 0,
+      detail.deviceId ? this.jobAccessLogDelegate.count({ where: { deviceId: detail.deviceId, createdAt: { gte: last24Hours } } }) : 0,
+      this.jobAccessLogDelegate.findMany({
+        where: relatedOr.length ? { AND: [relatedWhere, { createdAt: { gte: last24Hours } }] } : { id: accessLogId },
+        select: {
+          userId: true,
+          ip: true,
+          deviceId: true,
+          failureReason: true,
+        },
+        take: 200,
+      }),
+    ]);
+
+    const relatedControls = activeControls.filter((item) =>
+      (item.scope === 'user' && item.identifier === detail.userId)
+      || (item.scope === 'ip' && item.identifier === detail.ip)
+      || (item.scope === 'device' && item.identifier === detail.deviceId));
+
+    return {
+      item: this.toJobsRiskLogItem(detail as Record<string, any>, activeControls),
+      activeFreezes: relatedControls.filter((item) => item.controlType === 'freeze'),
+      activeControls: relatedControls,
+      relatedLogs: relatedLogs.map((item) => this.toJobsRiskLogItem(item as Record<string, any>, activeControls)),
+      signals: {
+        sameUserLast24h,
+        sameIpLast24h,
+        sameDeviceLast24h,
+        distinctIpsForUserLast24h: detail.userId ? new Set(recentScopeRows.map((item) => item.ip).filter(Boolean)).size : 0,
+        distinctUsersForIpLast24h: detail.ip ? new Set(recentScopeRows.map((item) => item.userId).filter(Boolean)).size : 0,
+        distinctUsersForDeviceLast24h: detail.deviceId ? new Set(recentScopeRows.map((item) => item.userId).filter(Boolean)).size : 0,
+        recentRiskReasons: Array.from(new Set(
+          recentScopeRows
+            .map((item) => this.resolveJobsRiskReasonCategory(item.failureReason))
+            .filter((item) => item !== 'other'),
+        )),
+      },
+    };
+  }
+
+  async reviewJobsRiskControl(id: string, body: Record<string, unknown>, currentAdmin: CurrentAdminPayload) {
+    const accessLogId = this.readBigIntId(id, '风控记录不存在');
+    const reviewStatus = this.readRequiredString(body.reviewStatus, '审核状态不能为空');
+    if (!JOB_RISK_REVIEW_STATUS.includes(reviewStatus as (typeof JOB_RISK_REVIEW_STATUS)[number])) {
+      throw new BadRequestException('审核状态不合法');
+    }
+
+    const updated = await this.jobAccessLogDelegate.update({
+      where: { id: accessLogId },
+      data: {
+        reviewStatus,
+        reviewConclusion: this.readOptionalString(body.reviewConclusion) || null,
+        reviewNote: this.readOptionalString(body.reviewNote) || null,
+        reviewedByAdminUserId: currentAdmin.adminId,
+        reviewedAt: new Date(),
+      },
+      include: {
+        user: { select: { id: true, phone: true } },
+        reviewedByAdminUser: { select: { id: true, realName: true, username: true } },
+      },
+    });
+
+    const activeControls = await this.getActiveJobsRiskControls();
+    return this.toJobsRiskLogItem(updated as Record<string, any>, activeControls);
+  }
+
+  async batchReviewJobsRiskControls(body: Record<string, unknown>, currentAdmin: CurrentAdminPayload) {
+    const logIds = this.readStringArray(body.logIds);
+    if (!logIds.length) {
+      throw new BadRequestException('请至少选择一条风控记录');
+    }
+    const reviewStatus = this.readRequiredString(body.reviewStatus, '审核状态不能为空');
+    if (!JOB_RISK_REVIEW_STATUS.includes(reviewStatus as (typeof JOB_RISK_REVIEW_STATUS)[number])) {
+      throw new BadRequestException('审核状态不合法');
+    }
+    const accessLogIds = Array.from(new Set(logIds.map((item) => this.readBigIntId(item, '风控记录不存在'))));
+
+    const updated = await this.prisma.jobAnnouncementAccessLog.updateMany({
+      where: { id: { in: accessLogIds } },
+      data: {
+        reviewStatus,
+        reviewConclusion: this.readOptionalString(body.reviewConclusion) || null,
+        reviewNote: this.readOptionalString(body.reviewNote) || null,
+        reviewedByAdminUserId: currentAdmin.adminId,
+        reviewedAt: new Date(),
+      },
+    });
+
+    return {
+      updatedCount: updated.count,
+      logIds: accessLogIds.map((item) => item.toString()),
+      reviewStatus,
+    };
+  }
+
+  async freezeJobsRiskControl(body: Record<string, unknown>, currentAdmin: CurrentAdminPayload) {
+    const scope = this.readRequiredString(body.scope, '冻结范围不能为空');
+    if (!['user', 'ip', 'device'].includes(scope)) {
+      throw new BadRequestException('冻结范围不合法');
+    }
+    const identifier = this.readRequiredString(body.identifier, '冻结标识不能为空');
+    const reason = this.readRequiredString(body.reason, '冻结原因不能为空');
+    const durationSeconds = Math.min(Math.max(this.readOptionalNumber(body.durationSeconds, 3600), 300), 7 * 24 * 60 * 60);
+
+    await this.setJobsRiskFreeze(scope as JobsRiskFreezeScope, identifier, {
+      reason,
+      createdAt: new Date().toISOString(),
+      source: 'manual',
+      ruleKey: 'manual_review',
+      evidence: `admin:${currentAdmin.adminId}`,
+      level: 4,
+      controlType: 'freeze',
+    }, durationSeconds);
+
+    const logIdText = this.readOptionalString(body.logId);
+    if (logIdText) {
+      const accessLogId = this.readBigIntId(logIdText, '风控记录不存在');
+      await this.jobAccessLogDelegate.update({
+        where: { id: accessLogId },
+        data: {
+          reviewStatus: 'resolved',
+          reviewConclusion: `manual_freeze_${scope}`,
+          reviewNote: this.readOptionalString(body.reviewNote) || reason,
+          reviewedByAdminUserId: currentAdmin.adminId,
+          reviewedAt: new Date(),
+        },
+      });
+    }
+
+    return {
+      frozen: true,
+      scope,
+      identifier,
+      durationSeconds,
+      reason,
+    };
+  }
+
+  async unfreezeJobsRiskControl(body: Record<string, unknown>) {
+    const scope = this.readRequiredString(body.scope, '冻结范围不能为空');
+    if (!['user', 'ip', 'device'].includes(scope)) {
+      throw new BadRequestException('冻结范围不合法');
+    }
+    const identifier = this.readRequiredString(body.identifier, '冻结标识不能为空');
+    const controlType = this.readJobsRiskControlType(body.controlType);
+    const controlKey = controlType === 'freeze'
+      ? this.buildJobsFreezeKey(scope as JobsRiskFreezeScope, identifier)
+      : this.buildJobsRiskControlKey(controlType as Exclude<JobsRiskControlType, 'freeze'>, scope as JobsRiskFreezeScope, identifier);
+    await this.redisService.del(controlKey);
+    await this.redisService.srem(controlType === 'freeze' ? JOB_RISK_FREEZE_REGISTRY_KEY : JOB_RISK_CONTROL_REGISTRY_KEY, controlKey);
+    return {
+      unfrozen: true,
+      scope,
+      identifier,
+      controlType,
+    };
+  }
+
+  async batchUnfreezeJobsRiskControls(body: Record<string, unknown>) {
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    if (!rawItems.length) {
+      throw new BadRequestException('请至少选择一个处置对象');
+    }
+
+    const normalizedItems = Array.from(new Map(rawItems.map((rawItem) => {
+      const item = rawItem as Record<string, unknown>;
+      const scope = this.readRequiredString(item.scope, '处置范围不能为空');
+      if (!['user', 'ip', 'device'].includes(scope)) {
+        throw new BadRequestException('处置范围不合法');
+      }
+      const identifier = this.readRequiredString(item.identifier, '处置标识不能为空');
+      const controlType = this.readJobsRiskControlType(item.controlType);
+      return [`${controlType}:${scope}:${identifier}`, { scope, identifier, controlType }];
+    })).values());
+
+    await Promise.all(normalizedItems.map(async (item) => {
+      const controlKey = item.controlType === 'freeze'
+        ? this.buildJobsFreezeKey(item.scope as JobsRiskFreezeScope, item.identifier)
+        : this.buildJobsRiskControlKey(item.controlType as Exclude<JobsRiskControlType, 'freeze'>, item.scope as JobsRiskFreezeScope, item.identifier);
+      await this.redisService.del(controlKey);
+      await this.redisService.srem(item.controlType === 'freeze' ? JOB_RISK_FREEZE_REGISTRY_KEY : JOB_RISK_CONTROL_REGISTRY_KEY, controlKey);
+    }));
+
+    return {
+      unfrozenCount: normalizedItems.length,
+      items: normalizedItems,
+    };
+  }
+
   async updateOrderStatus(id: string, body: Record<string, unknown>) {
     const nextStatus = this.readRequiredString(body.payStatus, '支付状态不能为空');
     if (!['paid', 'closed', 'refunded'].includes(nextStatus)) {
@@ -745,6 +1141,315 @@ export class AdminGovernanceService {
     }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  private readBigIntId(value: string, message: string) {
+    if (!/^\d+$/.test(value.trim())) {
+      throw new NotFoundException(message);
+    }
+    return BigInt(value.trim());
+  }
+
+  private readJobsRiskControlType(value: unknown): JobsRiskControlType {
+    const controlType = this.readOptionalString(value) || 'freeze';
+    if (!['cooldown', 'restrict', 'freeze'].includes(controlType)) {
+      throw new BadRequestException('处置类型不合法');
+    }
+    return controlType as JobsRiskControlType;
+  }
+
+  private toJobsRiskLogItem(item: Record<string, any>, activeControls: Array<Record<string, any>>) {
+    const riskProfile = this.resolveJobsRiskProfile({
+      reason: item.failureReason,
+      limitHit: Boolean(item.limitHit),
+      riskHit: Boolean(item.riskHit),
+    });
+    const matchedControls = activeControls.filter((control: Record<string, any>) =>
+      (item.userId && control.scope === 'user' && control.identifier === item.userId)
+      || (item.ip && control.scope === 'ip' && control.identifier === item.ip)
+      || (item.deviceId && control.scope === 'device' && control.identifier === item.deviceId));
+    return {
+      id: item.id.toString(),
+      jobId: item.jobId,
+      userId: item.userId,
+      userPhone: item.user?.phone ?? '',
+      membershipId: item.membershipId,
+      memberLevel: item.memberLevel,
+      action: item.action,
+      requestStatus: item.requestStatus,
+      accessTokenId: item.accessTokenId,
+      redirectTargetType: item.redirectTargetType,
+      limitHit: item.limitHit,
+      riskHit: item.riskHit,
+      reviewStatus: item.reviewStatus ?? 'not_required',
+      reviewConclusion: item.reviewConclusion ?? null,
+      reviewNote: item.reviewNote ?? null,
+      reviewedAt: item.reviewedAt ?? null,
+      reviewedByAdminName: item.reviewedByAdminUser?.realName || item.reviewedByAdminUser?.username || '',
+      riskReasonCategory: riskProfile.reasonCategory,
+      riskLevel: riskProfile.level,
+      riskLevelLabel: riskProfile.levelLabel,
+      riskDispositionType: riskProfile.dispositionType,
+      riskDispositionLabel: riskProfile.dispositionLabel,
+      riskDispositionSummary: riskProfile.summary,
+      ip: item.ip,
+      userAgent: item.userAgent,
+      deviceId: item.deviceId,
+      sessionId: item.sessionId,
+      failureReason: item.failureReason,
+      consumedAt: item.consumedAt,
+      expiresAt: item.expiresAt,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      activeFreezeScopes: matchedControls
+        .filter((control: Record<string, any>) => control.controlType === 'freeze')
+        .map((control: Record<string, any>) => control.scope),
+      activeControls: matchedControls.map((control: Record<string, any>) => ({
+        key: control.key,
+        scope: control.scope,
+        identifier: control.identifier,
+        controlType: control.controlType,
+        controlLabel: this.resolveJobsRiskControlLabel(control.controlType),
+        level: control.level ?? riskProfile.level,
+        levelLabel: this.resolveJobsRiskLevelLabel((control.level ?? riskProfile.level) as 1 | 2 | 3 | 4),
+        reason: control.reason,
+        ttlSeconds: control.ttlSeconds,
+      })),
+    };
+  }
+
+  private resolveJobsRiskProfile(input: { reason?: string | null; limitHit: boolean; riskHit: boolean }) {
+    const text = input.reason?.trim() || '';
+    const reasonCategory = this.resolveJobsRiskReasonCategory(text);
+    if (text.includes('命中多个异常规则') || text.includes('人工审核')) {
+      return {
+        level: 4 as const,
+        levelLabel: this.resolveJobsRiskLevelLabel(4),
+        dispositionType: 'freeze' as const,
+        dispositionLabel: this.resolveJobsRiskControlLabel('freeze'),
+        summary: '四级异常，升级人工审核并执行高风险冻结',
+        reasonCategory,
+      };
+    }
+    if (['user_ip_rotation', 'shared_ip_users', 'shared_device_users', 'night_burst'].includes(reasonCategory)) {
+      return {
+        level: 3 as const,
+        levelLabel: this.resolveJobsRiskLevelLabel(3),
+        dispositionType: 'freeze' as const,
+        dispositionLabel: this.resolveJobsRiskControlLabel('freeze'),
+        summary: '三级异常，自动冻结账号 / IP / 设备并等待复核',
+        reasonCategory,
+      };
+    }
+    if (['job_enumeration', 'distinct_job_burst'].includes(reasonCategory) || text.includes('限制查看') || text.includes('额度已达上限')) {
+      return {
+        level: 2 as const,
+        levelLabel: this.resolveJobsRiskLevelLabel(2),
+        dispositionType: 'restrict' as const,
+        dispositionLabel: this.resolveJobsRiskControlLabel('restrict'),
+        summary: '二级异常，限制查看并进入待审核队列',
+        reasonCategory,
+      };
+    }
+    if (reasonCategory === 'page_scan' || input.limitHit || text.includes('冷却')) {
+      return {
+        level: 1 as const,
+        levelLabel: this.resolveJobsRiskLevelLabel(1),
+        dispositionType: 'cooldown' as const,
+        dispositionLabel: this.resolveJobsRiskControlLabel('cooldown'),
+        summary: '一级异常，触发限速冷却并继续观察',
+        reasonCategory,
+      };
+    }
+    return {
+      level: input.riskHit ? (2 as const) : (1 as const),
+      levelLabel: this.resolveJobsRiskLevelLabel(input.riskHit ? 2 : 1),
+      dispositionType: input.riskHit ? ('restrict' as const) : ('cooldown' as const),
+      dispositionLabel: this.resolveJobsRiskControlLabel(input.riskHit ? 'restrict' : 'cooldown'),
+      summary: input.riskHit ? '异常已触发自动处置，建议人工复核' : '轻度异常，建议继续观察',
+      reasonCategory,
+    };
+  }
+
+  private resolveJobsRiskReasonCategory(reason?: string | null) {
+    const text = reason?.trim() || '';
+    if (!text) return 'other';
+    if (text.includes('规律性翻页')) return 'page_scan';
+    if (text.includes('顺序枚举岗位 ID')) return 'job_enumeration';
+    if (text.includes('轮换多个 IP')) return 'user_ip_rotation';
+    if (text.includes('多账号共用同一 IP')) return 'shared_ip_users';
+    if (text.includes('多账号共用同一设备')) return 'shared_device_users';
+    if (text.includes('深夜')) return 'night_burst';
+    if (text.includes('不同岗位')) return 'distinct_job_burst';
+    return 'other';
+  }
+
+  private resolveJobsRiskLevelLabel(level: 1 | 2 | 3 | 4) {
+    return ['一级异常', '二级异常', '三级异常', '四级异常'][level - 1];
+  }
+
+  private resolveJobsRiskControlLabel(controlType: JobsRiskControlType) {
+    if (controlType === 'freeze') return '冻结';
+    if (controlType === 'restrict') return '限制查看';
+    return '冷却观察';
+  }
+
+  private buildJobsRiskLevelWhere(level: 1 | 2 | 3 | 4) {
+    if (level === 1) {
+      return {
+        OR: [
+          { limitHit: true },
+          { failureReason: { contains: '规律性翻页' } },
+          { failureReason: { contains: '冷却' } },
+        ],
+      };
+    }
+    if (level === 2) {
+      return {
+        OR: [
+          { failureReason: { contains: '顺序枚举岗位 ID' } },
+          { failureReason: { contains: '不同岗位' } },
+          { failureReason: { contains: '限制查看' } },
+          { failureReason: { contains: '额度已达上限' } },
+        ],
+      };
+    }
+    if (level === 3) {
+      return {
+        OR: [
+          { failureReason: { contains: '轮换多个 IP' } },
+          { failureReason: { contains: '多账号共用同一 IP' } },
+          { failureReason: { contains: '多账号共用同一设备' } },
+          { failureReason: { contains: '深夜' } },
+        ],
+      };
+    }
+    return {
+      OR: [
+        { failureReason: { contains: '命中多个异常规则' } },
+        { failureReason: { contains: '四级高风险' } },
+      ],
+    };
+  }
+
+  private async getActiveJobsRiskControls() {
+    const [freezeKeys, controlKeys] = await Promise.all([
+      this.redisService.smembers(JOB_RISK_FREEZE_REGISTRY_KEY),
+      this.redisService.smembers(JOB_RISK_CONTROL_REGISTRY_KEY),
+    ]);
+    const allKeys = Array.from(new Set([...freezeKeys, ...controlKeys]));
+    if (!allKeys.length) {
+      return [];
+    }
+
+    const [reasons, ttlList] = await Promise.all([
+      this.redisService.mget(...allKeys),
+      Promise.all(allKeys.map((key) => this.redisService.ttl(key))),
+    ]);
+
+    const staleKeys: string[] = [];
+    const activeList = allKeys.flatMap((key, index) => {
+      const rawValue = reasons[index];
+      const ttlSeconds = ttlList[index];
+      const parsed = this.parseJobsFreezeKey(key);
+      if (!rawValue || ttlSeconds <= 0 || !parsed) {
+        staleKeys.push(key);
+        return [];
+      }
+      const payload = this.parseJobsFreezePayload(rawValue);
+      return [{
+        key,
+        scope: parsed.scope,
+        identifier: parsed.identifier,
+        controlType: parsed.controlType,
+        reason: payload.reason,
+        source: payload.source,
+        ruleKey: payload.ruleKey ?? null,
+        evidence: payload.evidence ?? null,
+        createdAt: payload.createdAt ?? null,
+        level: payload.level ?? (parsed.controlType === 'freeze' ? 3 : parsed.controlType === 'restrict' ? 2 : 1),
+        ttlSeconds,
+      }];
+    });
+
+    if (staleKeys.length) {
+      const freezeStaleKeys = staleKeys.filter((key) => key.startsWith('jobs:freeze:'));
+      const controlStaleKeys = staleKeys.filter((key) => key.startsWith('jobs:risk:control:'));
+      if (freezeStaleKeys.length) {
+        await this.redisService.srem(JOB_RISK_FREEZE_REGISTRY_KEY, ...freezeStaleKeys);
+      }
+      if (controlStaleKeys.length) {
+        await this.redisService.srem(JOB_RISK_CONTROL_REGISTRY_KEY, ...controlStaleKeys);
+      }
+    }
+
+    return activeList.sort((a, b) => a.level - b.level || a.ttlSeconds - b.ttlSeconds);
+  }
+
+  private buildJobsFreezeKey(scope: 'user' | 'ip' | 'device', identifier: string) {
+    return `jobs:freeze:${scope}:${identifier}`;
+  }
+
+  private buildJobsRiskControlKey(controlType: Exclude<JobsRiskControlType, 'freeze'>, scope: 'user' | 'ip' | 'device', identifier: string) {
+    return `jobs:risk:control:${controlType}:${scope}:${identifier}`;
+  }
+
+  private parseJobsFreezePayload(rawValue: string): ParsedJobsRiskFreezePayload {
+    try {
+      const parsed = JSON.parse(rawValue) as Partial<ParsedJobsRiskFreezePayload>;
+      return {
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : rawValue,
+        createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : null,
+        source: parsed.source === 'manual' ? 'manual' : 'automatic',
+        ruleKey: typeof parsed.ruleKey === 'string' ? parsed.ruleKey : null,
+        evidence: typeof parsed.evidence === 'string' ? parsed.evidence : null,
+        level: [1, 2, 3, 4].includes(Number(parsed.level)) ? Number(parsed.level) as 1 | 2 | 3 | 4 : null,
+        controlType: parsed.controlType === 'freeze' || parsed.controlType === 'restrict' || parsed.controlType === 'cooldown'
+          ? parsed.controlType
+          : null,
+      };
+    } catch {
+      return {
+        reason: rawValue,
+        createdAt: null,
+        source: 'automatic',
+        ruleKey: null,
+        evidence: null,
+        level: null,
+        controlType: null,
+      };
+    }
+  }
+
+  private async setJobsRiskFreeze(
+    scope: JobsRiskFreezeScope,
+    identifier: string,
+    payload: ParsedJobsRiskFreezePayload,
+    durationSeconds: number,
+  ) {
+    const freezeKey = this.buildJobsFreezeKey(scope, identifier);
+    await this.redisService.set(freezeKey, JSON.stringify(payload), durationSeconds);
+    await this.redisService.sadd(JOB_RISK_FREEZE_REGISTRY_KEY, freezeKey);
+  }
+
+  private parseJobsFreezeKey(key: string): { scope: JobsRiskFreezeScope; identifier: string; controlType: JobsRiskControlType } | null {
+    const freezeMatched = key.match(/^jobs:freeze:(user|ip|device):(.+)$/);
+    if (freezeMatched) {
+      return {
+        scope: freezeMatched[1] as JobsRiskFreezeScope,
+        identifier: freezeMatched[2],
+        controlType: 'freeze',
+      };
+    }
+    const controlMatched = key.match(/^jobs:risk:control:(cooldown|restrict):(user|ip|device):(.+)$/);
+    if (!controlMatched) {
+      return null;
+    }
+    return {
+      controlType: controlMatched[1] as JobsRiskControlType,
+      scope: controlMatched[2] as JobsRiskFreezeScope,
+      identifier: controlMatched[3],
+    };
   }
 
   private readRequiredStringArray(value: unknown, message: string) {

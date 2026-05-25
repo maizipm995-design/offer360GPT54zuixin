@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { BriefcaseBusiness, ChevronDown, Crown, GraduationCap, LogOut, Map, Sparkles, UserRound } from 'lucide-react';
+import { ChevronDown, Crown, LogOut } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
+import { SiteDesktopNavigation, SiteMobileNavigation, getSiteMobileTitle } from '@/components/layout/site-navigation';
 import { Button } from '@/components/ui/button';
 import { clientFetch } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -13,57 +14,38 @@ import { AuthUser, PersonalOverview } from '@/types';
 
 const BRAND_LOGO_URL = 'https://i.postimg.cc/h4scGvF6/sun-lao-shilogo-64X64.png';
 
-const navs = [
-  { href: '/', label: '名企校招', icon: GraduationCap },
-  { href: '/resume-optimizer', label: '简历优化', icon: Sparkles },
-  { href: '/services', label: '求职服务', icon: BriefcaseBusiness },
-  { href: '/career-journey', label: '我的求职之路', icon: Map },
-  { href: '/personal-center', label: '个人中心', icon: UserRound },
-];
-
-const desktopPillClass =
-  'inline-flex h-9 min-w-[100px] items-center justify-center rounded-full px-4 text-sm font-semibold leading-none transition-all duration-200';
-const desktopNavIdleClass = 'text-slate-600 hover:bg-brand/10 hover:text-brand hover:shadow-[0_6px_16px_rgba(255,128,2,0.12)]';
-const desktopNavActiveClass = 'bg-brand text-white shadow-[0_8px_18px_rgba(255,128,2,0.18)] hover:bg-brand-dark';
-const desktopPrimaryActionClass = 'h-9 min-w-[120px] rounded-full px-4 text-sm font-semibold shadow-[0_8px_18px_rgba(255,128,2,0.18)]';
+const desktopPrimaryActionClass =
+  'h-9 rounded-full px-3 text-[13px] font-semibold shadow-[0_8px_18px_rgba(255,128,2,0.16)]';
 const mobileTopActionClass =
   'inline-flex h-8 min-w-[80px] items-center justify-center rounded-full px-3 text-[11px] font-semibold leading-none transition-all duration-200';
 
-function getMobileTitle(pathname: string) {
-  if (pathname.startsWith('/membership')) return '开通会员';
-  if (pathname.startsWith('/resume-optimizer')) return '简历优化';
-  if (pathname.startsWith('/services')) return '求职服务';
-  if (pathname.startsWith('/career-journey')) return '我的求职之路';
-  if (pathname.startsWith('/personal-center')) return '个人中心';
-  if (pathname.startsWith('/login')) return '登录';
-  return '名企校招';
-}
-
 function getUserDisplayName(name?: string | null, phone?: string | null) {
   return (name || phone || '个人中心').trim();
-}
-
-function isNavActive(pathname: string, href: string) {
-  if (href === '/') {
-    return pathname === '/';
-  }
-  return pathname.startsWith(href);
 }
 
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const { token, user, updateUser, logout } = useAuthStore();
-  const mobileTitle = getMobileTitle(pathname);
+  const mobileTitle = getSiteMobileTitle(pathname);
   const [menuOpen, setMenuOpen] = useState(false);
   const desktopMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const lastSyncedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
+    if (lastSyncedTokenRef.current === token) return;
+
+    lastSyncedTokenRef.current = token;
+    let cancelled = false;
+    let timer: number | null = null;
 
     const syncFromOverview = async () => {
       const overview = await clientFetch<PersonalOverview>('/me/overview', {}, token);
+      if (cancelled) {
+        return;
+      }
       updateUser({
         phone: overview.phone,
         name: overview.profile?.name || user?.name || '',
@@ -79,6 +61,9 @@ export function SiteHeader() {
 
     const syncFromAuthMe = async () => {
       const authUser = await clientFetch<AuthUser & { profile?: { name?: string | null } | null }>('/auth/me', {}, token);
+      if (cancelled) {
+        return;
+      }
       updateUser({
         phone: authUser.phone,
         name: authUser.profile?.name || user?.name || '',
@@ -92,8 +77,24 @@ export function SiteHeader() {
       });
     };
 
-    syncFromOverview().catch(() => syncFromAuthMe().catch(() => undefined));
-  }, [token, updateUser, user?.name]);
+    const syncUserState = () => {
+      void syncFromOverview().catch(() => syncFromAuthMe().catch(() => undefined));
+    };
+
+    const hasPersistedUserState = Boolean(user?.phone && user?.memberRoleCode && Array.isArray(user?.permissionKeys));
+    if (hasPersistedUserState) {
+      timer = window.setTimeout(syncUserState, 1200);
+    } else {
+      syncUserState();
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [token, updateUser, user?.memberRoleCode, user?.name, user?.permissionKeys, user?.phone]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -107,6 +108,10 @@ export function SiteHeader() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   const userDisplayName = useMemo(() => getUserDisplayName(user?.name, user?.phone), [user?.name, user?.phone]);
   const vipRemainingDays = user?.isMember ? Math.max(user.membershipRemainingDays ?? 1, 1) : 0;
@@ -133,10 +138,10 @@ export function SiteHeader() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto hidden h-[56px] max-w-[1366px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 px-4 md:grid lg:px-6">
-          <div className="min-w-0">
-            <Link prefetch={false} href="/" className="inline-flex items-center gap-2 whitespace-nowrap">
+      <header className="fixed inset-x-0 top-0 z-[120] border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto hidden h-[64px] w-[92%] max-w-[1366px] min-w-0 items-center gap-3 px-2 lg:flex xl:px-4">
+          <div className="w-[148px] shrink-0 xl:w-[168px]">
+            <Link href="/" className="inline-flex items-center gap-2 whitespace-nowrap">
               <span className="flex h-[45px] w-[45px] items-center justify-center overflow-hidden rounded-xl bg-white p-0">
                 <Image
                   src={BRAND_LOGO_URL}
@@ -155,35 +160,23 @@ export function SiteHeader() {
             </Link>
           </div>
 
-          <nav className="flex items-center justify-center gap-1.5">
-            {navs.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                prefetch={false}
-                className={cn(
-                  desktopPillClass,
-                  isNavActive(pathname, item.href) ? desktopNavActiveClass : desktopNavIdleClass,
-                )}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
+          <div className="min-w-0 flex-1">
+            <SiteDesktopNavigation pathname={pathname} />
+          </div>
 
-          <div className="flex min-w-0 items-center justify-self-end gap-2">
+          <div className="ml-auto flex w-[250px] shrink-0 items-center justify-end gap-1.5 xl:w-[276px]">
             <Button
-              className={cn(desktopPrimaryActionClass, 'hover:bg-brand-dark')}
+              className={cn(desktopPrimaryActionClass, 'w-[124px] px-2.5 hover:bg-brand-dark xl:w-[136px]')}
               onClick={handleMembershipClick}
             >
               <Crown className="mr-1.5 h-4 w-4" />
-              {vipLabel}
+              <span className="truncate">{vipLabel}</span>
             </Button>
             {user ? (
               <div className="relative" ref={desktopMenuRef}>
                 <button
                   type="button"
-                  className="inline-flex h-9 min-w-[100px] max-w-[180px] items-center justify-center gap-2 rounded-full border border-slate-200 px-4 text-sm font-semibold leading-none text-slate-700 transition-all duration-200 hover:border-brand hover:bg-brand/10 hover:text-brand hover:shadow-[0_6px_16px_rgba(255,128,2,0.12)]"
+                  className="inline-flex h-9 w-[112px] items-center justify-center gap-2 rounded-full border border-slate-200 px-4 text-sm font-semibold leading-none text-slate-700 transition-all duration-200 hover:border-brand hover:bg-brand/10 hover:text-brand hover:shadow-[0_6px_16px_rgba(255,128,2,0.12)] xl:w-[132px]"
                   onClick={() => setMenuOpen((prev) => !prev)}
                 >
                   <span className="truncate">{userDisplayName}</span>
@@ -203,15 +196,15 @@ export function SiteHeader() {
                 ) : null}
               </div>
             ) : (
-              <Button className={cn(desktopPrimaryActionClass, 'hover:bg-brand-dark')} onClick={() => router.push('/login')}>
+              <Button className={cn(desktopPrimaryActionClass, 'w-[112px] hover:bg-brand-dark xl:w-[132px]')} onClick={() => router.push('/login')}>
                 登录/注册
               </Button>
             )}
           </div>
         </div>
 
-        <div className="mx-auto flex h-[48px] max-w-[1366px] items-center justify-between gap-2 px-3 md:hidden">
-          <Link prefetch={false} href="/" className="inline-flex min-w-0 max-w-[140px] items-center gap-1.5">
+        <div className="mx-auto flex h-[48px] max-w-[1366px] items-center justify-between gap-2 px-3 lg:hidden">
+          <Link href="/" className="inline-flex min-w-0 max-w-[140px] items-center gap-1.5">
             <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-0">
               <Image
                 src={BRAND_LOGO_URL}
@@ -268,30 +261,8 @@ export function SiteHeader() {
         </div>
       </header>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur md:hidden">
-        <div className="grid grid-cols-5 gap-1 px-2 py-2">
-          {navs.map((item) => {
-            const Icon = item.icon;
-            const active = isNavActive(pathname, item.href);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                prefetch={false}
-                className={cn(
-                  'flex flex-col items-center justify-center gap-1 rounded-xl px-2.5 py-2 text-[10px] font-bold transition-all duration-200',
-                  active
-                    ? 'bg-brand text-white shadow-[0_8px_18px_rgba(255,128,2,0.18)]'
-                    : 'text-slate-500 hover:bg-brand/10 hover:text-brand',
-                )}
-              >
-                <Icon className="h-5 w-5" />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </div>
+      <nav className="fixed inset-x-0 bottom-0 z-[110] border-t border-slate-200 bg-white/95 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+        <SiteMobileNavigation pathname={pathname} />
       </nav>
     </>
   );

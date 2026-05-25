@@ -39,6 +39,17 @@ import {
   type HtmlContentLocationDefinition,
 } from '../memberships/html-content-locations';
 
+type JobDeduplicationGroupDetail = {
+  companyFullName: string;
+  workLocation: string;
+  jobName: string;
+  announcementUrl: string;
+  deliveryUrl: string;
+  keepRecord: ReturnType<AdminService['toAdminJobItem']>;
+  removeRecords: Array<ReturnType<AdminService['toAdminJobItem']>>;
+  duplicateCount: number;
+};
+
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 interface PaginationInput {
@@ -206,6 +217,54 @@ export class AdminService {
     await this.prisma.jobAnnouncement.delete({ where: { id } });
     clearAllJobsRecommendationCache();
     return { deleted: true };
+  }
+
+  async getJobsDeduplicationPreview() {
+    const jobs = await this.prisma.jobAnnouncement.findMany({
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+    });
+    const groups = this.buildJobDeduplicationGroups(jobs);
+
+    return {
+      scannedCount: jobs.length,
+      duplicateGroupCount: groups.length,
+      duplicateRecordCount: groups.reduce((sum: number, group: JobDeduplicationGroupDetail) => sum + group.duplicateCount, 0),
+      pendingDeleteCount: groups.reduce((sum: number, group: JobDeduplicationGroupDetail) => sum + group.removeRecords.length, 0),
+      groups,
+    };
+  }
+
+  async executeJobsDeduplication() {
+    const jobs = await this.prisma.jobAnnouncement.findMany({
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+    });
+    const groups = this.buildJobDeduplicationGroups(jobs);
+    const deleteIds = groups.flatMap((group: JobDeduplicationGroupDetail) => group.removeRecords.map((item) => item.id));
+
+    if (!deleteIds.length) {
+      return {
+        scannedCount: jobs.length,
+        duplicateGroupCount: 0,
+        duplicateRecordCount: 0,
+        keptCount: 0,
+        deletedCount: 0,
+        groups: [],
+      };
+    }
+
+    const deleteResult = await this.prisma.jobAnnouncement.deleteMany({
+      where: { id: { in: deleteIds } },
+    });
+    clearAllJobsRecommendationCache();
+
+    return {
+      scannedCount: jobs.length,
+      duplicateGroupCount: groups.length,
+        duplicateRecordCount: groups.reduce((sum: number, group: JobDeduplicationGroupDetail) => sum + group.duplicateCount, 0),
+      keptCount: groups.length,
+      deletedCount: deleteResult.count,
+      groups,
+    };
   }
 
   async getUsers(query: Record<string, string | undefined>) {
@@ -1060,6 +1119,61 @@ export class AdminService {
     };
   }
 
+  private buildJobDeduplicationGroups(jobs: Prisma.JobAnnouncementGetPayload<{}>[]): JobDeduplicationGroupDetail[] {
+    const groups = new Map<string, Prisma.JobAnnouncementGetPayload<{}>[]>();
+
+    jobs.forEach((job) => {
+      const companyFullName = this.normalizeJobDeduplicationField(job.companyFullName);
+      const workLocation = this.normalizeJobDeduplicationField(job.workLocation);
+      const jobName = this.normalizeJobDeduplicationField(job.jobName);
+      const announcementUrl = this.normalizeJobDeduplicationField(job.announcementUrl);
+      const deliveryUrl = this.normalizeJobDeduplicationField(job.deliveryUrl);
+      if (!companyFullName && !workLocation && !jobName && !announcementUrl && !deliveryUrl) {
+        return;
+      }
+      const key = `${companyFullName}__${workLocation}__${jobName}__${announcementUrl}__${deliveryUrl}`;
+      const existing = groups.get(key) ?? [];
+      existing.push(job);
+      groups.set(key, existing);
+    });
+
+    return Array.from(groups.values())
+      .filter((items) => items.length >= 2)
+      .map((items) => {
+        const sortedItems = [...items].sort((left, right) => {
+          if (right.updatedAt.getTime() !== left.updatedAt.getTime()) {
+            return right.updatedAt.getTime() - left.updatedAt.getTime();
+          }
+          if (right.createdAt.getTime() !== left.createdAt.getTime()) {
+            return right.createdAt.getTime() - left.createdAt.getTime();
+          }
+          return right.id.localeCompare(left.id);
+        });
+        const [keepItem, ...removeItems] = sortedItems;
+
+        return {
+          companyFullName: this.normalizeJobDeduplicationField(keepItem?.companyFullName),
+          workLocation: this.normalizeJobDeduplicationField(keepItem?.workLocation),
+          jobName: this.normalizeJobDeduplicationField(keepItem?.jobName),
+          announcementUrl: this.normalizeJobDeduplicationField(keepItem?.announcementUrl),
+          deliveryUrl: this.normalizeJobDeduplicationField(keepItem?.deliveryUrl),
+          keepRecord: this.toAdminJobItem(keepItem),
+          removeRecords: removeItems.map((item) => this.toAdminJobItem(item)),
+          duplicateCount: sortedItems.length,
+        };
+      })
+      .sort((left, right) => {
+        if (right.duplicateCount !== left.duplicateCount) {
+          return right.duplicateCount - left.duplicateCount;
+        }
+        return new Date(right.keepRecord.updatedAt).getTime() - new Date(left.keepRecord.updatedAt).getTime();
+      });
+  }
+
+  private normalizeJobDeduplicationField(value: string | null | undefined) {
+    return String(value ?? '').trim();
+  }
+
   private buildJobsWhere(query: Record<string, string | undefined>): Prisma.JobAnnouncementWhereInput {
     const keyword = query.keyword?.trim();
     const and: Prisma.JobAnnouncementWhereInput[] = [];
@@ -1069,7 +1183,7 @@ export class AdminService {
         OR: [
           { companyFullName: { contains: keyword } },
           { jobName: { contains: keyword } },
-          { jobCategory: { contains: keyword } },
+          { majorRequirement: { contains: keyword } },
           { workLocation: { contains: keyword } },
           { announcementTitle: { contains: keyword } },
           { industry: { contains: keyword } },
@@ -1118,12 +1232,12 @@ export class AdminService {
       degreeRequirement: this.readNullableString(body.degreeRequirement) ?? null,
       workLocation: this.readNullableString(body.workLocation) ?? null,
       jobName: this.readNullableString(this.readFirstDefined(body.jobName, body.positionNames)) ?? null,
-      jobCategory: this.readNullableString(this.readFirstDefined(body.jobCategory, body.positionCategory)) ?? null,
+      majorRequirement: this.readNullableString(this.readFirstDefined(body.majorRequirement, body.jobCategory, body.positionCategory)) ?? null,
       recruitmentType: this.readNullableString(this.readFirstDefined(body.recruitmentType, body.jobType)) ?? null,
       deadlineAt: deadlineAt ?? null,
       announcementUrl: this.readNullableString(body.announcementUrl) ?? null,
       deliveryUrl: this.readNullableString(this.readFirstDefined(body.deliveryUrl, body.recruitmentLink)) ?? null,
-      graduationSession: this.readNullableString(this.readFirstDefined(body.graduationSession, body.majorRequirement)) ?? null,
+      graduationSession: this.readNullableString(body.graduationSession) ?? null,
       referralCode: this.readNullableString(body.referralCode) ?? null,
       announcementTitle: this.readNullableString(body.announcementTitle) ?? null,
       industry: this.readNullableString(body.industry) ?? null,
@@ -1151,12 +1265,12 @@ export class AdminService {
       degreeRequirement: this.readNullableString(body.degreeRequirement) ?? null,
       workLocation: this.readNullableString(body.workLocation) ?? null,
       jobName: this.readNullableString(this.readFirstDefined(body.jobName, body.positionNames)) ?? null,
-      jobCategory: this.readNullableString(this.readFirstDefined(body.jobCategory, body.positionCategory)) ?? null,
+      majorRequirement: this.readNullableString(this.readFirstDefined(body.majorRequirement, body.jobCategory, body.positionCategory)) ?? null,
       recruitmentType: this.readNullableString(this.readFirstDefined(body.recruitmentType, body.jobType)) ?? null,
       ...(deadlineAt !== undefined ? { deadlineAt } : {}),
       announcementUrl: this.readNullableString(body.announcementUrl) ?? null,
       deliveryUrl: this.readNullableString(this.readFirstDefined(body.deliveryUrl, body.recruitmentLink)) ?? null,
-      graduationSession: this.readNullableString(this.readFirstDefined(body.graduationSession, body.majorRequirement)) ?? null,
+      graduationSession: this.readNullableString(body.graduationSession) ?? null,
       referralCode: this.readNullableString(body.referralCode) ?? null,
       announcementTitle: this.readNullableString(body.announcementTitle) ?? null,
       industry: this.readNullableString(body.industry) ?? null,
@@ -1173,7 +1287,7 @@ export class AdminService {
       degreeRequirement: item.degreeRequirement,
       workLocation: item.workLocation,
       jobName: item.jobName,
-      jobCategory: item.jobCategory,
+      majorRequirement: item.majorRequirement,
       recruitmentType: item.recruitmentType,
       deadlineAt: item.deadlineAt,
       announcementUrl: item.announcementUrl,
