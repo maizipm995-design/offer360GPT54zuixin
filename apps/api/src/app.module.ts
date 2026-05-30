@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { resolve } from 'path';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CampusExamModule } from './modules/campus-exam/campus-exam.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { InterviewTranscriptModule } from './modules/interview-transcript/interview-transcript.module';
 import { InvitationsModule } from './modules/invitations/invitations.module';
@@ -27,6 +28,7 @@ import { PrismaService } from './prisma.service';
     RedisModule,
     AdminModule,
     AuthModule,
+    CampusExamModule,
     DashboardModule,
     InterviewTranscriptModule,
     JobsModule,

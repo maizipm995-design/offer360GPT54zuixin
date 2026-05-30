@@ -32,6 +32,7 @@ const adminMenus = [
   { href: '/admin/operation-logs', label: '操作日志', icon: FileText, permission: 'admin:operation-log:view' },
   { href: '/admin/jobs-risk-controls', label: '招聘风控处置', icon: ShieldCheck, permission: 'admin:operation-log:view' },
   { href: '/admin/jobs', label: '招聘公告管理', icon: Newspaper, permission: 'admin:job:manage' },
+  { href: '/admin/campus-exam/categories', label: '校招笔试题库', icon: FileText, permission: 'admin:job:manage' },
   { href: '/admin/jobs-deduplication', label: '招聘公告智能去重', icon: ListChecks, permission: 'admin:job:manage' },
   { href: '/admin/normalization-dictionary', label: '标准化词典中心', icon: Settings2, permission: 'admin:job:manage' },
   { href: '/admin/jobs-recommendation-config', label: '专属推荐权重配置', icon: Settings2, permission: 'admin:job:manage' },

@@ -30,6 +30,7 @@
     "db:seed": "npm run prisma:seed --workspace @offer360/api",
     "db:backfill:user-normalization": "npm run prisma:backfill-user-normalization --workspace @offer360/api --",
     "db:backfill:resume-global-vertical-spacing": "npm run prisma:backfill-resume-global-vertical-spacing --workspace @offer360/api --",
+    "campus-exam:bulk-import": "node scripts/import-campus-exam-question-bank.mjs",
     "docs:generate:normalization": "tsx scripts/generate-normalization-deliverables.ts",
     "record:cmd": "node scripts/record-command.mjs"
   },

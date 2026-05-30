@@ -785,6 +785,203 @@ CREATE TABLE `member_role_permissions` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+-- CreateTable
+CREATE TABLE `campus_exam_categories` (
+    `id` CHAR(36) NOT NULL,
+    `name` VARCHAR(100) NOT NULL,
+    `slug` VARCHAR(100) NOT NULL,
+    `description` VARCHAR(500) NULL,
+    `sort_order` INTEGER NOT NULL DEFAULT 0,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'active',
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    UNIQUE INDEX `campus_exam_categories_slug_key`(`slug`),
+    INDEX `idx_campus_exam_categories_status_sort`(`status`, `sort_order`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_specials` (
+    `id` INTEGER NOT NULL,
+    `category_id` CHAR(36) NOT NULL,
+    `name` VARCHAR(100) NOT NULL,
+    `description` VARCHAR(500) NULL,
+    `question_count` INTEGER NOT NULL DEFAULT 0,
+    `sort_order` INTEGER NOT NULL DEFAULT 0,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'active',
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_campus_exam_specials_category_sort`(`category_id`, `sort_order`),
+    INDEX `idx_campus_exam_specials_status_sort`(`status`, `sort_order`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_questions` (
+    `id` CHAR(36) NOT NULL,
+    `special_id` INTEGER NOT NULL,
+    `question_type` INTEGER NOT NULL,
+    `stem_content_type` INTEGER NOT NULL DEFAULT 1,
+    `difficulty` INTEGER NOT NULL DEFAULT 3,
+    `is_high_frequency_wrong` BOOLEAN NOT NULL DEFAULT false,
+    `option_content_type` INTEGER NOT NULL DEFAULT 1,
+    `stem_html` LONGTEXT NOT NULL,
+    `options_json` JSON NULL,
+    `answer_json` JSON NOT NULL,
+    `analysis_html` LONGTEXT NULL,
+    `question_image_url` TEXT NULL,
+    `analysis_image_url` TEXT NULL,
+    `question_image_oss_url` TEXT NULL,
+    `analysis_image_oss_url` TEXT NULL,
+    `inline_asset_json` JSON NULL,
+    `source_row_no` INTEGER NULL,
+    `import_batch_id` CHAR(36) NULL,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'active',
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_campus_exam_questions_special_status_created`(`special_id`, `status`, `created_at`),
+    INDEX `idx_campus_exam_questions_type_difficulty`(`question_type`, `difficulty`),
+    INDEX `idx_campus_exam_questions_batch`(`import_batch_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_import_batches` (
+    `id` CHAR(36) NOT NULL,
+    `special_id` INTEGER NOT NULL,
+    `file_name` VARCHAR(191) NOT NULL,
+    `uploaded_by_admin_id` CHAR(36) NOT NULL,
+    `total_count` INTEGER NOT NULL DEFAULT 0,
+    `success_count` INTEGER NOT NULL DEFAULT 0,
+    `fail_count` INTEGER NOT NULL DEFAULT 0,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'uploaded',
+    `summary_json` JSON NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_campus_exam_import_batches_special_created`(`special_id`, `created_at`),
+    INDEX `idx_campus_exam_import_batches_status_created`(`status`, `created_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_import_errors` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `batch_id` CHAR(36) NOT NULL,
+    `row_no` INTEGER NOT NULL,
+    `field_name` VARCHAR(100) NOT NULL,
+    `error_code` VARCHAR(50) NOT NULL,
+    `error_message` VARCHAR(500) NOT NULL,
+    `raw_payload` JSON NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+
+    INDEX `idx_campus_exam_import_errors_batch_row`(`batch_id`, `row_no`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_practice_sessions` (
+    `id` CHAR(36) NOT NULL,
+    `user_id` CHAR(36) NOT NULL,
+    `mode` VARCHAR(30) NOT NULL,
+    `special_id` INTEGER NULL,
+    `title` VARCHAR(191) NOT NULL,
+    `total_questions` INTEGER NOT NULL DEFAULT 0,
+    `answered_count` INTEGER NOT NULL DEFAULT 0,
+    `correct_count` INTEGER NOT NULL DEFAULT 0,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'ongoing',
+    `last_question_id` CHAR(36) NULL,
+    `question_order_json` JSON NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_campus_exam_sessions_user_updated`(`user_id`, `updated_at`),
+    INDEX `idx_campus_exam_sessions_special_updated`(`special_id`, `updated_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_practice_answers` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `session_id` CHAR(36) NOT NULL,
+    `question_id` CHAR(36) NOT NULL,
+    `user_answer_json` JSON NULL,
+    `is_correct` BOOLEAN NULL,
+    `score` DECIMAL(5, 2) NULL,
+    `answer_status` VARCHAR(20) NOT NULL DEFAULT 'unanswered',
+    `used_time_sec` INTEGER NOT NULL DEFAULT 0,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_campus_exam_practice_answers_question_created`(`question_id`, `created_at`),
+    UNIQUE INDEX `uniq_campus_exam_practice_answers_session_question`(`session_id`, `question_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_wrong_questions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` CHAR(36) NOT NULL,
+    `question_id` CHAR(36) NOT NULL,
+    `source_answer_id` BIGINT NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+
+    UNIQUE INDEX `uniq_campus_exam_wrong_questions_user_question`(`user_id`, `question_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_favorites` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` CHAR(36) NOT NULL,
+    `question_id` CHAR(36) NOT NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+
+    UNIQUE INDEX `uniq_campus_exam_favorites_user_question`(`user_id`, `question_id`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_notes` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` CHAR(36) NOT NULL,
+    `question_id` CHAR(36) NOT NULL,
+    `content` LONGTEXT NOT NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+    `updated_at` DATETIME(0) NOT NULL,
+
+    INDEX `idx_campus_exam_notes_user_updated`(`user_id`, `updated_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `campus_exam_subjective_judgements` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `answer_id` BIGINT NOT NULL,
+    `question_id` CHAR(36) NOT NULL,
+    `user_id` CHAR(36) NOT NULL,
+    `scoring_mode` VARCHAR(30) NOT NULL,
+    `matched_keywords_json` JSON NULL,
+    `reference_answer_snapshot` LONGTEXT NOT NULL,
+    `user_answer_snapshot` LONGTEXT NOT NULL,
+    `raw_score` DECIMAL(5, 2) NOT NULL,
+    `normalized_score` DECIMAL(5, 2) NOT NULL,
+    `judgement_result` VARCHAR(20) NOT NULL,
+    `ai_model_code` VARCHAR(50) NULL,
+    `ai_reasoning` LONGTEXT NULL,
+    `quality_status` VARCHAR(20) NOT NULL DEFAULT 'pending',
+    `quality_note` VARCHAR(500) NULL,
+    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+
+    INDEX `idx_campus_exam_subjective_judgements_answer`(`answer_id`),
+    INDEX `idx_campus_exam_subjective_judgements_question_created`(`question_id`, `created_at`),
+    INDEX `idx_campus_exam_subjective_judgements_quality_created`(`quality_status`, `created_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- AddForeignKey
 ALTER TABLE `job_announcement_access_logs` ADD CONSTRAINT `job_announcement_access_logs_job_id_fkey` FOREIGN KEY (`job_id`) REFERENCES `job_announcements`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -898,4 +1095,43 @@ ALTER TABLE `membership_redeem_use_logs` ADD CONSTRAINT `membership_redeem_use_l
 
 -- AddForeignKey
 ALTER TABLE `member_role_permissions` ADD CONSTRAINT `member_role_permissions_role_id_fkey` FOREIGN KEY (`role_id`) REFERENCES `member_roles`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_specials` ADD CONSTRAINT `campus_exam_specials_category_id_fkey` FOREIGN KEY (`category_id`) REFERENCES `campus_exam_categories`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_questions` ADD CONSTRAINT `campus_exam_questions_special_id_fkey` FOREIGN KEY (`special_id`) REFERENCES `campus_exam_specials`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_questions` ADD CONSTRAINT `campus_exam_questions_import_batch_id_fkey` FOREIGN KEY (`import_batch_id`) REFERENCES `campus_exam_import_batches`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_import_batches` ADD CONSTRAINT `campus_exam_import_batches_special_id_fkey` FOREIGN KEY (`special_id`) REFERENCES `campus_exam_specials`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_import_errors` ADD CONSTRAINT `campus_exam_import_errors_batch_id_fkey` FOREIGN KEY (`batch_id`) REFERENCES `campus_exam_import_batches`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_practice_sessions` ADD CONSTRAINT `campus_exam_practice_sessions_special_id_fkey` FOREIGN KEY (`special_id`) REFERENCES `campus_exam_specials`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_practice_answers` ADD CONSTRAINT `campus_exam_practice_answers_session_id_fkey` FOREIGN KEY (`session_id`) REFERENCES `campus_exam_practice_sessions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_practice_answers` ADD CONSTRAINT `campus_exam_practice_answers_question_id_fkey` FOREIGN KEY (`question_id`) REFERENCES `campus_exam_questions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_wrong_questions` ADD CONSTRAINT `campus_exam_wrong_questions_question_id_fkey` FOREIGN KEY (`question_id`) REFERENCES `campus_exam_questions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_favorites` ADD CONSTRAINT `campus_exam_favorites_question_id_fkey` FOREIGN KEY (`question_id`) REFERENCES `campus_exam_questions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_notes` ADD CONSTRAINT `campus_exam_notes_question_id_fkey` FOREIGN KEY (`question_id`) REFERENCES `campus_exam_questions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_subjective_judgements` ADD CONSTRAINT `campus_exam_subjective_judgements_answer_id_fkey` FOREIGN KEY (`answer_id`) REFERENCES `campus_exam_practice_answers`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `campus_exam_subjective_judgements` ADD CONSTRAINT `campus_exam_subjective_judgements_question_id_fkey` FOREIGN KEY (`question_id`) REFERENCES `campus_exam_questions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 

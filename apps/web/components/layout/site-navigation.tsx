@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { BriefcaseBusiness, FileText, GraduationCap, Map, Sparkles, UserRound } from 'lucide-react';
+import { BriefcaseBusiness, FileText, GraduationCap, Map, PenSquare, Sparkles, UserRound } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,7 @@ export interface SiteNavItem {
 
 export const SITE_MAIN_NAV_ITEMS: SiteNavItem[] = [
   { href: '/', label: '名企校招', icon: GraduationCap },
+  { href: '/campus-exam', label: '校招笔试', icon: PenSquare },
   { href: '/resume-optimizer', label: '简历优化', icon: Sparkles },
   { href: '/interview-transcript', label: '面试逐字稿', icon: FileText },
   { href: '/services', label: '求职服务', icon: BriefcaseBusiness },
@@ -24,10 +25,10 @@ export const SITE_MAIN_NAV_ITEMS: SiteNavItem[] = [
 
 export const SITE_MOBILE_NAV_ITEMS: SiteNavItem[] = [
   SITE_MAIN_NAV_ITEMS[0],
-  SITE_MAIN_NAV_ITEMS[2],
+  SITE_MAIN_NAV_ITEMS[1],
   SITE_MAIN_NAV_ITEMS[3],
-  SITE_MAIN_NAV_ITEMS[5],
   SITE_MAIN_NAV_ITEMS[4],
+  SITE_MAIN_NAV_ITEMS[6],
 ];
 
 const desktopNavShellClass =

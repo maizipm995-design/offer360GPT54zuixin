@@ -193,9 +193,12 @@ export class StorageService {
     }
 
     const assetUrls = await this.buildHtmlAssetUrlMap(normalizedHtml);
+    const previewHtml = this.upgradeBareImageUrlsToImgTags(
+      this.replaceHtmlAssetReferences(normalizedHtml, assetUrls),
+    );
     return {
       html: normalizedHtml,
-      previewHtml: this.replaceHtmlAssetReferences(normalizedHtml, assetUrls),
+      previewHtml,
       assetUrls,
     };
   }
@@ -703,6 +706,13 @@ export class StorageService {
       const signedUrl = objectKey ? assetUrls[objectKey] : '';
       return signedUrl ? `${prefix}${quote}${signedUrl}${quote}` : full;
     });
+  }
+
+  private upgradeBareImageUrlsToImgTags(html: string) {
+    return html.replace(
+      /(^|>|\s)(https?:\/\/[^\s<>"']+\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s<>"']*)?)(?=\s|<|$)/gi,
+      (_match, prefix: string, url: string) => `${prefix}<img src="${url}" alt="图片" />`,
+    );
   }
 
   private collectHtmlAssetReferences(html: string) {

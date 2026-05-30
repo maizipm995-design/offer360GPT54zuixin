@@ -790,3 +790,214 @@ model MemberRolePermission {
   @@index([permissionGroup], map: "idx_member_role_permission_group")
   @@map("member_role_permissions")
 }
+
+model CampusExamCategory {
+  id          String              @id @default(uuid()) @db.Char(36)
+  name        String              @db.VarChar(100)
+  slug        String              @unique @db.VarChar(100)
+  description String?             @db.VarChar(500)
+  sortOrder   Int                 @default(0) @map("sort_order")
+  status      String              @default("active") @db.VarChar(20)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.DateTime(0)
+  specials    CampusExamSpecial[]
+
+  @@index([status, sortOrder], map: "idx_campus_exam_categories_status_sort")
+  @@map("campus_exam_categories")
+}
+
+model CampusExamSpecial {
+  id            Int                     @id
+  categoryId    String                  @map("category_id") @db.Char(36)
+  name          String                  @db.VarChar(100)
+  description   String?                 @db.VarChar(500)
+  questionCount Int                     @default(0) @map("question_count")
+  sortOrder     Int                     @default(0) @map("sort_order")
+  status        String                  @default("active") @db.VarChar(20)
+  createdAt     DateTime                @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime                @updatedAt @map("updated_at") @db.DateTime(0)
+  category      CampusExamCategory      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  questions     CampusExamQuestion[]
+  importBatches CampusExamImportBatch[]
+  sessions      CampusExamPracticeSession[]
+
+  @@index([categoryId, sortOrder], map: "idx_campus_exam_specials_category_sort")
+  @@index([status, sortOrder], map: "idx_campus_exam_specials_status_sort")
+  @@map("campus_exam_specials")
+}
+
+model CampusExamQuestion {
+  id                   String                      @id @default(uuid()) @db.Char(36)
+  specialId            Int                         @map("special_id")
+  questionType         Int                         @map("question_type")
+  stemContentType      Int                         @default(1) @map("stem_content_type")
+  difficulty           Int                         @default(3)
+  isHighFrequencyWrong Boolean                     @default(false) @map("is_high_frequency_wrong")
+  optionContentType    Int                         @default(1) @map("option_content_type")
+  stemHtml             String                      @map("stem_html") @db.LongText
+  optionsJson          Json?                       @map("options_json")
+  answerJson           Json                        @map("answer_json")
+  analysisHtml         String?                     @map("analysis_html") @db.LongText
+  questionImageUrl     String?                     @map("question_image_url") @db.Text
+  analysisImageUrl     String?                     @map("analysis_image_url") @db.Text
+  questionImageOssUrl  String?                     @map("question_image_oss_url") @db.Text
+  analysisImageOssUrl  String?                     @map("analysis_image_oss_url") @db.Text
+  inlineAssetJson      Json?                       @map("inline_asset_json")
+  sourceRowNo          Int?                        @map("source_row_no")
+  importBatchId        String?                     @map("import_batch_id") @db.Char(36)
+  status               String                      @default("active") @db.VarChar(20)
+  createdAt            DateTime                    @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt            DateTime                    @updatedAt @map("updated_at") @db.DateTime(0)
+  special              CampusExamSpecial           @relation(fields: [specialId], references: [id], onDelete: Cascade)
+  importBatch          CampusExamImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  practiceAnswers      CampusExamPracticeAnswer[]
+  wrongQuestions       CampusExamWrongQuestion[]
+  favorites            CampusExamFavorite[]
+  notes                CampusExamNote[]
+  subjectiveJudgements CampusExamSubjectiveJudgement[]
+
+  @@index([specialId, status, createdAt], map: "idx_campus_exam_questions_special_status_created")
+  @@index([questionType, difficulty], map: "idx_campus_exam_questions_type_difficulty")
+  @@index([importBatchId], map: "idx_campus_exam_questions_batch")
+  @@map("campus_exam_questions")
+}
+
+model CampusExamImportBatch {
+  id                String                  @id @default(uuid()) @db.Char(36)
+  specialId         Int                     @map("special_id")
+  fileName          String                  @map("file_name") @db.VarChar(191)
+  uploadedByAdminId String                  @map("uploaded_by_admin_id") @db.Char(36)
+  totalCount        Int                     @default(0) @map("total_count")
+  successCount      Int                     @default(0) @map("success_count")
+  failCount         Int                     @default(0) @map("fail_count")
+  status            String                  @default("uploaded") @db.VarChar(20)
+  summaryJson       Json?                   @map("summary_json")
+  createdAt         DateTime                @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt         DateTime                @updatedAt @map("updated_at") @db.DateTime(0)
+  special           CampusExamSpecial       @relation(fields: [specialId], references: [id], onDelete: Cascade)
+  errors            CampusExamImportError[]
+  questions         CampusExamQuestion[]
+
+  @@index([specialId, createdAt], map: "idx_campus_exam_import_batches_special_created")
+  @@index([status, createdAt], map: "idx_campus_exam_import_batches_status_created")
+  @@map("campus_exam_import_batches")
+}
+
+model CampusExamImportError {
+  id           BigInt                @id @default(autoincrement())
+  batchId      String                @map("batch_id") @db.Char(36)
+  rowNo        Int                   @map("row_no")
+  fieldName    String                @map("field_name") @db.VarChar(100)
+  errorCode    String                @map("error_code") @db.VarChar(50)
+  errorMessage String                @map("error_message") @db.VarChar(500)
+  rawPayload   Json?                 @map("raw_payload")
+  createdAt    DateTime              @default(now()) @map("created_at") @db.DateTime(0)
+  batch        CampusExamImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, rowNo], map: "idx_campus_exam_import_errors_batch_row")
+  @@map("campus_exam_import_errors")
+}
+
+model CampusExamPracticeSession {
+  id                String                    @id @default(uuid()) @db.Char(36)
+  userId            String                    @map("user_id") @db.Char(36)
+  mode              String                    @db.VarChar(30)
+  specialId         Int?                      @map("special_id")
+  title             String                    @db.VarChar(191)
+  totalQuestions    Int                       @default(0) @map("total_questions")
+  answeredCount     Int                       @default(0) @map("answered_count")
+  correctCount      Int                       @default(0) @map("correct_count")
+  status            String                    @default("ongoing") @db.VarChar(20)
+  lastQuestionId    String?                   @map("last_question_id") @db.Char(36)
+  questionOrderJson Json?                     @map("question_order_json")
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.DateTime(0)
+  special           CampusExamSpecial?        @relation(fields: [specialId], references: [id], onDelete: SetNull)
+  answers           CampusExamPracticeAnswer[]
+
+  @@index([userId, updatedAt], map: "idx_campus_exam_sessions_user_updated")
+  @@index([specialId, updatedAt], map: "idx_campus_exam_sessions_special_updated")
+  @@map("campus_exam_practice_sessions")
+}
+
+model CampusExamPracticeAnswer {
+  id             BigInt                           @id @default(autoincrement())
+  sessionId      String                           @map("session_id") @db.Char(36)
+  questionId     String                           @map("question_id") @db.Char(36)
+  userAnswerJson Json?                            @map("user_answer_json")
+  isCorrect      Boolean?                         @map("is_correct")
+  score          Decimal?                         @db.Decimal(5, 2)
+  answerStatus   String                           @default("unanswered") @map("answer_status") @db.VarChar(20)
+  usedTimeSec    Int                              @default(0) @map("used_time_sec")
+  createdAt      DateTime                         @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt      DateTime                         @updatedAt @map("updated_at") @db.DateTime(0)
+  session        CampusExamPracticeSession        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question       CampusExamQuestion               @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  judgements     CampusExamSubjectiveJudgement[]
+
+  @@unique([sessionId, questionId], map: "uniq_campus_exam_practice_answers_session_question")
+  @@index([questionId, createdAt], map: "idx_campus_exam_practice_answers_question_created")
+  @@map("campus_exam_practice_answers")
+}
+
+model CampusExamWrongQuestion {
+  id             BigInt             @id @default(autoincrement())
+  userId         String             @map("user_id") @db.Char(36)
+  questionId     String             @map("question_id") @db.Char(36)
+  sourceAnswerId BigInt?            @map("source_answer_id")
+  createdAt      DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  question       CampusExamQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId], map: "uniq_campus_exam_wrong_questions_user_question")
+  @@map("campus_exam_wrong_questions")
+}
+
+model CampusExamFavorite {
+  id         BigInt             @id @default(autoincrement())
+  userId     String             @map("user_id") @db.Char(36)
+  questionId String             @map("question_id") @db.Char(36)
+  createdAt  DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  question   CampusExamQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId], map: "uniq_campus_exam_favorites_user_question")
+  @@map("campus_exam_favorites")
+}
+
+model CampusExamNote {
+  id         BigInt             @id @default(autoincrement())
+  userId     String             @map("user_id") @db.Char(36)
+  questionId String             @map("question_id") @db.Char(36)
+  content    String             @db.LongText
+  createdAt  DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime           @updatedAt @map("updated_at") @db.DateTime(0)
+  question   CampusExamQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt], map: "idx_campus_exam_notes_user_updated")
+  @@map("campus_exam_notes")
+}
+
+model CampusExamSubjectiveJudgement {
+  id                      BigInt                   @id @default(autoincrement())
+  answerId                BigInt                   @map("answer_id")
+  questionId              String                   @map("question_id") @db.Char(36)
+  userId                  String                   @map("user_id") @db.Char(36)
+  scoringMode             String                   @map("scoring_mode") @db.VarChar(30)
+  matchedKeywordsJson     Json?                    @map("matched_keywords_json")
+  referenceAnswerSnapshot String                   @map("reference_answer_snapshot") @db.LongText
+  userAnswerSnapshot      String                   @map("user_answer_snapshot") @db.LongText
+  rawScore                Decimal                  @map("raw_score") @db.Decimal(5, 2)
+  normalizedScore         Decimal                  @map("normalized_score") @db.Decimal(5, 2)
+  judgementResult         String                   @map("judgement_result") @db.VarChar(20)
+  aiModelCode             String?                  @map("ai_model_code") @db.VarChar(50)
+  aiReasoning             String?                  @map("ai_reasoning") @db.LongText
+  qualityStatus           String                   @default("pending") @map("quality_status") @db.VarChar(20)
+  qualityNote             String?                  @map("quality_note") @db.VarChar(500)
+  createdAt               DateTime                 @default(now()) @map("created_at") @db.DateTime(0)
+  answer                  CampusExamPracticeAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  question                CampusExamQuestion       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([answerId], map: "idx_campus_exam_subjective_judgements_answer")
+  @@index([questionId, createdAt], map: "idx_campus_exam_subjective_judgements_question_created")
+  @@index([qualityStatus, createdAt], map: "idx_campus_exam_subjective_judgements_quality_created")
+  @@map("campus_exam_subjective_judgements")
+}
