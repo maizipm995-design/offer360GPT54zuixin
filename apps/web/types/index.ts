@@ -516,6 +516,9 @@ export interface AdminServiceProductItem {
   salesCount: number;
   isHot: boolean;
   status: boolean;
+  productType: 'service' | 'membership';
+  memberLevel?: MemberLevel | null;
+  grantDays?: number | null;
   detailHtml?: string | null;
   detailPreviewHtml?: string | null;
   detailAssetUrls?: Record<string, string>;

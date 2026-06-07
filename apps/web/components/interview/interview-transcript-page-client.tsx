@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileText, LoaderCircle, Upload } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import type { ResumeDraftListResponse, ResumeDraftRecord } from '@/components/resume/resume-types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -356,7 +355,7 @@ export function InterviewTranscriptPageClient() {
       void refreshQuota(true);
       showToast('请求已提交，正在生成逐字稿', 'success');
     } catch (error) {
-      const message = error instanceof Error ? error.message : '面试逐字稿提交失败';
+      const message = error instanceof Error ? error.message : '面试辅导提交失败';
       if (message.includes('次数已用尽')) {
         setPromptDialog({ type: 'quota-exhausted' });
         void refreshQuota(true);
@@ -415,7 +414,7 @@ export function InterviewTranscriptPageClient() {
 
   const quotaSummaryText = useMemo(() => {
     if (!token) {
-      return '登录后可获得 1 次免费生成机会，开通超级会员可解锁 20 次面试逐字稿生成机会。';
+      return '登录后可获得 1 次免费面试辅导机会，开通超级会员可解锁 20 次面试辅导机会。';
     }
     if (quotaLoading && !quotaSummary) {
       return '正在加载当前可用生成次数...';
@@ -433,7 +432,7 @@ export function InterviewTranscriptPageClient() {
     <main className="mx-auto max-w-[1366px] px-4 py-8 lg:px-8">
       <section className="rounded-[32px] bg-white px-6 py-8 shadow-card lg:px-10 lg:py-10">
         <div className="max-w-3xl">
-          <h1 className="text-3xl font-bold text-slate-900 lg:text-4xl">面试逐字稿</h1>
+          <h1 className="text-3xl font-bold text-slate-900 lg:text-4xl">面试辅导</h1>
           <p className="mt-3 text-sm leading-7 text-slate-500 lg:text-base">
             填写面试信息并选择简历来源后，即可发起逐字稿生成。简历内容仅用于本次工作流调用，生成完成后会立即清理。
           </p>
@@ -494,8 +493,8 @@ export function InterviewTranscriptPageClient() {
 
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <ModeCard
-                title="模式一：站内结构化简历"
-                description="选择网站内已保存的结构化 JSON 简历模板"
+                title="模式一：选择本网站已保存的简历"
+                description="选择本网站已保存的简历"
                 active={resumeMode === 'structured'}
                 onClick={() => handleResumeModeChange('structured')}
               />
@@ -621,7 +620,6 @@ export function InterviewTranscriptPageClient() {
         </aside>
       </section>
 
-      <SiteBeianFooter className="pt-6" />
       {tipOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/40 px-4">
           <div className="w-full max-w-lg rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
@@ -646,10 +644,10 @@ export function InterviewTranscriptPageClient() {
           }
           description={
             promptDialog.type === 'login-required'
-              ? '面试逐字稿生成次数需要绑定到你的账号后才可扣减和返还。登录后可获得 1 次免费生成机会，开通超级会员可解锁 20 次使用机会。'
+              ? '面试辅导次数需要绑定到你的账号后才可扣减和返还。登录后可获得 1 次免费机会，开通超级会员可解锁 20 次使用机会。'
               : promptDialog.type === 'quota-exhausted'
-                ? '你当前可用的面试逐字稿生成次数已用尽。继续使用请开通或续费超级会员，立即解锁 20 次生成机会。'
-                : '你当前仅剩 1 次免费生成面试逐字稿机会。确认提交后会立即扣减；若生成失败系统会自动返还。开通超级会员可直接解锁 20 次使用机会。'
+                ? '你当前可用的面试辅导次数已用尽。继续使用请开通或续费超级会员，立即解锁 20 次使用机会。'
+                : '你当前仅剩 1 次免费面试辅导机会。确认提交后会立即扣减；若生成失败系统会自动返还。开通超级会员可直接解锁 20 次使用机会。'
           }
           cancelText={promptDialog.type === 'first-free-confirm' ? '我再想想' : '关闭弹窗'}
           confirmText={promptDialog.type === 'login-required' ? '去登录' : promptDialog.type === 'quota-exhausted' ? '去开通会员' : '确认提交'}

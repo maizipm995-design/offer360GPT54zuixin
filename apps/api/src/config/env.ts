@@ -35,5 +35,6 @@ export const env = {
   wechatPayAppSecret: process.env.WECHAT_PAY_APP_SECRET ?? '',
   wechatPayNotifyUrl: process.env.WECHAT_PAY_NOTIFY_URL ?? '',
   wechatPayRefundNotifyUrl: process.env.WECHAT_PAY_REFUND_NOTIFY_URL ?? '',
+  wechatPayCallbackBaseUrl: process.env.WECHAT_PAY_CALLBACK_BASE_URL ?? '',
   wechatPayOrderExpireMinutes: Number(process.env.WECHAT_PAY_ORDER_EXPIRE_MINUTES ?? 15),
 };

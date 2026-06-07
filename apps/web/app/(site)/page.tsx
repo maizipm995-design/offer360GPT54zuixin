@@ -1,8 +1,16 @@
 import type { Metadata } from 'next';
 import { unstable_cache } from 'next/cache';
+import { SeoHiddenContent } from '@/components/common/seo-hidden-content';
+import { SeoLinkCluster } from '@/components/common/seo-link-cluster';
 import { JobsPageClient } from '@/components/jobs/jobs-page-client';
 import { serverGet } from '@/lib/api';
-import { buildOrganizationSchema, buildPageMetadata, buildWebPageSchema, buildWebsiteSchema } from '@/lib/seo';
+import {
+  buildPageMetadata,
+  buildWebPageSchema,
+  mergeSeoKeywords,
+  SEO_COMPETITOR_BRANDS,
+  SEO_OVERSEAS_JOB_KEYWORDS,
+} from '@/lib/seo';
 import type { JobFilters, JobListResponse, JobStats, ServiceItem } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -20,15 +28,30 @@ const getHomePageData = unstable_cache(
 );
 
 export const metadata: Metadata = buildPageMetadata({
-  title: '中国校招招聘信息汇总平台_2026-2027届校招实习招聘_简历AI优化与求职服务',
+  title: '中国校招招聘信息汇总平台_实习校招_AI简历优化_面试辅导',
   description:
-    'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，覆盖 2026-2027 届校招招聘信息、实习岗位、简历AI优化、面试辅导、笔试真题、面试逐字稿与求职全流程服务。',
+    'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，覆盖实习校招、招聘公告、实习、春招、秋招、夏招、AI简历优化、面试辅导、校招笔试真题、面试逐字稿与求职全流程服务，服务大学生、留学生与海归群体。',
   path: '/',
-  keywords: ['中国校招招聘信息汇总平台', '2026届校招', '2027届秋招', '大学生求职', '应届生招聘', '实习岗位', '简历AI优化', '面试辅导', '笔试真题', '面试逐字稿'],
+  keywords: mergeSeoKeywords([
+    'Offer360',
+    '中国校招招聘信息汇总平台',
+    '实习校招',
+    '招聘公告',
+    '实习',
+    '春招',
+    '秋招',
+    '夏招',
+    'AI简历优化',
+    '面试辅导',
+    '校招笔试真题',
+    '面试逐字稿',
+    '求职全流程',
+    '大学生',
+  ], SEO_COMPETITOR_BRANDS, SEO_OVERSEAS_JOB_KEYWORDS),
   seoContent: [
-    'Offer360，聚焦中国校招招聘信息汇总与大学生求职全流程服务。',
-    '我们以校招招聘信息实时汇总为核心，持续覆盖校招公告、实习岗位、简历AI优化、面试辅导、笔试真题、面试逐字稿与求职陪跑，帮助大学生和应届生更高效完成从投递到面试、从笔试到拿 offer 的完整求职流程。',
-    '校招招聘信息实时汇总；覆盖 2026-2027 届校招与实习岗位；简历AI优化、面试辅导、笔试真题；面试逐字稿与求职全流程服务。',
+    'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，围绕实习校招、招聘公告、春招、秋招、夏招等核心场景持续更新。',
+    '我们为大学生、留学生与海归提供校招岗位信息、AI简历优化、面试辅导、校招笔试真题与面试逐字稿等全流程能力。',
+    '通过求职全流程服务，帮助用户从岗位发现、简历准备、笔试练习到面试复盘形成完整闭环。',
   ],
 });
 
@@ -37,21 +60,13 @@ export default async function HomePage() {
   const homePageSchema = buildWebPageSchema({
     title: 'Offer360 首页',
     description:
-      '中国校招招聘信息汇总平台首页，集中覆盖校招招聘信息、实习岗位、简历AI优化、面试辅导、笔试真题、面试逐字稿与求职全流程服务。',
+      '中国校招招聘信息汇总平台首页，集中覆盖实习校招、招聘公告、春招秋招夏招、AI简历优化、面试辅导、校招笔试真题与求职全流程服务。',
     path: '/',
     type: 'CollectionPage',
   });
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildOrganizationSchema()) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildWebsiteSchema()) }}
-      />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(homePageSchema) }}
@@ -62,6 +77,18 @@ export default async function HomePage() {
         initialJobs={jobs}
         initialJobsMode="sample"
         serviceProducts={services.slice(0, 4)}
+      />
+      <SeoHiddenContent
+        title="首页 SEO 隐藏内容"
+        paragraphs={[
+          'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，聚焦实习校招、招聘公告、春招、秋招、夏招等高频求职场景。',
+          '网站服务大学生、留学生与海归人群，并通过 AI简历优化、面试辅导、校招笔试真题、面试逐字稿和求职全流程服务形成完整闭环。',
+        ]}
+      />
+      <SeoLinkCluster
+        currentPath="/"
+        title="核心栏目直达"
+        description="从名企校招首页可快速进入笔试真题、AI简历优化、面试辅导与求职服务页面，帮助用户和搜索引擎高效识别 Offer360 的核心站点结构。"
       />
     </>
   );

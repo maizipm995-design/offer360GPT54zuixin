@@ -810,7 +810,7 @@ export const serviceProductSeedItems: ServiceProductSeedItem[] = [
     orderServiceText:
       '下单成功后，项目顾问会联系您确认目标岗位、当前背景短板和实训方向。\n请准备当前简历、过往项目/课程经历和目标岗位信息。\n该服务为项目型高客单产品，具体周期、阶段安排和交付内容以启动方案确认为准。',
   },
-  // 会员产品也统一按要求处理价格逻辑
+  // 会员产品默认种子数据也与线上后台配置口径保持一致
   {
     id: 'membership-standard-180',
     name: '标准会员 · 180 天',
@@ -827,14 +827,14 @@ export const serviceProductSeedItems: ServiceProductSeedItem[] = [
   {
     id: 'membership-super-180',
     name: 'offer360求职会员',
-    description: '覆盖校招公告、AI专属岗位推荐、求职资料包与直播辅导的年度求职会员服务。',
-    price: 599,
-    originalPrice: toOriginalPrice(599),
+    description: '覆盖校招公告、AI专属岗位推荐、求职资料包与面试辅导的 180 天求职会员服务。',
+    price: 99,
+    originalPrice: toOriginalPrice(99),
     score: 4.9,
     salesCount: 420,
     isHot: true,
     productType: 'membership',
     memberLevel: 'super',
-    grantDays: 365,
+    grantDays: 180,
   },
 ];

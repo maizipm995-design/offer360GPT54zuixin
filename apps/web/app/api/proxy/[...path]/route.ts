@@ -55,6 +55,7 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
     method,
     headers,
     cache: 'no-store',
+    redirect: 'follow',
   };
 
   if (method !== 'GET' && method !== 'HEAD') {

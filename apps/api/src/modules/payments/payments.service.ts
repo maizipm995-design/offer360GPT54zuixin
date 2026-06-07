@@ -21,6 +21,11 @@ import {
   type WechatGatewayRefundResponse,
   type WechatPayScene,
 } from './wechat-gateway.client';
+import {
+  detectWechatPayScene,
+  pickWechatCallbackBaseUrl,
+  resolveRequestedWechatPayScene,
+} from './payments.utils';
 
 const ORDER_EXPIRE_MINUTES_DEFAULT = 15;
 const PAYMENT_STATUS_UNPAID = 'unpaid';
@@ -44,9 +49,6 @@ const WECHAT_REFUND_SUCCESS_STATES = new Set(['SUCCESS']);
 const WECHAT_REFUND_PENDING_STATES = new Set(['PROCESSING']);
 const WECHAT_REFUND_FAILED_STATES = new Set(['ABNORMAL', 'CLOSED']);
 
-const MOBILE_USER_AGENT_PATTERN = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i;
-const WECHAT_USER_AGENT_PATTERN = /MicroMessenger/i;
-
 const orderRelationsInclude = {
   user: {
     include: {
@@ -61,6 +63,14 @@ const orderRelationsInclude = {
 type OrderWithRelations = Prisma.ServiceOrderGetPayload<{
   include: typeof orderRelationsInclude;
 }>;
+
+function normalizeStoredPayScene(scene?: string | null): WechatPayScene | null {
+  const normalized = String(scene || '').trim().toLowerCase();
+  if (normalized === 'jsapi' || normalized === 'h5' || normalized === 'native') {
+    return normalized;
+  }
+  return null;
+}
 
 interface CreateCheckoutOrderInput {
   productId?: string;
@@ -145,7 +155,7 @@ export class PaymentsService {
       select: { membership: true },
     });
 
-    const scene = this.detectPayScene(body.userAgent);
+    const requestedScene = resolveRequestedWechatPayScene(body.userAgent);
     const now = new Date();
     const expireAt = new Date(now.getTime() + this.getOrderExpireMinutes() * 60 * 1000);
 
@@ -163,8 +173,10 @@ export class PaymentsService {
 
     if (existingOrder) {
       return {
-        order: this.toCheckoutOrder(existingOrder),
-        detectedScene: this.detectPayScene(body.userAgent, existingOrder.payScene),
+        order: this.toCheckoutOrder(existingOrder, {
+          payScene: requestedScene ?? existingOrder.payScene,
+        }),
+        detectedScene: requestedScene ?? this.detectPayScene(undefined, existingOrder.payScene),
       };
     }
 
@@ -180,7 +192,7 @@ export class PaymentsService {
         grantDays: orderType === MEMBERSHIP_PRODUCT_TYPE ? product.grantDays : null,
         payStatus: PAYMENT_STATUS_UNPAID,
         payChannel: PAYMENT_CHANNEL_WECHAT,
-        payScene: scene,
+        payScene: null,
         expireAt,
         callbackPayload: this.buildCallbackPayloadSection(null, 'pricing', {
           ...this.buildPricingSnapshot({
@@ -197,38 +209,50 @@ export class PaymentsService {
     });
 
     return {
-      order: this.toCheckoutOrder(order),
-      detectedScene: scene,
+      order: this.toCheckoutOrder(order, {
+        payScene: requestedScene,
+      }),
+      detectedScene: requestedScene ?? 'native',
     };
   }
 
   async getCheckoutOrder(userId: string, orderNo: string, context?: PaymentRequestContext) {
     const order = await this.getUserOrderOrThrow(userId, orderNo);
-    const synced: OrderWithRelations = await this.syncOrderStateIfNeeded(order, context);
-    return this.toCheckoutOrder(synced);
+    const synced: OrderWithRelations = await this.syncOrderStateIfNeeded(order);
+    const requestedScene = resolveRequestedWechatPayScene(context?.userAgent, context?.scene);
+    return this.toCheckoutOrder(synced, {
+      payScene: synced.payStatus === PAYMENT_STATUS_UNPAID
+        ? requestedScene ?? synced.payScene
+        : synced.payScene,
+    });
   }
 
   async prepareCheckoutPayment(userId: string, orderNo: string, context?: PaymentRequestContext) {
     let order: OrderWithRelations = await this.getUserOrderOrThrow(userId, orderNo);
-    order = await this.syncOrderStateIfNeeded(order, context);
+    order = await this.syncOrderStateIfNeeded(order);
 
     if (order.payStatus === PAYMENT_STATUS_PAID) {
+      const paidScene = resolveRequestedWechatPayScene(context?.userAgent, context?.scene)
+        ?? this.detectPayScene(undefined, order.payScene);
       return {
         order: this.toCheckoutOrder(order),
-        scene: this.detectPayScene(context?.userAgent, order.payScene),
+        scene: paidScene,
         action: 'already_paid' as const,
       };
     }
 
     if (order.payStatus === PAYMENT_STATUS_CLOSED || order.payStatus === PAYMENT_STATUS_REFUNDED || order.payStatus === PAYMENT_STATUS_REFUND_PENDING) {
+      const closedScene = resolveRequestedWechatPayScene(context?.userAgent, context?.scene)
+        ?? this.detectPayScene(undefined, order.payScene);
       return {
         order: this.toCheckoutOrder(order),
-        scene: this.detectPayScene(context?.userAgent, order.payScene),
+        scene: closedScene,
         action: 'closed' as const,
       };
     }
 
-    const scene = this.detectPayScene(context?.userAgent, context?.scene ?? order.payScene);
+    const scene = resolveRequestedWechatPayScene(context?.userAgent, context?.scene)
+      ?? this.detectPayScene(undefined, order.payScene);
     if (order.expireAt && order.expireAt <= new Date()) {
       const closedOrder = await this.closeOrderRecord(order.id, '订单已超时关闭');
       return {
@@ -267,7 +291,7 @@ export class PaymentsService {
       const openId = order.wechatOpenId || order.user.wechatOpenId;
       if (!openId) {
         return {
-          order: this.toCheckoutOrder(order),
+          order: this.toCheckoutOrder(order, { payScene: scene }),
           scene,
           action: 'oauth_redirect_required' as const,
           oauthUrl: (await this.buildWechatOauthUrl(userId, order.orderNo)).url,
@@ -320,7 +344,7 @@ export class PaymentsService {
       throw new BadRequestException('未配置微信公众号 AppID，无法发起 JSAPI 授权');
     }
 
-    const callbackUrl = this.buildPublicUrl(`/payments/wechat/callback?orderNo=${encodeURIComponent(order.orderNo)}`);
+    const callbackUrl = this.buildWechatCallbackUrl(order.orderNo);
     const state = encodeURIComponent(order.orderNo);
     const url = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code&scope=snsapi_base&state=${state}#wechat_redirect`;
 
@@ -666,7 +690,7 @@ export class PaymentsService {
     return order;
   }
 
-  private async syncOrderStateIfNeeded(order: OrderWithRelations, context?: PaymentRequestContext) {
+  private async syncOrderStateIfNeeded(order: OrderWithRelations) {
     if (order.payStatus === PAYMENT_STATUS_REFUND_PENDING) {
       return this.syncRefundStateIfNeeded(order);
     }
@@ -703,15 +727,6 @@ export class PaymentsService {
       await this.tryCloseWechatOrder(order);
       return this.closeOrderRecord(order.id, '订单超时自动关闭');
     }
-
-    if (context?.scene && context.scene !== order.payScene) {
-      return this.prisma.serviceOrder.update({
-        where: { id: order.id },
-        data: { payScene: context.scene },
-        include: orderRelationsInclude,
-      });
-    }
-
     return order;
   }
 
@@ -1453,7 +1468,7 @@ export class PaymentsService {
     return order;
   }
 
-  private toCheckoutOrder(order: OrderWithRelations) {
+  private toCheckoutOrder(order: OrderWithRelations, options?: { payScene?: string | null }) {
     const pricing = this.buildCheckoutPricing(order);
     return {
       id: order.id,
@@ -1463,7 +1478,7 @@ export class PaymentsService {
       amount: Number(order.amount),
       payStatus: order.payStatus,
       payChannel: order.payChannel,
-      payScene: order.payScene,
+      payScene: normalizeStoredPayScene(options?.payScene ?? order.payScene),
       memberLevel: normalizeStoredMemberLevel(order.memberLevel),
       memberLevelLabel: order.memberLevel ? getMemberLevelLabel(order.memberLevel) : '普通服务',
       grantDays: order.grantDays,
@@ -1492,19 +1507,12 @@ export class PaymentsService {
   }
 
   private detectPayScene(userAgent?: string, scene?: string | null): WechatPayScene {
-    const normalized = String(scene || '').trim().toLowerCase();
-    if (normalized === 'jsapi' || normalized === 'h5' || normalized === 'native') {
-      return normalized;
-    }
+    return detectWechatPayScene(userAgent, scene);
+  }
 
-    const ua = userAgent || '';
-    if (WECHAT_USER_AGENT_PATTERN.test(ua)) {
-      return 'jsapi';
-    }
-    if (MOBILE_USER_AGENT_PATTERN.test(ua)) {
-      return 'h5';
-    }
-    return 'native';
+  private buildWechatCallbackUrl(orderNo: string) {
+    const callbackBaseUrl = this.getWechatCallbackBaseUrl();
+    return `${callbackBaseUrl}/payments/wechat/callback?orderNo=${encodeURIComponent(orderNo)}`;
   }
 
   private normalizeProductType(productType?: string | null) {
@@ -1582,9 +1590,17 @@ export class PaymentsService {
   private getPublicBaseUrl() {
     const base = env.webAppBaseUrl.trim();
     if (!base) {
-      throw new BadRequestException('未配置 WEB_APP_BASE_URL，无法生成微信授权回调或 H5 返回地址');
+      throw new BadRequestException('未配置 WEB_APP_BASE_URL，无法生成 H5 返回地址');
     }
     return base.replace(/\/$/, '');
+  }
+
+  private getWechatCallbackBaseUrl() {
+    const base = pickWechatCallbackBaseUrl(env.wechatPayCallbackBaseUrl, env.webAppBaseUrl);
+    if (!base) {
+      throw new BadRequestException('未配置 WECHAT_PAY_CALLBACK_BASE_URL 或 WEB_APP_BASE_URL，无法生成微信授权回调地址');
+    }
+    return base;
   }
 
   private getOrderExpireMinutes() {

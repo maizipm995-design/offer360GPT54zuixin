@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { MemberAccessDialog } from '@/components/membership/member-access-dialog';
 import { KeywordSuggestionDropdown, useKeywordSuggestions } from '@/components/common/keyword-suggestion-dropdown';
-import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -118,9 +117,6 @@ function HoverPreviewText({
 const filterLabelClass = 'text-[12px] font-medium text-[#666666]';
 const toolbarChipBase = 'inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition';
 const jobMetaTagBaseClass = 'inline-flex w-fit items-center rounded-md px-2.5 py-1 text-[11px] font-bold leading-none';
-const publicApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || '';
-const deployLinkDebugServerUrl = 'http://127.0.0.1:7777/event';
-const deployLinkDebugSessionId = 'deploy-link-bug';
 const membershipAvatarUrls = [
   'https://miaoda-site-img.cdn.bcebos.com/images/baidu_image_search_799b0e63-a9a9-4481-8b8a-f10954430c52.jpg',
   'https://miaoda-site-img.cdn.bcebos.com/images/305127fd-1137-4062-8ef7-fc6b919fbec9.jpg',
@@ -288,91 +284,14 @@ function renderJobsTabIcon(tab: JobsTab, className?: string) {
       : <Check className={className} />;
 }
 
-function resolveJobRedirectPath(redirectPath?: string | null) {
-  const normalized = redirectPath?.trim();
-  if (!normalized) {
-    return null;
+function openExternalTarget(targetUrl: string, pendingWindow?: Window | null) {
+  if (pendingWindow) {
+    pendingWindow.location.replace(targetUrl);
+    return;
   }
 
-  if (/^(https?:|mailto:)/i.test(normalized)) {
-    return normalized;
-  }
-
-  if (normalized.startsWith('/api/')) {
-    try {
-      if (typeof window !== 'undefined') {
-        const isLocalBrowser = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
-        if (isLocalBrowser) {
-          return new URL(normalized, `${window.location.protocol}//${window.location.hostname}:14000`).toString();
-        }
-      }
-      if (publicApiBaseUrl) {
-        return new URL(normalized, new URL(publicApiBaseUrl).origin).toString();
-      }
-      if (typeof window !== 'undefined') {
-        return new URL(normalized, window.location.origin).toString();
-      }
-    } catch {
-      return normalized;
-    }
-  }
-
-  if (normalized.startsWith('/') && typeof window !== 'undefined') {
-    try {
-      return new URL(normalized, window.location.origin).toString();
-    } catch {
-      return normalized;
-    }
-  }
-
-  return normalized;
+  window.open(targetUrl, '_blank', 'noopener,noreferrer');
 }
-
-// #region debug-point A:deploy-link-debug-reporter
-function reportDeployLinkDebugEvent(input: {
-  hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E';
-  location: string;
-  msg: string;
-  data?: Record<string, unknown>;
-}) {
-  fetch(deployLinkDebugServerUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      sessionId: deployLinkDebugSessionId,
-      runId: 'pre-fix',
-      hypothesisId: input.hypothesisId,
-      location: input.location,
-      msg: `[DEBUG] ${input.msg}`,
-      data: input.data ?? {},
-      ts: Date.now(),
-    }),
-  }).catch(() => undefined);
-}
-// #endregion
-
-
-// #region debug-point A:job-about-blank-helper
-function reportJobAboutBlankDebugEvent(input: {
-  hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E';
-  location: string;
-  msg: string;
-  data?: Record<string, unknown>;
-}) {
-  fetch('http://127.0.0.1:7777/event', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId: 'job-about-blank',
-      runId: 'post-fix',
-      hypothesisId: input.hypothesisId,
-      location: input.location,
-      msg: `[DEBUG] ${input.msg}`,
-      data: input.data ?? {},
-      ts: Date.now(),
-    }),
-  }).catch(() => undefined);
-}
-// #endregion
 
 function MembershipPromoCard({ onUpgrade, user }: { onUpgrade: () => void; user: AuthUser | null }) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -713,8 +632,12 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
   const searchParams = useSearchParams();
   const loaderRef = useRef<HTMLDivElement | null>(null);
   const mobileTabMenuRef = useRef<HTMLDivElement | null>(null);
-  const { token, user } = useAuthStore();
+  const loadingRef = useRef(false);
+  const paginationRef = useRef(initialJobs.pagination);
+  const pendingAppendPageRef = useRef<number | null>(null);
+  const { token, user, logout } = useAuthStore();
   const initialJobsNeedHydration = initialJobsMode === 'sample';
+  const shouldLockGuestSampleFeed = initialJobsMode === 'sample' && !token;
   const [mounted, setMounted] = useState(false);
   const [filters, setFilters] = useState<FiltersState>(initialFilterState);
   const [tab, setTab] = useState<JobsTab>('all');
@@ -732,6 +655,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
   const [generalSuggestionOpen, setGeneralSuggestionOpen] = useState(false);
   const [citySuggestionOpen, setCitySuggestionOpen] = useState(false);
   const [mobileTabMenuOpen, setMobileTabMenuOpen] = useState(false);
+  const [autoLoadDisabled, setAutoLoadDisabled] = useState(false);
 
   // 用于追踪上一次应用到 API 的过滤条件，避免重复请求和无限循环
   const lastAppliedRef = useRef<{ filters: string; tab: string }>({
@@ -795,6 +719,14 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
   }, []);
 
   useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    paginationRef.current = pagination;
+  }, [pagination]);
+
+  useEffect(() => {
     if (!mobileTabMenuOpen) {
       return;
     }
@@ -813,7 +745,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
 
   // 首屏 SSR 仅下发少量摘要样例，挂载后再由客户端补拉完整第一页。
   useEffect(() => {
-    if (!hydratingInitialJobs) {
+    if (!hydratingInitialJobs || shouldLockGuestSampleFeed) {
       return;
     }
 
@@ -821,7 +753,7 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
       await fetchJobs(1, false, initialFilterState, 'all');
       setHydratingInitialJobs(false);
     })();
-  }, [hydratingInitialJobs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hydratingInitialJobs, shouldLockGuestSampleFeed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -853,20 +785,27 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!loaderRef.current || !pagination.hasMore || hydratingInitialJobs) return;
+    if (!loaderRef.current || !pagination.hasMore || hydratingInitialJobs || shouldLockGuestSampleFeed || autoLoadDisabled) return;
     const element = loaderRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        if (entry.isIntersecting && !loading) {
-          void fetchJobs(pagination.page + 1, true);
+        if (!entry.isIntersecting || loadingRef.current) {
+          return;
         }
+
+        const nextPage = paginationRef.current.page + 1;
+        if (pendingAppendPageRef.current === nextPage) {
+          return;
+        }
+
+        void fetchJobs(nextPage, true);
       },
       { rootMargin: '120px' },
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [pagination, loading, hydratingInitialJobs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pagination, hydratingInitialJobs, shouldLockGuestSampleFeed, autoLoadDisabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 全自动即时检索逻辑
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -919,12 +858,40 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
     return params.toString();
   };
 
+  const mergeJobsById = (currentJobs: JobItem[], nextJobs: JobItem[]) => {
+    if (!nextJobs.length) {
+      return currentJobs;
+    }
+
+    const existingIds = new Set(currentJobs.map((item) => item.id));
+    const uniqueNextJobs = nextJobs.filter((item) => !existingIds.has(item.id));
+    return uniqueNextJobs.length ? [...currentJobs, ...uniqueNextJobs] : currentJobs;
+  };
+
   const fetchJobs = async (
     page: number,
     append = false,
     nextFilters: FiltersState = filters,
     nextTab: JobsTab = tab,
   ) => {
+    if (append) {
+      const currentPagination = paginationRef.current;
+      if (
+        loadingRef.current
+        || autoLoadDisabled
+        || pendingAppendPageRef.current === page
+        || page <= currentPagination.page
+        || !currentPagination.hasMore
+      ) {
+        return;
+      }
+      pendingAppendPageRef.current = page;
+    } else {
+      pendingAppendPageRef.current = null;
+      setAutoLoadDisabled(false);
+    }
+
+    loadingRef.current = true;
     setLoading(true);
     try {
       const path = nextTab === 'recommended'
@@ -933,12 +900,22 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
           ? '/jobs/free-zone'
           : `/jobs?${buildQuery(page, nextFilters)}`;
       const result = await clientFetch<JobListResponse>(path, undefined, token || undefined);
-      setJobs((prev) => (append ? [...prev, ...result.list] : result.list));
+      setJobs((prev) => (append ? mergeJobsById(prev, result.list) : result.list));
       setPagination(result.pagination);
       setRecommendedFeed(nextTab === 'recommended' ? result.recommendedFeed : undefined);
+      if (append) {
+        setAutoLoadDisabled(false);
+      }
     } catch (error) {
+      if (append) {
+        setAutoLoadDisabled(true);
+      }
       setMessage(error instanceof Error ? error.message : '岗位加载失败');
     } finally {
+      if (append && pendingAppendPageRef.current === page) {
+        pendingAppendPageRef.current = null;
+      }
+      loadingRef.current = false;
       setLoading(false);
     }
   };
@@ -969,7 +946,18 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
     router.push(`/login?redirect=${encodeURIComponent(`/jobs${redirectQuery}`)}`);
   };
 
+  const handleUnauthorizedAction = (targetTab: JobsTab = tab) => {
+    logout();
+    setMemberAccessMessage('');
+    setMessage('登录状态已失效，请重新登录');
+    requireLogin(targetTab);
+  };
+
   const hasPermission = (permissionKey: MemberPermissionKey) => Boolean(user?.permissionKeys?.includes(permissionKey));
+
+  const handleGuestSampleLogin = () => {
+    router.push(`/login?redirect=${encodeURIComponent('/')}`);
+  };
 
   const requireMemberPermission = (
     permissionKey: MemberPermissionKey,
@@ -1195,62 +1183,14 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
           pendingWindow.opener = null;
         } catch {}
       }
-      // #region debug-point A:view-announcement-open-window
-      reportJobAboutBlankDebugEvent({
-        hypothesisId: 'A',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:open',
-        msg: 'view announcement window opened',
-        data: {
-          jobId: job.id,
-          companyName: getDisplayCompanyFullName(job),
-          hasPendingWindow: Boolean(pendingWindow),
-          pendingWindowClosed: pendingWindow?.closed ?? null,
-          hasAnnouncement: job.hasAnnouncement,
-          tab,
-          isFreeZoneTab,
-        },
-      });
-      // #endregion
-      const result = await clientFetch<{ announcementUrl?: string | null; redirectPath?: string | null }>(
+      const result = await clientFetch<{ announcementUrl?: string | null }>(
         isFreeZoneTab ? `/jobs/${job.id}/free-zone/view-announcement` : `/jobs/${job.id}/view-announcement`,
         { method: 'POST' },
         token!,
       );
 
-      const announcementUrl = result.announcementUrl ?? result.redirectPath ?? null;
-      const redirectPath = resolveJobRedirectPath(announcementUrl);
-      // #region debug-point B:deploy-link-announcement-target
-      reportDeployLinkDebugEvent({
-        hypothesisId: 'B',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:deploy-target',
-        msg: 'announcement redirect target resolved',
-        data: {
-          jobId: job.id,
-          origin: typeof window !== 'undefined' ? window.location.origin : null,
-          hostname: typeof window !== 'undefined' ? window.location.hostname : null,
-          publicApiBaseUrl,
-          rawRedirectPath: announcementUrl,
-          resolvedRedirectPath: redirectPath,
-          usesApiProxyPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/proxy/') : false,
-          usesApiJobsPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/jobs/') : false,
-        },
-      });
-      // #endregion
-      // #region debug-point B:view-announcement-path
-      reportJobAboutBlankDebugEvent({
-        hypothesisId: 'B',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:path',
-        msg: 'view announcement redirect resolved',
-        data: {
-          jobId: job.id,
-          rawRedirectPath: announcementUrl,
-          resolvedRedirectPath: redirectPath,
-          hasPendingWindow: Boolean(pendingWindow),
-          pendingWindowClosed: pendingWindow?.closed ?? null,
-        },
-      });
-      // #endregion
-      if (!redirectPath) {
+      const announcementTargetUrl = result.announcementUrl?.trim() || null;
+      if (!announcementTargetUrl) {
         if (pendingWindow) {
           pendingWindow.close();
         }
@@ -1258,49 +1198,15 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
         return;
       }
 
-      if (pendingWindow) {
-        // #region debug-point D:view-announcement-assign
-        reportJobAboutBlankDebugEvent({
-          hypothesisId: 'D',
-          location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:assign',
-          msg: 'assigning announcement redirect to pending window',
-          data: {
-            jobId: job.id,
-            resolvedRedirectPath: redirectPath,
-            pendingWindowClosed: pendingWindow.closed,
-          },
-        });
-        // #endregion
-          pendingWindow.location.replace(redirectPath);
-      } else {
-        // #region debug-point D:view-announcement-window-open
-        reportJobAboutBlankDebugEvent({
-          hypothesisId: 'D',
-          location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:fallback-open',
-          msg: 'opening announcement redirect in fallback window',
-          data: {
-            jobId: job.id,
-            resolvedRedirectPath: redirectPath,
-          },
-        });
-        // #endregion
-        window.open(redirectPath, '_blank');
-      }
+      openExternalTarget(announcementTargetUrl, pendingWindow);
     } catch (error) {
       if (pendingWindow && !pendingWindow.closed) {
         pendingWindow.close();
       }
-      // #region debug-point E:view-announcement-error
-      reportJobAboutBlankDebugEvent({
-        hypothesisId: 'E',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleViewAnnouncement:error',
-        msg: 'view announcement failed',
-        data: {
-          jobId: job.id,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        },
-      });
-      // #endregion
+      if ((error instanceof Error && error.message.toLowerCase().includes('unauthorized')) || (error instanceof Error && error.message.includes('401'))) {
+        handleUnauthorizedAction(isFreeZoneTab ? 'free' : tab);
+        return;
+      }
       setMessage(error instanceof Error ? error.message : '查看公告失败');
     }
   };
@@ -1323,28 +1229,11 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
           pendingWindow.opener = null;
         } catch {}
       }
-      // #region debug-point A:deliver-open-window
-      reportJobAboutBlankDebugEvent({
-        hypothesisId: 'A',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:open',
-        msg: 'deliver window opened',
-        data: {
-          jobId: job.id,
-          companyName: getDisplayCompanyFullName(job),
-          hasPendingWindow: Boolean(pendingWindow),
-          pendingWindowClosed: pendingWindow?.closed ?? null,
-          tab,
-          isFreeZoneTab,
-          deliveryType: job.deliveryType ?? null,
-        },
-      });
-      // #endregion
       const result = await clientFetch<{
         action: string;
         deliveryType?: DeliveryType | null;
         emailAddress?: string | null;
         deliveryUrl?: string | null;
-        redirectPath?: string | null;
         progressStatus: string;
       }>(
         isFreeZoneTab ? `/jobs/${job.id}/free-zone/deliver` : `/jobs/${job.id}/deliver`,
@@ -1357,45 +1246,9 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
         setJobs((prev) => prev.map((item) => (item.id === job.id ? { ...item, currentProgress: '已投递' } : item)));
       }
 
-      const deliveryUrl = result.deliveryUrl ?? result.redirectPath ?? null;
-      const redirectPath = resolveJobRedirectPath(deliveryUrl);
+      const deliveryTargetUrl = result.deliveryUrl?.trim() || null;
       const deliveryType = result.deliveryType ?? job.deliveryType ?? null;
       const emailAddress = result.emailAddress?.trim() || null;
-      // #region debug-point B:deploy-link-deliver-target
-      reportDeployLinkDebugEvent({
-        hypothesisId: 'B',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:deploy-target',
-        msg: 'deliver redirect target resolved',
-        data: {
-          jobId: job.id,
-          origin: typeof window !== 'undefined' ? window.location.origin : null,
-          hostname: typeof window !== 'undefined' ? window.location.hostname : null,
-          publicApiBaseUrl,
-          rawRedirectPath: deliveryUrl,
-          resolvedRedirectPath: redirectPath,
-          deliveryType,
-          usesApiProxyPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/proxy/') : false,
-          usesApiJobsPath: typeof redirectPath === 'string' ? redirectPath.includes('/api/jobs/') : false,
-        },
-      });
-      // #endregion
-      // #region debug-point B:deliver-path
-      reportJobAboutBlankDebugEvent({
-        hypothesisId: 'B',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:path',
-        msg: 'deliver redirect resolved',
-        data: {
-          jobId: job.id,
-          rawRedirectPath: deliveryUrl,
-          resolvedRedirectPath: redirectPath,
-          action: result.action,
-          deliveryType,
-          emailAddress,
-          hasPendingWindow: Boolean(pendingWindow),
-          pendingWindowClosed: pendingWindow?.closed ?? null,
-        },
-      });
-      // #endregion
 
       const shouldOpenEmailModal = job.deliveryType === 'email' || result.action === 'show_email_modal' || deliveryType === 'email' || Boolean(emailAddress);
 
@@ -1407,37 +1260,8 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
         return;
       }
 
-      if (redirectPath) {
-        if (pendingWindow) {
-          // #region debug-point D:deliver-assign
-          reportJobAboutBlankDebugEvent({
-            hypothesisId: 'D',
-            location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:assign',
-            msg: 'assigning deliver redirect to pending window',
-            data: {
-              jobId: job.id,
-              resolvedRedirectPath: redirectPath,
-              deliveryType,
-              pendingWindowClosed: pendingWindow.closed,
-            },
-          });
-          // #endregion
-          pendingWindow.location.replace(redirectPath);
-        } else {
-          // #region debug-point D:deliver-window-open
-          reportJobAboutBlankDebugEvent({
-            hypothesisId: 'D',
-            location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:fallback-open',
-            msg: 'opening deliver redirect in fallback window',
-            data: {
-              jobId: job.id,
-              resolvedRedirectPath: redirectPath,
-              deliveryType,
-            },
-          });
-          // #endregion
-          window.open(redirectPath, '_blank');
-        }
+      if (deliveryTargetUrl) {
+        openExternalTarget(deliveryTargetUrl, pendingWindow);
         setMessage('已为你打开投递入口');
       } else {
         setMessage('当前岗位暂无投递入口');
@@ -1446,17 +1270,10 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
       if (pendingWindow && !pendingWindow.closed) {
         pendingWindow.close();
       }
-      // #region debug-point E:deliver-error
-      reportJobAboutBlankDebugEvent({
-        hypothesisId: 'E',
-        location: 'apps/web/components/jobs/jobs-page-client.tsx:handleDeliver:error',
-        msg: 'deliver failed',
-        data: {
-          jobId: job.id,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        },
-      });
-      // #endregion
+      if ((error instanceof Error && error.message.toLowerCase().includes('unauthorized')) || (error instanceof Error && error.message.includes('401'))) {
+        handleUnauthorizedAction(isFreeZoneTab ? 'free' : tab);
+        return;
+      }
       setMessage(error instanceof Error ? error.message : '投递失败');
     }
   };
@@ -2083,7 +1900,23 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
                 {hydratingInitialJobs ? '正在加载完整岗位列表...' : '正在加载数据...'}
               </div>
             ) : null}
-            {!pagination.hasMore ? (
+            {!loading && shouldLockGuestSampleFeed ? (
+              <div className="border-t border-[#F3F4F6] bg-white px-4 pb-6 pt-3">
+                <div className="rounded-2xl border border-orange-100 bg-gradient-to-b from-white via-[#FFF7ED] to-[#FFEAD5] px-4 py-8 text-center shadow-[inset_0_24px_40px_rgba(255,255,255,0.95)]">
+                  <div className="mx-auto max-w-md">
+                    <p className="text-sm font-semibold text-[#333333]">更多校招岗位与完整列表已隐藏</p>
+                    <p className="mt-2 text-sm leading-6 text-[#666666]">登录后即可查看更多招聘信息、继续下拉浏览并使用完整岗位功能。</p>
+                    <Button className="mt-5 h-10 bg-[#FF8002] px-6 hover:bg-[#E67200]" onClick={handleGuestSampleLogin}>
+                      登录查看更多
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : !loading && autoLoadDisabled ? (
+              <div className="border-t border-[#F3F4F6] px-4 py-4 text-center text-sm text-[#666666]">
+                已暂停自动加载更多，请稍后重试或调整筛选条件
+              </div>
+            ) : !pagination.hasMore ? (
               <div className="border-t border-[#F3F4F6] px-4 py-4 text-center text-sm text-[#666666]">没有更多了</div>
             ) : (
               <div ref={loaderRef} className="h-6" />
@@ -2126,7 +1959,6 @@ export function JobsPageClient({ initialStats, initialFilters, initialJobs, init
           </Card>
         </div>
       ) : null}
-        <SiteBeianFooter />
         <MemberAccessDialog
           open={Boolean(memberAccessMessage)}
           message={memberAccessMessage}

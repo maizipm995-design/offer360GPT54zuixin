@@ -129,6 +129,12 @@ function createPrismaMock(jobs: MockJob[]) {
 
   return {
     jobAnnouncement: { findMany, count },
+    adminBootstrapConfig: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({ id: 1 }),
+    },
+    $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    $queryRawUnsafe: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn().mockImplementation((items: unknown[]) => Promise.all(items as Promise<unknown>[])),
   };
 }
@@ -146,6 +152,15 @@ function createNormalizationMock(overrides: Partial<{
 function createRedisMock() {
   return {
     get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue('OK'),
+    incr: vi.fn().mockResolvedValue(1),
+    expire: vi.fn().mockResolvedValue(1),
+    zadd: vi.fn().mockResolvedValue(1),
+    zremrangebyscore: vi.fn().mockResolvedValue(0),
+    zcard: vi.fn().mockResolvedValue(1),
+    zrange: vi.fn().mockResolvedValue([]),
+    sadd: vi.fn().mockResolvedValue(1),
+    smembers: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -167,7 +182,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ companyFullName: '深圳互联科技集团', jobName: '算法工程师', majorRequirement: '人工智能、计算机类相关专业' }),
       createJob({ id: 'job-2', companyFullName: '江苏电力集团', jobName: '行政专员', majorRequirement: '专业不限' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({ keyword: '互联科技', page: 1, limit: 20 }, 'user-1');
 
@@ -182,7 +197,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ workLocation: '北京海淀区' }),
       createJob({ id: 'job-2', workLocation: '上海徐汇区' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({ cityKeyword: '海淀', page: 1, limit: 20 }, 'user-1');
 
@@ -214,7 +229,7 @@ describe('JobsService fuzzy search filters', () => {
         updatedAt: new Date('2026-03-01T00:00:00Z'),
       }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({
       keyword: '产品',
@@ -238,7 +253,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ id: 'job-2', degreeRequirement: '硕士', enterpriseNature: '国企', recruitmentType: '实习' }),
       createJob({ id: 'job-3', degreeRequirement: '本科', enterpriseNature: '民企', recruitmentType: '校招' }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const filters = await service.getFilters();
 
@@ -262,7 +277,7 @@ describe('JobsService fuzzy search filters', () => {
         enterpriseNature: '国企',
       }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({
       degreeRequirement: ['专科'],
@@ -283,7 +298,7 @@ describe('JobsService fuzzy search filters', () => {
       createJob({ trackings: [{ userId: 'user-1', progressStatus: '已投递' }] }),
       createJob({ id: 'job-2', trackings: [{ userId: 'user-1', progressStatus: '已面试' }] }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({ progressStatus: '已投递', page: 1, limit: 20 }, 'user-1');
 
@@ -304,7 +319,7 @@ describe('JobsService fuzzy search filters', () => {
         return keyword ? [keyword] : [];
       }),
     });
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, normalization as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, normalization as never, createRedisMock() as never);
 
     const result = await service.getList({ companyName: '建行', page: 1, limit: 20 }, 'user-1');
 
@@ -316,7 +331,6 @@ describe('JobsService fuzzy search filters', () => {
   it('搜索建议只返回推荐词，不改动用户原始输入', async () => {
     const service = new JobsService(
       createRedisMock() as never,
-      {} as never,
       {} as never,
       {} as never,
       {
@@ -367,7 +381,7 @@ describe('JobsService fuzzy search filters', () => {
         deliveryUrl: `https://apply.acme.cn/job-valid-${index + 1}`,
       })),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getFreeZoneList('user-1');
 
@@ -384,7 +398,7 @@ describe('JobsService fuzzy search filters', () => {
         deliveryUrl: 'javascript:void(0)',
       }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({ page: 1, limit: 20 }, 'user-1');
 
@@ -403,12 +417,62 @@ describe('JobsService fuzzy search filters', () => {
         deliveryUrl: '简历投递邮箱：hr@acme.cn',
       }),
     ]);
-    const service = new JobsService(prisma as never, {} as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, createRedisMock() as never);
 
     const result = await service.getList({ page: 1, limit: 20 }, 'user-1');
 
     expect(result.list).toHaveLength(1);
     expect(result.list[0]?.hasDelivery).toBe(true);
     expect(result.list[0]?.deliveryType).toBe('email');
+  });
+
+  it('无筛选条件翻到后续页时不会触发规律翻页风控拦截', async () => {
+    const prisma = createPrismaMock([
+      createJob({ id: 'job-1' }),
+      createJob({ id: 'job-2' }),
+      createJob({ id: 'job-3' }),
+    ]);
+    const redis = createRedisMock();
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, redis as never);
+
+    const result = await service.getList({ page: 2, limit: 1 }, 'user-1');
+
+    expect(result.list).toHaveLength(1);
+    expect(result.pagination.page).toBe(2);
+    expect(result.pagination.hasMore).toBe(true);
+    expect(redis.zadd).not.toHaveBeenCalled();
+  });
+
+  it('登录用户带筛选条件翻到较后页时不会触发列表翻页风控', async () => {
+    const prisma = createPrismaMock([
+      createJob({ id: 'job-1', jobName: '产品经理' }),
+      createJob({ id: 'job-2', jobName: '产品运营' }),
+      createJob({ id: 'job-3', jobName: '产品策划' }),
+    ]);
+    const redis = createRedisMock();
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, redis as never);
+
+    const result = await service.getList({ keyword: '产品', page: 3, limit: 1 }, 'user-1');
+
+    expect(result.pagination.page).toBe(3);
+    expect(redis.zadd).not.toHaveBeenCalled();
+  });
+
+  it('未登录用户继续深翻默认列表时仍保留列表翻页风控识别', async () => {
+    const prisma = createPrismaMock([
+      createJob({ id: 'job-1' }),
+      createJob({ id: 'job-2' }),
+      createJob({ id: 'job-3' }),
+    ]);
+    const redis = createRedisMock();
+    const service = new JobsService(prisma as never, {} as never, {} as never, createNormalizationMock() as never, redis as never);
+
+    await service.getList({ page: 2, limit: 1 }, null, {
+      ip: '127.0.0.1',
+      deviceId: 'device-1',
+      sessionId: 'session-1',
+    });
+
+    expect(redis.zadd).toHaveBeenCalled();
   });
 });

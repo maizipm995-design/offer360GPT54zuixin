@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { CurrentAdmin, type CurrentAdminPayload } from '../admin/decorators/current-admin.decorator';
 import { RequireAdminPermissions } from '../admin/decorators/require-admin-permissions.decorator';
 import { AdminJwtAuthGuard } from '../admin/guards/admin-jwt-auth.guard';
@@ -33,6 +33,47 @@ export class CampusExamAdminController {
     return this.campusExamService.updateAdminCategory(id, body);
   }
 
+  @Delete('categories/:id')
+  @RequireAdminPermissions('admin:job:manage')
+  deleteCategory(@Param('id') id: string) {
+    return this.campusExamService.deleteAdminCategory(id);
+  }
+
+  @Post('categories/import-folder')
+  @RequireAdminPermissions('admin:job:manage')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['files', 'relativePaths'],
+      properties: {
+        files: {
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description: `一级分类文件夹内的全部题库 Excel 文件（.xlsx / .xls，单文件最大 ${Math.round(CAMPUS_EXAM_MAX_IMPORT_FILE_SIZE / 1024 / 1024)}MB）`,
+        },
+        relativePaths: {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+          description: '浏览器提供的文件相对路径，用于识别顶层文件夹与文件结构',
+        },
+      },
+    },
+  })
+  @UseInterceptors(FilesInterceptor('files', 200, { limits: { files: 200, fileSize: CAMPUS_EXAM_MAX_IMPORT_FILE_SIZE } }))
+  importCategoryFolder(
+    @UploadedFiles() files: UploadedCampusExamFile[] | undefined,
+    @Body() body: Record<string, unknown>,
+    @CurrentAdmin() admin: CurrentAdminPayload,
+  ) {
+    return this.campusExamService.importCategoryFolder(files, body, admin);
+  }
+
   @Get('specials')
   @RequireAdminPermissions('admin:job:manage')
   getSpecials(@Query() query: Record<string, string | undefined>) {
@@ -61,6 +102,12 @@ export class CampusExamAdminController {
   @RequireAdminPermissions('admin:job:manage')
   updateSpecial(@Param('specialId') specialId: string, @Body() body: Record<string, unknown>) {
     return this.campusExamService.updateAdminSpecial(Number(specialId), body);
+  }
+
+  @Delete('specials/:specialId')
+  @RequireAdminPermissions('admin:job:manage')
+  deleteSpecial(@Param('specialId') specialId: string) {
+    return this.campusExamService.deleteAdminSpecial(Number(specialId));
   }
 
   @Post('specials/:specialId/import/preview')

@@ -836,6 +836,9 @@ export class AdminService {
     if (query.hot === 'hot') {
       where.isHot = true;
     }
+    if (query.productType) {
+      where.productType = this.readProductType(query.productType);
+    }
 
     const [list, total] = await this.prisma.$transaction([
       this.prisma.serviceProduct.findMany({
@@ -1439,6 +1442,14 @@ export class AdminService {
   }
 
   private toServiceProductInput(body: Record<string, unknown>): Prisma.ServiceProductUncheckedCreateInput {
+    const productType = this.readProductType(body.productType);
+    const memberLevel = productType === 'membership'
+      ? parseMemberLevelInput(body.memberLevel, 'standard')
+      : null;
+    const grantDays = productType === 'membership'
+      ? this.ensureMinNumber(this.readRequiredNumber(body.grantDays, '会员有效天数不能为空'), 1, '会员有效天数必须大于 0')
+      : null;
+
     return {
       name: this.readRequiredString(body.name, '服务名称不能为空'),
       description: this.readRequiredString(body.description, '副标题不能为空'),
@@ -1448,10 +1459,17 @@ export class AdminService {
       salesCount: this.readOptionalNumber(body.salesCount) ?? 0,
       isHot: this.readOptionalBoolean(body.isHot) ?? false,
       status: this.readOptionalBoolean(body.status) ?? true,
+      productType,
+      memberLevel,
+      grantDays,
       detailHtml: this.readNullableHtml(body.detailHtml) ?? null,
       orderServiceText: this.readNullableString(body.orderServiceText) ?? null,
       orderServiceImageUrl: this.readNullableString(body.orderServiceImageUrl) ?? null,
     };
+  }
+
+  private readProductType(value: unknown) {
+    return String(value ?? 'service').trim().toLowerCase() === 'membership' ? 'membership' : 'service';
   }
 
   private async resolveParentUid(body: Record<string, unknown>) {
@@ -1783,6 +1801,9 @@ export class AdminService {
       price: Prisma.Decimal | number;
       originalPrice: Prisma.Decimal | number;
       score: Prisma.Decimal | number;
+      productType?: string | null;
+      memberLevel?: string | null;
+      grantDays?: number | null;
       detailHtml?: string | null;
       orderServiceImageUrl?: string | null;
     },
@@ -1795,6 +1816,9 @@ export class AdminService {
       price: this.toNumber(item.price),
       originalPrice: this.toNumber(item.originalPrice),
       score: this.toNumber(item.score),
+      productType: this.readProductType(item.productType),
+      memberLevel: item.memberLevel ? parseMemberLevelInput(item.memberLevel, 'standard') : null,
+      grantDays: item.grantDays ?? null,
       detailHtml: item.detailHtml ?? null,
       detailPreviewHtml: detailPayload.previewHtml,
       detailAssetUrls: detailPayload.assetUrls,

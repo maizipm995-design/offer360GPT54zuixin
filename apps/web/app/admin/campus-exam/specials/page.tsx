@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import type {
   CampusExamAdminCategory,
+  CampusExamAdminSpecialDeleteResult,
   CampusExamAdminSpecial,
   CampusExamListResponse,
 } from '@/lib/campus-exam';
@@ -26,7 +27,6 @@ const initialFilters = {
 };
 
 const emptyForm = {
-  id: '',
   categoryId: '',
   name: '',
   description: '',
@@ -43,6 +43,7 @@ export default function CampusExamAdminSpecialsPage() {
   const [categories, setCategories] = useState<CampusExamAdminCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -87,7 +88,6 @@ export default function CampusExamAdminSpecialsPage() {
   const handleSelect = (item: CampusExamAdminSpecial) => {
     setSelectedId(item.id);
     setForm({
-      id: String(item.id),
       categoryId: item.categoryId,
       name: item.name,
       description: item.description ?? '',
@@ -105,7 +105,6 @@ export default function CampusExamAdminSpecialsPage() {
     try {
       setSaving(true);
       const payload = {
-        id: Number(form.id),
         categoryId: form.categoryId,
         name: form.name,
         description: form.description,
@@ -135,6 +134,34 @@ export default function CampusExamAdminSpecialsPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!selectedSpecial) {
+      setMessage('请先选择要删除的二级分类');
+      return;
+    }
+    const confirmed = window.confirm(
+      `确认删除二级分类“${selectedSpecial.name}”吗？\n\n删除后将同步清空该分类下全部试题数据，且不会影响所属一级分类和其他同级分类。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      const result = await clientFetch<CampusExamAdminSpecialDeleteResult>(
+        `/admin/campus-exam/specials/${selectedSpecial.id}`,
+        { method: 'DELETE' },
+      );
+      setMessage(`二级分类已删除：同步删除 ${result.deletedQuestionCount} 道试题`);
+      resetForm();
+      await loadData(1, filters);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '二级分类删除失败');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-card">
@@ -142,7 +169,7 @@ export default function CampusExamAdminSpecialsPage() {
         <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h2 className="text-3xl font-bold text-ink">校招笔试二级分类管理</h2>
-            <p className="mt-2 text-sm text-muted">维护 Excel `分类专项id` 对齐的专项结构，并进入专项详情页完成题库上传预览。</p>
+            <p className="mt-2 text-sm text-muted">维护系统自动生成的专项业务ID与专项结构，并进入专项详情页完成题库上传预览。</p>
           </div>
           <Button onClick={resetForm}>新增二级分类</Button>
         </div>
@@ -196,7 +223,7 @@ export default function CampusExamAdminSpecialsPage() {
           </Card>
 
           <AdminTable
-            headers={['专项ID', '专项名称', '一级分类', '题量', '导入批次', '状态', '更新时间']}
+            headers={['专项业务ID', '专项名称', '一级分类业务ID', '一级分类', '题量', '导入批次', '状态', '更新时间']}
             hasData={data.list.length > 0}
             emptyText={loading ? '二级分类加载中...' : '暂无二级分类'}
           >
@@ -206,7 +233,7 @@ export default function CampusExamAdminSpecialsPage() {
                 className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
                 onClick={() => handleSelect(item)}
               >
-                <td className="px-4 py-3 font-medium text-ink">{item.id}</td>
+                <td className="px-4 py-3 font-mono text-ink">{item.specialCode}</td>
                 <td className="px-4 py-3 text-slate-600">
                   <div className="flex flex-col">
                     <span>{item.name}</span>
@@ -215,6 +242,7 @@ export default function CampusExamAdminSpecialsPage() {
                     </Link>
                   </div>
                 </td>
+                <td className="px-4 py-3 font-mono text-slate-600">{item.categorySpecialCode}</td>
                 <td className="px-4 py-3 text-slate-600">{item.categoryName}</td>
                 <td className="px-4 py-3 text-slate-600">{item.questionCount}</td>
                 <td className="px-4 py-3 text-slate-600">{item.importBatchCount}</td>
@@ -236,19 +264,15 @@ export default function CampusExamAdminSpecialsPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-xl font-semibold text-ink">{selectedSpecial ? '编辑二级分类' : '新增二级分类'}</h3>
-              <p className="mt-1 text-sm text-muted">`id` 必须与 Excel 中 `分类专项id` 一致。</p>
+              <p className="mt-1 text-sm text-muted">专项业务ID由系统自动生成，上传题库时会自动绑定当前选中的二级分类。</p>
             </div>
             {selectedSpecial ? <Button variant="ghost" onClick={resetForm}>切换新增</Button> : null}
           </div>
 
           <div className="mt-5 space-y-4">
             <label className="block space-y-2">
-              <span className="text-sm font-medium text-ink">专项 ID</span>
-              <Input
-                value={form.id}
-                disabled={Boolean(selectedSpecial)}
-                onChange={(event) => setForm((prev) => ({ ...prev, id: event.target.value }))}
-              />
+              <span className="text-sm font-medium text-ink">专项业务ID</span>
+              <Input value={selectedSpecial?.specialCode ?? '创建后自动生成'} disabled />
             </label>
             <label className="block space-y-2">
               <span className="text-sm font-medium text-ink">所属一级分类</span>
@@ -293,6 +317,16 @@ export default function CampusExamAdminSpecialsPage() {
             <Button className="flex-1" onClick={() => void handleSubmit()} disabled={saving}>
               {saving ? '保存中...' : selectedSpecial ? '保存修改' : '创建专项'}
             </Button>
+            {selectedSpecial ? (
+              <Button
+                className="flex-1"
+                variant="secondary"
+                onClick={() => void handleDelete()}
+                disabled={saving || deleting}
+              >
+                {deleting ? '删除中...' : '删除分类'}
+              </Button>
+            ) : null}
             {selectedSpecial ? (
               <Link href={`/admin/campus-exam/specials/${selectedSpecial.id}`} className="flex-1">
                 <Button className="w-full" variant="secondary">进入详情</Button>

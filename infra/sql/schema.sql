@@ -788,6 +788,7 @@ CREATE TABLE `member_role_permissions` (
 -- CreateTable
 CREATE TABLE `campus_exam_categories` (
     `id` CHAR(36) NOT NULL,
+    `special_code` VARCHAR(32) NOT NULL,
     `name` VARCHAR(100) NOT NULL,
     `slug` VARCHAR(100) NOT NULL,
     `description` VARCHAR(500) NULL,
@@ -796,6 +797,7 @@ CREATE TABLE `campus_exam_categories` (
     `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
     `updated_at` DATETIME(0) NOT NULL,
 
+    UNIQUE INDEX `campus_exam_categories_special_code_key`(`special_code`),
     UNIQUE INDEX `campus_exam_categories_slug_key`(`slug`),
     INDEX `idx_campus_exam_categories_status_sort`(`status`, `sort_order`),
     PRIMARY KEY (`id`)
@@ -804,6 +806,7 @@ CREATE TABLE `campus_exam_categories` (
 -- CreateTable
 CREATE TABLE `campus_exam_specials` (
     `id` INTEGER NOT NULL,
+    `special_code` VARCHAR(32) NOT NULL,
     `category_id` CHAR(36) NOT NULL,
     `name` VARCHAR(100) NOT NULL,
     `description` VARCHAR(500) NULL,
@@ -813,6 +816,7 @@ CREATE TABLE `campus_exam_specials` (
     `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
     `updated_at` DATETIME(0) NOT NULL,
 
+    UNIQUE INDEX `campus_exam_specials_special_code_key`(`special_code`),
     INDEX `idx_campus_exam_specials_category_sort`(`category_id`, `sort_order`),
     INDEX `idx_campus_exam_specials_status_sort`(`status`, `sort_order`),
     PRIMARY KEY (`id`)

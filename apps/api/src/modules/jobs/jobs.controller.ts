@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpException, InternalServerErrorException, Logger, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import { CurrentUser, CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
@@ -19,8 +19,6 @@ type ControlledJobsService = JobsService & {
   getSearchSuggestions: (query: QueryJobSuggestionsDto, currentUserId?: string | null) => unknown;
   getFreeZoneList: (userId: string, context?: ReturnType<JobsController['buildRequestContext']>) => unknown;
   viewAnnouncement: (userId: string, id: string, context?: ReturnType<JobsController['buildRequestContext']>) => unknown;
-  resolveAnnouncementRedirect: (id: string, accessToken?: string, context?: ReturnType<JobsController['buildRequestContext']>) => Promise<string>;
-  resolveDeliveryRedirect: (id: string, accessToken?: string, context?: ReturnType<JobsController['buildRequestContext']>) => Promise<string>;
   getDetail: (id: string, currentUserId?: string | null, context?: ReturnType<JobsController['buildRequestContext']>) => unknown;
 };
 
@@ -30,7 +28,7 @@ type JobsRequestContext = {
   deviceId: string | null;
   sessionId: string | null;
   requestPath?: string | null;
-  requestRoute?: 'list' | 'detail' | 'view_announcement' | 'deliver' | 'announcement_redirect' | 'delivery_redirect';
+  requestRoute?: 'list' | 'detail' | 'view_announcement' | 'deliver';
   page?: number | null;
   limit?: number | null;
   filterFingerprint?: string | null;
@@ -39,6 +37,8 @@ type JobsRequestContext = {
 @ApiTags('jobs')
 @Controller('jobs')
 export class JobsController {
+  private readonly logger = new Logger(JobsController.name);
+
   constructor(private readonly jobsService: JobsService) {}
 
   private get controlledJobsService(): ControlledJobsService {
@@ -62,6 +62,37 @@ export class JobsController {
       deviceId,
       sessionId,
     };
+  }
+
+  private normalizeActionErrorMessage(error: unknown, fallback: string) {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (typeof response === 'string' && response.trim()) {
+        return response.trim();
+      }
+      if (response && typeof response === 'object') {
+        const message = (response as { message?: string | string[] }).message;
+        if (typeof message === 'string' && message.trim()) {
+          return message.trim();
+        }
+        if (Array.isArray(message) && message.length > 0) {
+          return message.join('；');
+        }
+      }
+    }
+    if (error instanceof Error && error.message.trim()) {
+      return error.message.trim();
+    }
+    return fallback;
+  }
+
+  private rethrowJobsActionError(error: unknown, actionLabel: string, jobId: string) {
+    if (error instanceof HttpException) {
+      throw error;
+    }
+    const detail = this.normalizeActionErrorMessage(error, '服务内部异常');
+    this.logger.error(`${actionLabel}失败`, error instanceof Error ? error.stack : undefined, { jobId, detail });
+    throw new InternalServerErrorException(`${actionLabel}失败：${detail}（岗位ID：${jobId}）`);
   }
 
   @Get('filters')
@@ -117,55 +148,33 @@ export class JobsController {
   @Post(':id/view-announcement')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  viewAnnouncement(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
-    return this.controlledJobsService.viewAnnouncement(user.userId, id, {
-      ...this.buildRequestContext(request),
-      requestPath: request.path,
-      requestRoute: 'view_announcement',
-    });
+  async viewAnnouncement(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
+    try {
+      return await this.controlledJobsService.viewAnnouncement(user.userId, id, {
+        ...this.buildRequestContext(request),
+        requestPath: request.path,
+        requestRoute: 'view_announcement',
+      });
+    } catch (error) {
+      this.rethrowJobsActionError(error, '查看公告', id);
+    }
   }
 
   @Post(':id/free-zone/view-announcement')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  viewAnnouncementFromFreeZone(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
-    return this.jobsService.viewAnnouncement(user.userId, id, {
-      ...this.buildRequestContext(request),
-      requestPath: request.path,
-      requestRoute: 'view_announcement',
-    }, {
-      bypassPermission: true,
-    });
-  }
-
-  @Get(':id/announcement-redirect')
-  async announcementRedirect(
-    @Param('id') id: string,
-    @Query('accessToken') accessToken: string | undefined,
-    @Req() request: Request,
-    @Res() response: Response,
-  ) {
-    const targetUrl = await this.controlledJobsService.resolveAnnouncementRedirect(id, accessToken, {
-      ...this.buildRequestContext(request),
-      requestPath: request.path,
-      requestRoute: 'announcement_redirect',
-    });
-    return response.redirect(targetUrl);
-  }
-
-  @Get(':id/delivery-redirect')
-  async deliveryRedirect(
-    @Param('id') id: string,
-    @Query('accessToken') accessToken: string | undefined,
-    @Req() request: Request,
-    @Res() response: Response,
-  ) {
-    const targetUrl = await this.controlledJobsService.resolveDeliveryRedirect(id, accessToken, {
-      ...this.buildRequestContext(request),
-      requestPath: request.path,
-      requestRoute: 'delivery_redirect',
-    });
-    return response.redirect(targetUrl);
+  async viewAnnouncementFromFreeZone(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
+    try {
+      return await this.jobsService.viewAnnouncement(user.userId, id, {
+        ...this.buildRequestContext(request),
+        requestPath: request.path,
+        requestRoute: 'view_announcement',
+      }, {
+        bypassPermission: true,
+      });
+    } catch (error) {
+      this.rethrowJobsActionError(error, '查看公告', id);
+    }
   }
 
   @Get(':id')
@@ -181,25 +190,33 @@ export class JobsController {
   @Post(':id/deliver')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  deliver(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
-    return this.jobsService.deliver(user.userId, id, {
-      ...this.buildRequestContext(request),
-      requestPath: request.path,
-      requestRoute: 'deliver',
-    });
+  async deliver(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
+    try {
+      return await this.jobsService.deliver(user.userId, id, {
+        ...this.buildRequestContext(request),
+        requestPath: request.path,
+        requestRoute: 'deliver',
+      });
+    } catch (error) {
+      this.rethrowJobsActionError(error, '立即投递', id);
+    }
   }
 
   @Post(':id/free-zone/deliver')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  deliverFromFreeZone(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
-    return this.jobsService.deliver(user.userId, id, {
-      ...this.buildRequestContext(request),
-      requestPath: request.path,
-      requestRoute: 'deliver',
-    }, {
-      bypassPermission: true,
-    });
+  async deliverFromFreeZone(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Req() request: Request) {
+    try {
+      return await this.jobsService.deliver(user.userId, id, {
+        ...this.buildRequestContext(request),
+        requestPath: request.path,
+        requestRoute: 'deliver',
+      }, {
+        bypassPermission: true,
+      });
+    } catch (error) {
+      this.rethrowJobsActionError(error, '立即投递', id);
+    }
   }
 
   @Put(':id/progress')

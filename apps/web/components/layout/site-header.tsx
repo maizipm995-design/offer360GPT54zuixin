@@ -23,6 +23,14 @@ function getUserDisplayName(name?: string | null, phone?: string | null) {
   return (name || phone || '个人中心').trim();
 }
 
+function isUnauthorizedError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes('unauthorized') || message.includes('401');
+}
+
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
@@ -78,7 +86,17 @@ export function SiteHeader() {
     };
 
     const syncUserState = () => {
-      void syncFromOverview().catch(() => syncFromAuthMe().catch(() => undefined));
+      void syncFromOverview().catch((overviewError) => {
+        void syncFromAuthMe().catch((authError) => {
+          if (cancelled) {
+            return;
+          }
+          if (isUnauthorizedError(overviewError) || isUnauthorizedError(authError)) {
+            logout();
+            router.refresh();
+          }
+        });
+      });
     };
 
     const hasPersistedUserState = Boolean(user?.phone && user?.memberRoleCode && Array.isArray(user?.permissionKeys));
@@ -94,7 +112,7 @@ export function SiteHeader() {
         window.clearTimeout(timer);
       }
     };
-  }, [token, updateUser, user?.memberRoleCode, user?.name, user?.permissionKeys, user?.phone]);
+  }, [token, logout, router, updateUser, user?.memberRoleCode, user?.name, user?.permissionKeys, user?.phone]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

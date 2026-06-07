@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { DEGREE_OPTIONS } from '@offer360/shared';
+import { AdminModal } from '@/components/admin/admin-modal';
 import { AdminPagination } from '@/components/admin/admin-pagination';
 import { AdminTable } from '@/components/admin/admin-table';
 import { Button } from '@/components/ui/button';
@@ -51,6 +52,7 @@ export default function AdminUsersPage() {
   const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [editorOpen, setEditorOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [resetPassword, setResetPassword] = useState('');
   const [importFileName, setImportFileName] = useState('');
@@ -98,6 +100,20 @@ export default function AdminUsersPage() {
       intentionJobText: item.preference.intentionJob.join('，'),
       intentionCompanyText: item.preference.intentionCompany.join('，'),
     });
+  };
+
+  const openCreateModal = () => {
+    resetForm();
+    setEditorOpen(true);
+  };
+
+  const openEditModal = (item: AdminUserItem) => {
+    fillForm(item);
+    setEditorOpen(true);
+  };
+
+  const closeEditorModal = () => {
+    setEditorOpen(false);
   };
 
   const resetForm = () => {
@@ -157,6 +173,7 @@ export default function AdminUsersPage() {
       await clientFetch(`/admin/users/${selectedId}`, { method: 'DELETE' });
       setMessage(ADMIN_TOAST_COPY.deleted('用户'));
       resetForm();
+      closeEditorModal();
       await loadData(1, filters);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('用户'));
@@ -280,7 +297,7 @@ export default function AdminUsersPage() {
             <h2 className="text-3xl font-bold text-ink">用户管理</h2>
             <p className="mt-2 text-sm text-muted">集中处理账号、资料、意向标签与邀请关系，并直接执行冻结、恢复、重置密码等运营动作。</p>
           </div>
-          <Button onClick={resetForm}>新增用户</Button>
+          <Button onClick={openCreateModal}>新增用户</Button>
         </div>
       </section>
 
@@ -354,94 +371,94 @@ export default function AdminUsersPage() {
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="space-y-4">
-          <Card className="rounded-3xl p-4">
-            <div className="grid gap-3 md:grid-cols-4">
-              <Input placeholder="搜索手机号 / 姓名 / 邀请码" value={filters.keyword} onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))} />
-              <Select value={filters.membershipStatus} onChange={(e) => setFilters((prev) => ({ ...prev, membershipStatus: e.target.value }))}>
-                <option value="">全部会员状态</option>
-                <option value="member">会员用户</option>
-                <option value="non-member">非会员用户</option>
-              </Select>
-              <Select value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}>
-                <option value="">全部用户状态</option>
-                <option value="active">启用中</option>
-                <option value="inactive">已冻结</option>
-              </Select>
-              <div className="flex gap-2">
-                <Button className="flex-1" onClick={() => void loadData(1, filters)}>搜索</Button>
-                <Button className="flex-1" variant="secondary" onClick={() => void handleReset()}>重置</Button>
-              </div>
+      <section className="space-y-4">
+        <Card className="rounded-3xl p-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <Input placeholder="搜索手机号 / 姓名 / 邀请码" value={filters.keyword} onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))} />
+            <Select value={filters.membershipStatus} onChange={(e) => setFilters((prev) => ({ ...prev, membershipStatus: e.target.value }))}>
+              <option value="">全部会员状态</option>
+              <option value="member">会员用户</option>
+              <option value="non-member">非会员用户</option>
+            </Select>
+            <Select value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}>
+              <option value="">全部用户状态</option>
+              <option value="active">启用中</option>
+              <option value="inactive">已冻结</option>
+            </Select>
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={() => void loadData(1, filters)}>搜索</Button>
+              <Button className="flex-1" variant="secondary" onClick={() => void handleReset()}>重置</Button>
             </div>
-          </Card>
+          </div>
+        </Card>
 
-          <AdminTable headers={['手机号', '姓名', '邀请码', '用户状态', '会员类型 / 剩余时长', '钱包余额', '注册时间']} hasData={data.list.length > 0} emptyText={loading ? '用户数据加载中...' : '暂无用户数据'}>
-            {data.list.map((item) => (
-              <tr
-                key={item.id}
-                className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
-                onClick={() => fillForm(item)}
-              >
-                <td className="px-4 py-3 font-medium text-ink">{item.phone}</td>
-                <td className="px-4 py-3 text-slate-600">{item.profile?.name || '-'}</td>
-                <td className="px-4 py-3 text-slate-600">{item.inviteCode}</td>
-                <td className="px-4 py-3 text-slate-600">{item.status === 'active' ? '启用中' : '已冻结'}</td>
-                <td className="px-4 py-3 text-slate-600">
-                  {!item.membership
-                    ? '非会员'
-                    : item.membership.isActive
-                      ? `${item.membership.memberLevelLabel} · 剩余 ${item.membership.remainingDays} 天`
-                      : `${item.membership.memberLevelLabel} · 已过期`}
-                </td>
-                <td className="px-4 py-3 text-slate-600">{formatCurrency(item.wallet?.availableBalance ?? 0)}</td>
-                <td className="px-4 py-3 text-slate-600">{formatDate(item.createdAt)}</td>
-              </tr>
-            ))}
-          </AdminTable>
+        <AdminTable headers={['手机号', '姓名', '邀请码', '用户状态', '会员类型 / 剩余时长', '钱包余额', '注册时间']} hasData={data.list.length > 0} emptyText={loading ? '用户数据加载中...' : '暂无用户数据'}>
+          {data.list.map((item) => (
+            <tr
+              key={item.id}
+              className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
+              onClick={() => openEditModal(item)}
+            >
+              <td className="px-4 py-3 font-medium text-ink">{item.phone}</td>
+              <td className="px-4 py-3 text-slate-600">{item.profile?.name || '-'}</td>
+              <td className="px-4 py-3 text-slate-600">{item.inviteCode}</td>
+              <td className="px-4 py-3 text-slate-600">{item.status === 'active' ? '启用中' : '已冻结'}</td>
+              <td className="px-4 py-3 text-slate-600">
+                {!item.membership
+                  ? '非会员'
+                  : item.membership.isActive
+                    ? `${item.membership.memberLevelLabel} · 剩余 ${item.membership.remainingDays} 天`
+                    : `${item.membership.memberLevelLabel} · 已过期`}
+              </td>
+              <td className="px-4 py-3 text-slate-600">{formatCurrency(item.wallet?.availableBalance ?? 0)}</td>
+              <td className="px-4 py-3 text-slate-600">{formatDate(item.createdAt)}</td>
+            </tr>
+          ))}
+        </AdminTable>
 
-          <AdminPagination
-            page={data.pagination.page || 1}
-            limit={data.pagination.limit || 10}
-            total={data.pagination.total || 0}
-            onPageChange={(nextPage) => void loadData(nextPage, filters)}
-          />
-        </div>
+        <AdminPagination
+          page={data.pagination.page || 1}
+          limit={data.pagination.limit || 10}
+          total={data.pagination.total || 0}
+          onPageChange={(nextPage) => void loadData(nextPage, filters)}
+        />
+      </section>
 
-        <Card className="rounded-3xl p-5 xl:sticky xl:top-6 xl:self-start">
+      <AdminModal
+        open={editorOpen}
+        title={selectedUser ? '编辑用户' : '新增用户'}
+        description="密码字段仅在新增或需要重置密码时填写。"
+        onClose={closeEditorModal}
+      >
+        <div className="space-y-5">
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-xl font-semibold text-ink">{selectedUser ? '编辑用户' : '新增用户'}</h3>
-              <p className="mt-1 text-sm text-muted">密码字段仅在新增或需要重置密码时填写。</p>
-            </div>
-            {selectedUser ? <Button variant="ghost" onClick={resetForm}>切换新增</Button> : null}
+            <div className="text-sm text-muted">弹窗内展示完整用户表单，避免右侧固定列挤压字段。</div>
+            {selectedUser ? <Button variant="ghost" onClick={openCreateModal}>切换新增</Button> : null}
           </div>
 
-          <div className="mt-5 space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
             <Input placeholder="手机号" value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))} />
             <Input type="text" placeholder={selectedUser ? '留空则不修改密码' : '初始密码'} value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} />
             <Input placeholder="姓名" value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
-            <div className="grid grid-cols-2 gap-3">
-              <Input type="number" placeholder="毕业年份" value={form.graduationYear} onChange={(e) => setForm((prev) => ({ ...prev, graduationYear: e.target.value }))} />
-              <Select value={form.degree} onChange={(e) => setForm((prev) => ({ ...prev, degree: e.target.value }))}>
-                {DEGREE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              </Select>
-            </div>
-            <Input placeholder="毕业学校" value={form.schoolName} onChange={(e) => setForm((prev) => ({ ...prev, schoolName: e.target.value }))} />
-            <Input placeholder="专业" value={form.major} onChange={(e) => setForm((prev) => ({ ...prev, major: e.target.value }))} />
-            <Input placeholder="上级邀请码（可选）" value={form.parentInviteCode} onChange={(e) => setForm((prev) => ({ ...prev, parentInviteCode: e.target.value }))} />
+            <Input type="number" placeholder="毕业年份" value={form.graduationYear} onChange={(e) => setForm((prev) => ({ ...prev, graduationYear: e.target.value }))} />
+            <Select value={form.degree} onChange={(e) => setForm((prev) => ({ ...prev, degree: e.target.value }))}>
+              {DEGREE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </Select>
             <Select value={form.status} onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}>
               <option value="active">启用中</option>
               <option value="inactive">已冻结</option>
             </Select>
-            <Input placeholder="意向城市，多个用逗号分隔" value={form.intentionCityText} onChange={(e) => setForm((prev) => ({ ...prev, intentionCityText: e.target.value }))} />
-            <Input placeholder="意向岗位，多个用逗号分隔" value={form.intentionJobText} onChange={(e) => setForm((prev) => ({ ...prev, intentionJobText: e.target.value }))} />
-            <Input placeholder="意向公司，多个用逗号分隔" value={form.intentionCompanyText} onChange={(e) => setForm((prev) => ({ ...prev, intentionCompanyText: e.target.value }))} />
+            <Input placeholder="毕业学校" value={form.schoolName} onChange={(e) => setForm((prev) => ({ ...prev, schoolName: e.target.value }))} />
+            <Input placeholder="专业" value={form.major} onChange={(e) => setForm((prev) => ({ ...prev, major: e.target.value }))} />
+            <Input className="lg:col-span-2" placeholder="上级邀请码（可选）" value={form.parentInviteCode} onChange={(e) => setForm((prev) => ({ ...prev, parentInviteCode: e.target.value }))} />
+            <Input className="lg:col-span-2" placeholder="意向城市，多个用逗号分隔" value={form.intentionCityText} onChange={(e) => setForm((prev) => ({ ...prev, intentionCityText: e.target.value }))} />
+            <Input className="lg:col-span-2" placeholder="意向岗位，多个用逗号分隔" value={form.intentionJobText} onChange={(e) => setForm((prev) => ({ ...prev, intentionJobText: e.target.value }))} />
+            <Input className="lg:col-span-2" placeholder="意向公司，多个用逗号分隔" value={form.intentionCompanyText} onChange={(e) => setForm((prev) => ({ ...prev, intentionCompanyText: e.target.value }))} />
           </div>
 
           {selectedUser ? (
-            <>
-              <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
                 <p>邀请码：{selectedUser.inviteCode}</p>
                 <p className="mt-1">上级用户：{selectedUser.parentPhone || '暂无'}</p>
                 <p className="mt-1">用户状态：{selectedUser.status === 'active' ? '启用中' : '已冻结'}</p>
@@ -449,7 +466,7 @@ export default function AdminUsersPage() {
                 <p className="mt-1">最后登录：{formatDate(selectedUser.lastLoginAt)}</p>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-sm font-semibold text-ink">运营动作</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <Button variant="secondary" onClick={() => void handleUpdateUserStatus(selectedUser.status === 'active' ? 'inactive' : 'active')} disabled={statusSaving}>
@@ -464,14 +481,15 @@ export default function AdminUsersPage() {
                   </Button>
                 </div>
               </div>
-            </>
+            </div>
           ) : null}
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Button className="flex-1" onClick={handleSubmit} disabled={saving}>{saving ? '保存中...' : '保存用户'}</Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={closeEditorModal}>取消</Button>
+            <Button onClick={handleSubmit} disabled={saving}>{saving ? '保存中...' : '保存用户'}</Button>
           </div>
-        </Card>
-      </section>
+        </div>
+      </AdminModal>
     </div>
   );
 }

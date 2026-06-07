@@ -1,5 +1,5 @@
 # offer360项目开发记忆档案
-> 版本：v1.6 | 更新时间：2026-05-20 | 状态：开发中 | 唯一官方交接文档
+> 版本：v1.7 | 更新时间：2026-06-03 | 状态：开发中 | 唯一官方交接文档
 
 ---
 
@@ -266,6 +266,7 @@ apps/web/components
 16. **2026-05-18 标准化词典验收口径**：同步后不能只看总数，必须同时校验`normalization_terms`按`domain`分布一致；当前基线为`COMPANY=23`、`DEGREE=5`、`JOB_TITLE=39`、`LOCATION=320`、`MAJOR=24`，且`normalization_aliases`、`location_hierarchies`当前均应全部为`active`
 17. **2026-05-18 标准化词典回滚路径**：本次云端同步前备份已落在`/opt/offer360/deploy/prod/runtime/manual-sync-backups/normalization-before-*.sql`；后续若再同步该模块，必须先备份再导入，并继续使用`mysqldump --complete-insert --replace`避免跨环境字段顺序风险
 18. **2026-05-18 求职服务页文案规则**：`/services`首屏第一屏文案必须站在用户价值与营销表达角度书写，禁止出现“页面数据来自商品库”“前后端同步”“已上架几款商品”这类研发/后台视角描述；当前定稿主标题为“求职这条路，不该只靠你一个人硬扛”，且首行“求职服务”标签已删除，主标题颜色改为主题色`text-brand`，副文案强调从简历精修到求职陪跑的全链路陪伴感与结果导向
+19. **2026-06-03 标准发布上线记忆**：本次最新代码已按`docs/自动化标准部署手册.md`执行标准生产发布，发布标签为`20260603-024919`；本地通过`deploy/prod/scripts/package-release.sh`生成离线包`dist/offer360-offline-20260603-024919.tar`，上传至服务器`/opt/offer360`后，再由`/opt/offer360/deploy/prod/scripts/deploy-release.sh`完成导入镜像、数据库备份、结构校验、业务容器重建与验收。当前生产`release-state.env`已切换为`CURRENT_APP_IMAGE_TAG=\"20260603-024919\"`、`PREVIOUS_APP_IMAGE_TAG=\"20260603-015341\"`，`api`、`web`、`wechat-pay-gateway`三类业务容器均已运行在新标签，`mysql`、`redis`、`elasticsearch`保持原地健康运行；部署日志已确认本地入口、公网入口静态资源校验以及`robots.txt`/`sitemap.xml` SEO 验收全部通过
 
 ---
 

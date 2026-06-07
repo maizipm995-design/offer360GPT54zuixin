@@ -1,6 +1,5 @@
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
-import { JwtService } from '@nestjs/jwt';
 import { JobAnnouncement, Prisma } from '@prisma/client';
 import { RedisService } from '../../common/redis/redis.service';
 import {
@@ -65,7 +64,7 @@ type JobAccessRequestContext = {
   deviceId?: string | null;
   sessionId?: string | null;
   requestPath?: string | null;
-  requestRoute?: 'list' | 'detail' | 'view_announcement' | 'deliver' | 'announcement_redirect' | 'delivery_redirect';
+  requestRoute?: 'list' | 'detail' | 'view_announcement' | 'deliver';
   page?: number | null;
   limit?: number | null;
   filterFingerprint?: string | null;
@@ -81,13 +80,12 @@ type JobRiskSubject = {
 type JobActionAccessOptions = {
   bypassPermission?: boolean;
 };
-type ControlledJobAccessTokenPayload = {
-  sub?: string;
-  jobId?: string;
-  purpose?: 'jobs:view-announcement' | 'jobs:deliver';
-  tokenId?: string;
-  deviceIdHash?: string;
-  sessionIdHash?: string;
+type JobActionRiskPolicy = {
+  skipIpAndDeviceControls?: boolean;
+  skipSharedNetworkHeuristics?: boolean;
+  skipUserCooldownAndRestrict?: boolean;
+  actionLimitMultiplier?: number;
+  abnormalThresholdMultiplier?: number;
 };
 type JobFreezePayload = {
   reason: string;
@@ -113,13 +111,10 @@ type JobAccessAuditDraft = {
   membershipId?: string | null;
   memberLevel?: string | null;
   action: JobsAccessAction;
-  requestStatus: 'issued' | 'consumed' | 'denied' | 'expired';
-  accessTokenId?: string | null;
-  redirectTargetType?: string | null;
+  requestStatus: 'consumed' | 'denied';
   limitHit?: boolean;
   riskHit?: boolean;
   failureReason?: string | null;
-  expiresAt?: Date | null;
   consumedAt?: Date | null;
   context?: JobAccessRequestContext;
 };
@@ -146,18 +141,6 @@ type JobAccessLogDelegate = {
       reviewStatus: string;
     };
   }) => Promise<unknown>;
-  findUnique: (args: { where: { accessTokenId: string } }) => Promise<{
-    jobId: string;
-    userId: string | null;
-    accessTokenId: string | null;
-    requestStatus: string;
-    consumedAt: Date | null;
-    expiresAt: Date | null;
-  } | null>;
-  update: (args: {
-    where: { accessTokenId: string };
-    data: Record<string, unknown>;
-  }) => Promise<unknown>;
 };
 
 const FIXED_DEGREE_OPTIONS = ['专科', '本科', '硕士', '博士'] as const;
@@ -180,6 +163,7 @@ const FIXED_ENTERPRISE_NATURE_OPTIONS = [
   '其他',
 ] as const;
 const FIXED_RECRUITMENT_TYPE_OPTIONS = ['全职', '秋招', '春招', '校招', '实习'] as const;
+const JOB_ACCESS_FAILURE_REASON_MAX_LENGTH = 100;
 
 const DEGREE_FILTER_ALIASES: Record<(typeof FIXED_DEGREE_OPTIONS)[number], string[]> = {
   专科: ['专科', '大专'],
@@ -218,9 +202,10 @@ const RECRUITMENT_TYPE_FILTER_ALIASES: Record<(typeof FIXED_RECRUITMENT_TYPE_OPT
 
 @Injectable()
 export class JobsService {
+  private readonly logger = new Logger(JobsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
     private readonly jobsRecommendationService: JobsRecommendationService,
     private readonly jobsMetricsService: JobsMetricsService,
     private readonly normalizationService: JobsNormalizationService,
@@ -286,15 +271,17 @@ export class JobsService {
     const access = await this.getMemberAccess(currentUserId);
     this.assertListQueryPermissions(query, access, currentUserId);
     await this.assertNoActiveRiskControl(currentUserId, context);
-    await this.evaluateListBrowsingPatterns(
-      currentUserId,
-      this.buildListRiskContext(query, {
-        ...context,
-        requestRoute: context?.requestRoute ?? 'list',
-        page,
-        limit,
-      }),
-    );
+    if (this.shouldEvaluateListBrowsingPatterns(query, currentUserId)) {
+      await this.evaluateListBrowsingPatterns(
+        currentUserId,
+        this.buildListRiskContext(query, {
+          ...context,
+          requestRoute: context?.requestRoute ?? 'list',
+          page,
+          limit,
+        }),
+      );
+    }
     const where = await this.buildListWhere(query, currentUserId);
     const includeTracking = currentUserId
       ? { trackings: { where: { userId: currentUserId }, take: 1 } }
@@ -368,115 +355,20 @@ export class JobsService {
   async viewAnnouncement(userId: string, id: string, context?: JobAccessRequestContext, options?: JobActionAccessOptions) {
     const job = await this.ensurePublishedJob(id);
     const announcementUrl = resolveValidAnnouncementUrl(job.announcementUrl);
-    const membershipAudit = await this.getMembershipAuditSnapshot(userId);
-    let access: MemberAccessSnapshot | null = null;
 
     if (!options?.bypassPermission) {
-      try {
-        access = await assertUserHasMemberPermission(this.prisma, userId, 'jobs:detail:view', '标准会员及以上可查看招聘公告详情');
-      } catch (error) {
-        await this.createJobAccessAudit({
-          jobId: id,
-          userId,
-          membershipId: membershipAudit.membershipId,
-          memberLevel: membershipAudit.memberLevel,
-          action: 'view_announcement',
-          requestStatus: 'denied',
-          failureReason: this.resolveErrorMessage(error, '当前会员权益暂不支持查看招聘公告'),
-          context,
-        });
-        throw error;
-      }
-    } else {
-      access = await this.getMemberAccess(userId);
-    }
-
-    try {
-      await this.assertActionWithinLimit(userId, 'view_announcement', context);
-      await this.evaluateAbnormalPatterns(userId, id, context);
-    } catch (error) {
-      const isFreeze = error instanceof HttpException && error.getStatus() === HttpStatus.FORBIDDEN;
-      const isLimit = error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS;
-
-      await this.createJobAccessAudit({
-        jobId: id,
-        userId,
-        membershipId: membershipAudit.membershipId,
-        memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-        action: 'view_announcement',
-        requestStatus: 'denied',
-        limitHit: isLimit,
-        riskHit: isFreeze,
-        failureReason: this.resolveErrorMessage(error, '查看公告过于频繁，请稍后再试'),
-        context,
-      });
-      throw error;
+      await assertUserHasMemberPermission(this.prisma, userId, 'jobs:detail:view', '标准会员及以上可查看招聘公告详情');
     }
 
     if (!announcementUrl) {
-      await this.createJobAccessAudit({
-        jobId: id,
-        userId,
-        membershipId: membershipAudit.membershipId,
-        memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-        action: 'view_announcement',
-        requestStatus: 'denied',
-        failureReason: '当前岗位暂无公告链接',
-        context,
-      });
       throw new NotFoundException('当前岗位暂无公告链接');
     }
 
     await this.jobsMetricsService.recordAccessClick(id, 'view_announcement');
-    await this.createJobAccessAudit({
-      jobId: id,
-      userId,
-      membershipId: membershipAudit.membershipId,
-      memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-      action: 'view_announcement',
-      requestStatus: 'consumed',
-      redirectTargetType: 'announcement',
-      consumedAt: new Date(),
-      context,
-    });
 
     return {
       announcementUrl,
-      redirectPath: announcementUrl,
     };
-  }
-
-  async resolveAnnouncementRedirect(id: string, accessToken?: string, context?: JobAccessRequestContext) {
-    const { accessLog } = await this.validateControlledAccessToken(id, accessToken, context, {
-      action: 'view_announcement',
-      purpose: 'jobs:view-announcement',
-      missingTokenMessage: '缺少公告访问凭证',
-      invalidTokenMessage: '公告访问凭证无效',
-      expiredTokenMessage: '公告访问凭证已失效，请重新申请查看',
-      missingAccessLogMessage: '公告访问凭证未签发或已失效',
-      usedTokenMessage: '公告访问凭证已被使用，请重新申请查看',
-      bindingMismatchMessage: '公告访问凭证与当前设备或会话不一致，请返回岗位列表重新申请',
-    });
-
-    const job = await this.ensurePublishedJob(id);
-    const announcementUrl = resolveValidAnnouncementUrl(job.announcementUrl);
-    if (!announcementUrl) {
-      await this.updateJobAccessAudit(accessLog.accessTokenId, {
-        requestStatus: 'denied',
-        failureReason: '当前岗位暂无公告链接',
-        context,
-      });
-      throw new NotFoundException('当前岗位暂无公告链接');
-    }
-
-    await this.updateJobAccessAudit(accessLog.accessTokenId, {
-      requestStatus: 'consumed',
-      consumedAt: new Date(),
-      redirectTargetType: 'announcement',
-      context,
-    });
-
-    return announcementUrl;
   }
 
   async getDetail(id: string, currentUserId?: string | null, context?: JobAccessRequestContext) {
@@ -530,62 +422,12 @@ export class JobsService {
   async deliver(userId: string, id: string, context?: JobAccessRequestContext, options?: JobActionAccessOptions) {
     const job = await this.ensurePublishedJob(id);
     const deliveryTarget = resolveValidDeliveryTarget(job.deliveryUrl);
-    const membershipAudit = await this.getMembershipAuditSnapshot(userId);
-    let access: MemberAccessSnapshot | null = null;
 
     if (!options?.bypassPermission) {
-      try {
-        access = await assertUserHasMemberPermission(this.prisma, userId, 'jobs:deliver:use', '标准会员及以上可使用立即投递');
-      } catch (error) {
-        await this.createJobAccessAudit({
-          jobId: id,
-          userId,
-          membershipId: membershipAudit.membershipId,
-          memberLevel: membershipAudit.memberLevel,
-          action: 'deliver',
-          requestStatus: 'denied',
-          failureReason: this.resolveErrorMessage(error, '当前会员权益暂不支持立即投递'),
-          context,
-        });
-        throw error;
-      }
-    } else {
-      access = await this.getMemberAccess(userId);
-    }
-
-    try {
-      await this.assertActionWithinLimit(userId, 'deliver', context);
-      await this.evaluateAbnormalPatterns(userId, id, context);
-    } catch (error) {
-      const isFreeze = error instanceof HttpException && error.getStatus() === HttpStatus.FORBIDDEN;
-      const isLimit = error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS;
-
-      await this.createJobAccessAudit({
-        jobId: id,
-        userId,
-        membershipId: membershipAudit.membershipId,
-        memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-        action: 'deliver',
-        requestStatus: 'denied',
-        limitHit: isLimit,
-        riskHit: isFreeze,
-        failureReason: this.resolveErrorMessage(error, '投递操作过于频繁，请稍后再试'),
-        context,
-      });
-      throw error;
+      await assertUserHasMemberPermission(this.prisma, userId, 'jobs:deliver:use', '标准会员及以上可使用立即投递');
     }
 
     if (!deliveryTarget) {
-      await this.createJobAccessAudit({
-        jobId: id,
-        userId,
-        membershipId: membershipAudit.membershipId,
-        memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-        action: 'deliver',
-        requestStatus: 'denied',
-        failureReason: '当前岗位暂无投递入口',
-        context,
-      });
       throw new NotFoundException('当前岗位暂无投递入口');
     }
 
@@ -611,18 +453,6 @@ export class JobsService {
     });
 
     if (result.deliveryType === 'email') {
-      await this.createJobAccessAudit({
-        jobId: id,
-        userId,
-        membershipId: membershipAudit.membershipId,
-        memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-        action: 'deliver',
-        requestStatus: 'consumed',
-        redirectTargetType: 'email',
-        consumedAt: new Date(),
-        context,
-      });
-
       invalidateJobsRecommendationCacheByUserId(userId);
       return {
         action: 'show_email_modal',
@@ -632,59 +462,14 @@ export class JobsService {
         progressStatus: result.progressStatus,
       };
     }
-    await this.createJobAccessAudit({
-      jobId: id,
-      userId,
-      membershipId: membershipAudit.membershipId,
-      memberLevel: membershipAudit.memberLevel ?? access?.memberLevel ?? null,
-      action: 'deliver',
-      requestStatus: 'consumed',
-      consumedAt: new Date(),
-      redirectTargetType: result.deliveryType,
-      context,
-    });
 
     invalidateJobsRecommendationCacheByUserId(userId);
     return {
       action: 'open_link',
       deliveryType: result.deliveryType,
       deliveryUrl: deliveryTarget,
-      redirectPath: deliveryTarget,
       progressStatus: result.progressStatus,
     };
-  }
-
-  async resolveDeliveryRedirect(id: string, accessToken?: string, context?: JobAccessRequestContext) {
-    const { accessLog } = await this.validateControlledAccessToken(id, accessToken, context, {
-      action: 'deliver',
-      purpose: 'jobs:deliver',
-      missingTokenMessage: '缺少投递访问凭证',
-      invalidTokenMessage: '投递访问凭证无效',
-      expiredTokenMessage: '投递访问凭证已失效，请重新申请投递',
-      missingAccessLogMessage: '投递访问凭证未签发或已失效',
-      usedTokenMessage: '投递访问凭证已被使用，请重新申请投递',
-      bindingMismatchMessage: '投递访问凭证与当前设备或会话不一致，请返回岗位列表重新申请',
-    });
-
-    const job = await this.ensurePublishedJob(id);
-    const deliveryTarget = resolveValidDeliveryTarget(job.deliveryUrl);
-    if (!deliveryTarget) {
-      await this.updateJobAccessAudit(accessLog.accessTokenId, {
-        requestStatus: 'denied',
-        failureReason: '当前岗位暂无投递入口',
-        context,
-      });
-      throw new NotFoundException('当前岗位暂无投递入口');
-    }
-
-    await this.updateJobAccessAudit(accessLog.accessTokenId, {
-      requestStatus: 'consumed',
-      consumedAt: new Date(),
-      redirectTargetType: resolveJobDeliveryMethod(deliveryTarget),
-      context,
-    });
-
-    return deliveryTarget;
   }
 
   async updateProgress(userId: string, id: string, dto: UpdateProgressDto, options?: JobActionAccessOptions) {
@@ -727,13 +512,22 @@ export class JobsService {
     };
   }
 
-  private decodeControlledAccessToken(accessToken: string) {
-    const decoded = this.jwtService.decode(accessToken);
-    return (decoded && typeof decoded === 'object' ? decoded : null) as ControlledJobAccessTokenPayload | null;
-  }
-
   private resolveErrorMessage(error: unknown, fallback: string) {
     return error instanceof Error && error.message ? error.message : fallback;
+  }
+
+  private normalizeFailureReason(reason?: string | null) {
+    if (!reason) {
+      return null;
+    }
+    const normalized = reason.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return null;
+    }
+    if (normalized.length <= JOB_ACCESS_FAILURE_REASON_MAX_LENGTH) {
+      return normalized;
+    }
+    return `${normalized.slice(0, JOB_ACCESS_FAILURE_REASON_MAX_LENGTH - 1)}…`;
   }
 
   private async getMembershipAuditSnapshot(userId: string) {
@@ -752,189 +546,34 @@ export class JobsService {
   }
 
   private async createJobAccessAudit(draft: JobAccessAuditDraft) {
-    await this.jobAccessLogDelegate.create({
-      data: {
-        jobId: draft.jobId,
-        userId: draft.userId ?? null,
-        membershipId: draft.membershipId ?? null,
-        memberLevel: draft.memberLevel ?? null,
-        action: draft.action,
-        requestStatus: draft.requestStatus,
-        accessTokenId: draft.accessTokenId ?? null,
-        redirectTargetType: draft.redirectTargetType ?? null,
-        limitHit: draft.limitHit ?? false,
-        riskHit: draft.riskHit ?? false,
-        failureReason: draft.failureReason ?? null,
-        consumedAt: draft.consumedAt ?? null,
-        expiresAt: draft.expiresAt ?? null,
-        ip: draft.context?.ip ?? null,
-        userAgent: draft.context?.userAgent ?? null,
-        deviceId: draft.context?.deviceId ?? null,
-        sessionId: draft.context?.sessionId ?? null,
-        reviewStatus: draft.limitHit || draft.riskHit ? 'pending' : 'not_required',
-      },
-    });
-  }
-
-  private async updateJobAccessAudit(accessTokenId: string | null | undefined, draft: Omit<JobAccessAuditDraft, 'jobId' | 'action'>) {
-    if (!accessTokenId) {
-      return;
-    }
-
-    await this.jobAccessLogDelegate.update({
-      where: { accessTokenId },
-      data: {
-        requestStatus: draft.requestStatus,
-        redirectTargetType: draft.redirectTargetType ?? undefined,
-        limitHit: draft.limitHit,
-        riskHit: draft.riskHit,
-        failureReason: draft.failureReason ?? undefined,
-        consumedAt: draft.consumedAt ?? undefined,
-        expiresAt: draft.expiresAt ?? undefined,
-        ip: draft.context?.ip ?? undefined,
-        userAgent: draft.context?.userAgent ?? undefined,
-        deviceId: draft.context?.deviceId ?? undefined,
-        sessionId: draft.context?.sessionId ?? undefined,
-      },
-    });
-  }
-
-  private async markControlledAccessFailure(
-    payload: ControlledJobAccessTokenPayload | null | undefined,
-    requestedJobId: string,
-    failureReason: string,
-    context?: JobAccessRequestContext,
-    requestStatus: 'denied' | 'expired' = 'denied',
-  ) {
-    if (payload?.tokenId) {
-      const existing = await this.jobAccessLogDelegate.findUnique({
-        where: { accessTokenId: payload.tokenId },
-      });
-      if (existing) {
-        if (!existing.consumedAt) {
-          await this.updateJobAccessAudit(payload.tokenId, {
-            requestStatus,
-            failureReason,
-            context,
-          });
-        }
-        return;
-      }
-    }
-
-    await this.createJobAccessAudit({
-      jobId: payload?.jobId ?? requestedJobId,
-      userId: payload?.sub ?? null,
-      action: this.resolveAuditActionByPurpose(payload?.purpose),
-      requestStatus,
-      accessTokenId: payload?.tokenId ?? null,
-      failureReason,
-      context,
-    });
-  }
-
-  private assertControlledAccessBinding(
-    payload: ControlledJobAccessTokenPayload,
-    context: JobAccessRequestContext | undefined,
-    failureMessage: string,
-  ) {
-    if (!payload.deviceIdHash && !payload.sessionIdHash) {
-      throw new ForbiddenException(failureMessage);
-    }
-
-    const deviceId = context?.deviceId?.trim() || null;
-    const sessionId = context?.sessionId?.trim() || null;
-
-    if (payload.deviceIdHash && (!deviceId || this.hashContextIdentifier(deviceId) !== payload.deviceIdHash)) {
-      throw new ForbiddenException(failureMessage);
-    }
-    if (payload.sessionIdHash && (!sessionId || this.hashContextIdentifier(sessionId) !== payload.sessionIdHash)) {
-      throw new ForbiddenException(failureMessage);
-    }
-  }
-
-  private async validateControlledAccessToken(
-    id: string,
-    accessToken: string | undefined,
-    context: JobAccessRequestContext | undefined,
-    options: {
-      action: JobsAccessAction;
-      purpose: ControlledJobAccessTokenPayload['purpose'];
-      missingTokenMessage: string;
-      invalidTokenMessage: string;
-      expiredTokenMessage: string;
-      missingAccessLogMessage: string;
-      usedTokenMessage: string;
-      bindingMismatchMessage: string;
-    },
-  ) {
-    if (!accessToken?.trim()) {
-      await this.createJobAccessAudit({
-        jobId: id,
-        action: options.action,
-        requestStatus: 'denied',
-        failureReason: options.missingTokenMessage,
-        context,
-      });
-      throw new BadRequestException(options.missingTokenMessage);
-    }
-
-    const decodedPayload = this.decodeControlledAccessToken(accessToken);
-    let payload: ControlledJobAccessTokenPayload;
-
     try {
-      payload = this.jwtService.verify<ControlledJobAccessTokenPayload>(accessToken);
-
-      if (payload.purpose !== options.purpose || payload.jobId !== id || !payload.sub || !payload.tokenId) {
-        await this.markControlledAccessFailure(decodedPayload, id, options.invalidTokenMessage, context);
-        throw new BadRequestException(options.invalidTokenMessage);
-      }
-
-      this.assertControlledAccessBinding(payload, context, options.bindingMismatchMessage);
-    } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      if (error instanceof ForbiddenException) {
-        await this.markControlledAccessFailure(decodedPayload, id, this.resolveErrorMessage(error, options.bindingMismatchMessage), context);
-        throw error;
-      }
-      await this.markControlledAccessFailure(decodedPayload, id, options.expiredTokenMessage, context, 'expired');
-      throw new ForbiddenException(options.expiredTokenMessage);
-    }
-
-    const accessLog = await this.jobAccessLogDelegate.findUnique({
-      where: { accessTokenId: payload.tokenId },
-    });
-
-    if (!accessLog || accessLog.jobId !== id || accessLog.userId !== payload.sub) {
-      await this.markControlledAccessFailure(payload, id, options.missingAccessLogMessage, context);
-      throw new ForbiddenException(options.invalidTokenMessage);
-    }
-    if (accessLog.consumedAt || accessLog.requestStatus === 'consumed') {
-      throw new ForbiddenException(options.usedTokenMessage);
-    }
-    if (accessLog.expiresAt && accessLog.expiresAt.getTime() <= Date.now()) {
-      await this.updateJobAccessAudit(accessLog.accessTokenId, {
-        requestStatus: 'expired',
-        failureReason: options.expiredTokenMessage,
-        context,
+      await this.jobAccessLogDelegate.create({
+        data: {
+          jobId: draft.jobId,
+          userId: draft.userId ?? null,
+          membershipId: draft.membershipId ?? null,
+          memberLevel: draft.memberLevel ?? null,
+          action: draft.action,
+          requestStatus: draft.requestStatus,
+          accessTokenId: null,
+          redirectTargetType: null,
+          limitHit: draft.limitHit ?? false,
+          riskHit: draft.riskHit ?? false,
+          failureReason: this.normalizeFailureReason(draft.failureReason),
+          consumedAt: draft.consumedAt ?? null,
+          expiresAt: null,
+          ip: draft.context?.ip ?? null,
+          userAgent: draft.context?.userAgent ?? null,
+          deviceId: draft.context?.deviceId ?? null,
+          sessionId: draft.context?.sessionId ?? null,
+          reviewStatus: draft.limitHit || draft.riskHit ? 'pending' : 'not_required',
+        },
       });
-      throw new ForbiddenException(options.expiredTokenMessage);
+    } catch (error) {
+      this.logger.warn(
+        `岗位访问审计写入失败: action=${draft.action}, status=${draft.requestStatus}, jobId=${draft.jobId}, reason=${this.resolveErrorMessage(error, 'unknown error')}`,
+      );
     }
-
-    return { payload, accessLog };
-  }
-
-  private hashContextIdentifier(value: string) {
-    return createHash('sha256').update(value).digest('hex');
-  }
-
-  private resolveAuditActionByPurpose(purpose?: ControlledJobAccessTokenPayload['purpose'] | null): JobsAccessAction {
-    if (purpose === 'jobs:deliver') {
-      return 'deliver';
-    }
-    return 'view_announcement';
   }
 
   private async getMemberAccess(userId?: string | null) {
@@ -987,6 +626,35 @@ export class JobsService {
     if (query.progressStatus && query.progressStatus !== '全部' && !currentUserId) {
       throw new ForbiddenException('登录后才可按求职进度筛选岗位');
     }
+  }
+
+  private hasInteractiveListFilters(query: QueryJobsDto) {
+    return Boolean(
+      query.keyword?.trim()
+      || query.cityKeyword?.trim()
+      || query.companyName?.trim()
+      || query.positionName?.trim()
+      || query.major?.trim()
+      || query.degreeRequirement?.length
+      || query.enterpriseNature?.length
+      || query.recruitmentType?.length
+      || query.updatedWithinDays?.length
+      || query.workLocation?.length
+      || query.degree?.length
+      || query.jobType?.length
+      || (query.progressStatus && query.progressStatus !== '全部')
+      || query.userId?.trim()
+    );
+  }
+
+  private shouldEvaluateListBrowsingPatterns(query: QueryJobsDto, currentUserId?: string | null) {
+    // 登录用户的列表浏览以人工筛选、翻页为主，继续用粗粒度翻页节奏风控会误伤正常使用。
+    // 对已登录账号放开列表翻页风控，保留更强的动作级访问控制和设备/IP 级异常识别。
+    if (currentUserId) {
+      return false;
+    }
+
+    return !this.hasInteractiveListFilters(query) || Boolean(query.page && query.page > 1);
   }
 
   private buildListRiskContext(query: QueryJobsDto, context?: JobAccessRequestContext): JobAccessRequestContext {
@@ -1051,15 +719,20 @@ export class JobsService {
     ];
   }
 
-  private async assertActionWithinLimit(userId: string | null | undefined, action: JobsAccessAction, context?: JobAccessRequestContext) {
+  private async assertActionWithinLimit(
+    userId: string | null | undefined,
+    action: JobsAccessAction,
+    context?: JobAccessRequestContext,
+    riskPolicy?: JobActionRiskPolicy,
+  ) {
     const riskConfig = await this.getJobsRiskRuntimeConfig();
     const config = this.resolveActionLimitConfig(riskConfig, action);
     const exceededMessage = this.resolveActionExceededMessage(action);
     const now = Date.now();
-    const subjects = this.resolveAccessLimitSubjects(userId, context);
+    const subjects = this.resolveAccessLimitSubjects(userId, context, riskPolicy);
 
     // 1. 检查是否已有生效中的冷却/限制/冻结动作
-    await this.assertNoActiveRiskControl(userId, context);
+    await this.assertNoActiveRiskControl(userId, context, riskPolicy);
 
     // 2. 按主体维度检查每日上限
     const today = new Date().toISOString().split('T')[0];
@@ -1070,7 +743,11 @@ export class JobsService {
         await this.redisService.expire(dailyKey, 24 * 60 * 60);
       }
 
-      const dailyMax = this.resolveScopedLimit(config.perDay, subject.scope, riskConfig);
+      const dailyMax = this.applyActionLimitMultiplier(
+        this.resolveScopedLimit(config.perDay, subject.scope, riskConfig),
+        subject.scope,
+        riskPolicy,
+      );
       if (dailyCount > dailyMax) {
         if (subject.scope !== 'session') {
           await this.applyRiskDecision(subject.scope, subject.identifier, {
@@ -1097,7 +774,11 @@ export class JobsService {
         const count = await this.redisService.zcard(windowKey);
         await this.redisService.expire(windowKey, Math.ceil(windowConfig.durationMs / 1000) + 60);
 
-        const scopedMax = this.resolveScopedLimit(windowConfig.max, subject.scope, riskConfig);
+        const scopedMax = this.applyActionLimitMultiplier(
+          this.resolveScopedLimit(windowConfig.max, subject.scope, riskConfig),
+          subject.scope,
+          riskPolicy,
+        );
         if (count > scopedMax) {
           await this.trackLimitHit(userId, riskConfig, context);
           throw new HttpException(
@@ -1109,15 +790,19 @@ export class JobsService {
     }
   }
 
-  private resolveAccessLimitSubjects(userId?: string | null, context?: JobAccessRequestContext): JobAccessLimitSubject[] {
+  private resolveAccessLimitSubjects(
+    userId?: string | null,
+    context?: JobAccessRequestContext,
+    riskPolicy?: JobActionRiskPolicy,
+  ): JobAccessLimitSubject[] {
     const subjects: JobAccessLimitSubject[] = [];
     if (userId) {
       subjects.push({ scope: 'user', identifier: userId });
     }
-    if (context?.ip) {
+    if (context?.ip && !riskPolicy?.skipIpAndDeviceControls) {
       subjects.push({ scope: 'ip', identifier: context.ip });
     }
-    if (context?.deviceId) {
+    if (context?.deviceId && !riskPolicy?.skipIpAndDeviceControls) {
       subjects.push({ scope: 'device', identifier: context.deviceId });
     }
     if (context?.sessionId) {
@@ -1147,6 +832,28 @@ export class JobsService {
     return Math.max(1, Math.ceil(baseLimit * riskConfig.accessLimits.scopeMultiplier[scope]));
   }
 
+  private applyActionLimitMultiplier(limit: number, scope: JobAccessLimitScope, riskPolicy?: JobActionRiskPolicy) {
+    const multiplier = riskPolicy?.actionLimitMultiplier ?? 1;
+    if (multiplier <= 1) {
+      return limit;
+    }
+    if (scope !== 'user' && scope !== 'session') {
+      return limit;
+    }
+    return Math.max(1, Math.ceil(limit * multiplier));
+  }
+
+  private applyAbnormalThresholdMultiplier(limit: number, scope: JobAccessLimitScope, riskPolicy?: JobActionRiskPolicy) {
+    const multiplier = riskPolicy?.abnormalThresholdMultiplier ?? 1;
+    if (multiplier <= 1) {
+      return limit;
+    }
+    if (scope !== 'user' && scope !== 'session') {
+      return limit;
+    }
+    return Math.max(1, Math.ceil(limit * multiplier));
+  }
+
   private buildDailyLimitKey(action: JobsAccessAction, scope: JobAccessLimitScope, identifier: string, day: string) {
     return `jobs:limit:daily:${action}:${scope}:${identifier}:${day}`;
   }
@@ -1155,34 +862,39 @@ export class JobsService {
     return `jobs:limit:window:${action}:${scope}:${identifier}:${durationMs}`;
   }
 
-  private async evaluateAbnormalPatterns(userId: string, jobId: string, context?: JobAccessRequestContext) {
+  private async evaluateAbnormalPatterns(
+    userId: string,
+    jobId: string,
+    context?: JobAccessRequestContext,
+    riskPolicy?: JobActionRiskPolicy,
+  ) {
     const riskConfig = await this.getJobsRiskRuntimeConfig();
 
-    await this.trackDistinctJobBurst('user', userId, jobId, riskConfig, '短时间访问过多不同岗位');
-    await this.trackSequentialJobEnumeration('user', userId, jobId, riskConfig, '检测到短时间顺序枚举岗位 ID');
+    await this.trackDistinctJobBurst('user', userId, jobId, riskConfig, '短时间访问过多不同岗位', riskPolicy);
+    await this.trackSequentialJobEnumeration('user', userId, jobId, riskConfig, '检测到短时间顺序枚举岗位 ID', riskPolicy);
 
-    if (context?.ip) {
+    if (context?.ip && !riskPolicy?.skipSharedNetworkHeuristics) {
       await this.trackDistinctJobBurst('ip', context.ip, jobId, riskConfig, '同一 IP 短时间访问过多不同岗位');
       await this.trackSharedIpUsers(context.ip, userId, riskConfig);
       await this.trackUserIpRotation(userId, context.ip, riskConfig);
       await this.trackSequentialJobEnumeration('ip', context.ip, jobId, riskConfig, '检测到同一 IP 短时间顺序枚举岗位 ID');
     }
 
-    if (context?.deviceId) {
+    if (context?.deviceId && !riskPolicy?.skipSharedNetworkHeuristics) {
       await this.trackDistinctJobBurst('device', context.deviceId, jobId, riskConfig, '同一设备短时间访问过多不同岗位');
       await this.trackSharedDeviceUsers(context.deviceId, userId, riskConfig);
       await this.trackSequentialJobEnumeration('device', context.deviceId, jobId, riskConfig, '检测到同一设备短时间顺序枚举岗位 ID');
     }
 
     if (context?.sessionId) {
-      await this.trackSequentialJobEnumeration('session', context.sessionId, jobId, riskConfig, '检测到同一会话短时间顺序枚举岗位 ID');
+      await this.trackSequentialJobEnumeration('session', context.sessionId, jobId, riskConfig, '检测到同一会话短时间顺序枚举岗位 ID', riskPolicy);
     }
 
-    await this.trackNightBurst('user', userId, riskConfig, '深夜持续高频访问');
-    if (context?.ip) {
+    await this.trackNightBurst('user', userId, riskConfig, '深夜持续高频访问', riskPolicy);
+    if (context?.ip && !riskPolicy?.skipSharedNetworkHeuristics) {
       await this.trackNightBurst('ip', context.ip, riskConfig, '深夜同一 IP 持续高频访问');
     }
-    if (context?.deviceId) {
+    if (context?.deviceId && !riskPolicy?.skipSharedNetworkHeuristics) {
       await this.trackNightBurst('device', context.deviceId, riskConfig, '深夜同一设备持续高频访问');
     }
   }
@@ -1199,12 +911,24 @@ export class JobsService {
     }
   }
 
-  private async trackDistinctJobBurst(scope: JobFreezeScope, identifier: string, jobId: string, riskConfig: JobsRiskConfig, reason: string) {
+  private async trackDistinctJobBurst(
+    scope: JobFreezeScope,
+    identifier: string,
+    jobId: string,
+    riskConfig: JobsRiskConfig,
+    reason: string,
+    riskPolicy?: JobActionRiskPolicy,
+  ) {
     const key = `jobs:risk:distinct-job:${scope}:${identifier}`;
     await this.redisService.sadd(key, jobId);
     await this.redisService.expire(key, riskConfig.controls.distinctJobBurst.windowSeconds);
     const count = (await this.redisService.smembers(key)).length;
-    if (count >= riskConfig.controls.distinctJobBurst[`${scope}Threshold`]) {
+    const threshold = this.applyAbnormalThresholdMultiplier(
+      riskConfig.controls.distinctJobBurst[`${scope}Threshold`],
+      scope,
+      riskPolicy,
+    );
+    if (count >= threshold) {
       await this.applyRiskDecision(scope, identifier, {
         level: 2,
         controlType: 'restrict',
@@ -1218,7 +942,13 @@ export class JobsService {
     }
   }
 
-  private async trackNightBurst(scope: JobFreezeScope, identifier: string, riskConfig: JobsRiskConfig, reason: string) {
+  private async trackNightBurst(
+    scope: JobFreezeScope,
+    identifier: string,
+    riskConfig: JobsRiskConfig,
+    reason: string,
+    riskPolicy?: JobActionRiskPolicy,
+  ) {
     if (!this.isDeepNightWindow(riskConfig)) {
       return;
     }
@@ -1227,7 +957,12 @@ export class JobsService {
     if (count === 1) {
       await this.redisService.expire(key, riskConfig.controls.nightBurst.windowSeconds);
     }
-    if (count >= riskConfig.controls.nightBurst[`${scope}Threshold`]) {
+    const threshold = this.applyAbnormalThresholdMultiplier(
+      riskConfig.controls.nightBurst[`${scope}Threshold`],
+      scope,
+      riskPolicy,
+    );
+    if (count >= threshold) {
       await this.applyRiskDecision(scope, identifier, {
         level: 3,
         controlType: 'freeze',
@@ -1304,6 +1039,7 @@ export class JobsService {
     jobId: string,
     riskConfig: JobsRiskConfig,
     reason: string,
+    riskPolicy?: JobActionRiskPolicy,
   ) {
     const now = Date.now();
     const key = `jobs:risk:job-enumeration:${scope}:${identifier}`;
@@ -1311,7 +1047,11 @@ export class JobsService {
     await this.redisService.zremrangebyscore(key, 0, now - riskConfig.controls.jobEnumeration.windowSeconds);
     await this.redisService.expire(key, riskConfig.controls.jobEnumeration.windowSeconds);
     const members = await this.redisService.zrange(key, 0, -1);
-    const threshold = riskConfig.controls.jobEnumeration[`${scope}Threshold`];
+    const threshold = this.applyAbnormalThresholdMultiplier(
+      riskConfig.controls.jobEnumeration[`${scope}Threshold`],
+      scope,
+      riskPolicy,
+    );
     const recentJobIds = members
       .slice(-threshold)
       .map((member) => member.split(':')[1])
@@ -1409,23 +1149,29 @@ export class JobsService {
     return hour >= startHour || hour < endHour;
   }
 
-  private async assertNoActiveRiskControl(userId?: string | null, context?: JobAccessRequestContext) {
+  private async assertNoActiveRiskControl(
+    userId?: string | null,
+    context?: JobAccessRequestContext,
+    riskPolicy?: JobActionRiskPolicy,
+  ) {
     if (userId) {
       const userFreezeReason = await this.redisService.get(this.buildFreezeKey('user', userId));
       if (userFreezeReason) {
         throw new HttpException(`账号行为异常已临时冻结：${this.readFreezeReason(userFreezeReason)}`, HttpStatus.FORBIDDEN);
       }
-      const userRestrictReason = await this.redisService.get(this.buildRiskControlKey('restrict', 'user', userId));
-      if (userRestrictReason) {
-        throw new HttpException(`账号访问已被临时限制：${this.readFreezeReason(userRestrictReason)}`, HttpStatus.FORBIDDEN);
-      }
-      const userCooldownReason = await this.redisService.get(this.buildRiskControlKey('cooldown', 'user', userId));
-      if (userCooldownReason) {
-        throw new HttpException(`账号请求过快，当前处于冷却观察：${this.readFreezeReason(userCooldownReason)}`, HttpStatus.TOO_MANY_REQUESTS);
+      if (!riskPolicy?.skipUserCooldownAndRestrict) {
+        const userRestrictReason = await this.redisService.get(this.buildRiskControlKey('restrict', 'user', userId));
+        if (userRestrictReason) {
+          throw new HttpException(`账号访问已被临时限制：${this.readFreezeReason(userRestrictReason)}`, HttpStatus.FORBIDDEN);
+        }
+        const userCooldownReason = await this.redisService.get(this.buildRiskControlKey('cooldown', 'user', userId));
+        if (userCooldownReason) {
+          throw new HttpException(`账号请求过快，当前处于冷却观察：${this.readFreezeReason(userCooldownReason)}`, HttpStatus.TOO_MANY_REQUESTS);
+        }
       }
     }
 
-    if (context?.ip) {
+    if (context?.ip && !riskPolicy?.skipIpAndDeviceControls) {
       const ipFreezeReason = await this.redisService.get(this.buildFreezeKey('ip', context.ip));
       if (ipFreezeReason) {
         throw new HttpException(`当前 IP 行为异常已临时冻结：${this.readFreezeReason(ipFreezeReason)}`, HttpStatus.FORBIDDEN);
@@ -1440,7 +1186,7 @@ export class JobsService {
       }
     }
 
-    if (context?.deviceId) {
+    if (context?.deviceId && !riskPolicy?.skipIpAndDeviceControls) {
       const deviceFreezeReason = await this.redisService.get(this.buildFreezeKey('device', context.deviceId));
       if (deviceFreezeReason) {
         throw new HttpException(`当前设备行为异常已临时冻结：${this.readFreezeReason(deviceFreezeReason)}`, HttpStatus.FORBIDDEN);
@@ -1823,5 +1569,31 @@ export class JobsService {
       throw new NotFoundException('岗位不存在');
     }
     return job;
+  }
+
+  private resolveActionRiskPolicy(access: MemberAccessSnapshot | null): JobActionRiskPolicy {
+    if (!access?.isMember) {
+      return {};
+    }
+
+    // 已登录会员在公告/投递链路中属于强交互真实用户，继续叠加共享 IP / 共享设备判罚容易误伤公司网络、
+    // 校园网或同设备切换账号场景。对会员保留账号级硬冻结，但放开临时冷却/限制，并放宽账号级阈值。
+    if (access.memberLevel === 'super') {
+      return {
+        skipIpAndDeviceControls: true,
+        skipSharedNetworkHeuristics: true,
+        skipUserCooldownAndRestrict: true,
+        actionLimitMultiplier: 5,
+        abnormalThresholdMultiplier: 3,
+      };
+    }
+
+    return {
+      skipIpAndDeviceControls: true,
+      skipSharedNetworkHeuristics: true,
+      skipUserCooldownAndRestrict: true,
+      actionLimitMultiplier: 2,
+      abnormalThresholdMultiplier: 1.5,
+    };
   }
 }

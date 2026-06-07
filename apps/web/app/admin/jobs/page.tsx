@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { DEGREE_OPTIONS, ENTERPRISE_NATURE_OPTIONS, JOB_TYPE_OPTIONS } from '@offer360/shared';
+import { AdminModal } from '@/components/admin/admin-modal';
 import { AdminPagination } from '@/components/admin/admin-pagination';
 import { AdminTable } from '@/components/admin/admin-table';
 import { Button } from '@/components/ui/button';
@@ -79,6 +80,7 @@ export default function AdminJobsPage() {
   const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [editorOpen, setEditorOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importProgress, setImportProgress] = useState(0);
@@ -131,6 +133,20 @@ export default function AdminJobsPage() {
     });
   };
 
+  const openCreateModal = () => {
+    resetForm();
+    setEditorOpen(true);
+  };
+
+  const openEditModal = (item: AdminJobItem) => {
+    handleSelect(item);
+    setEditorOpen(true);
+  };
+
+  const closeEditorModal = () => {
+    setEditorOpen(false);
+  };
+
   const resetForm = () => {
     setSelectedId('');
     setForm(emptyForm);
@@ -175,6 +191,7 @@ export default function AdminJobsPage() {
       await clientFetch(`/admin/jobs/${selectedId}`, { method: 'DELETE' });
       setMessage(ADMIN_TOAST_COPY.deleted('招聘公告'));
       resetForm();
+      closeEditorModal();
       await loadData(1, filters);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : ADMIN_TOAST_COPY.deleteFailed('招聘公告'));
@@ -298,7 +315,7 @@ export default function AdminJobsPage() {
             <h2 className="text-3xl font-bold text-ink">招聘公告管理</h2>
             <p className="mt-2 text-sm text-muted">数据表已按“招聘公告汇总模板”重构，支持 Excel 模板下载、Excel 批量导入，以及后台手工维护全部 15 个模板字段。</p>
           </div>
-          <Button onClick={resetForm}>新增公告</Button>
+          <Button onClick={openCreateModal}>新增公告</Button>
         </div>
       </section>
 
@@ -395,156 +412,151 @@ export default function AdminJobsPage() {
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="space-y-4">
-          <Card className="rounded-3xl p-4">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <Input placeholder="搜索企业 / 岗位 / 地点 / 标题 / 行业" value={filters.keyword} onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))} />
-              <Select value={filters.enterpriseNature} onChange={(e) => setFilters((prev) => ({ ...prev, enterpriseNature: e.target.value }))}>
-                <option value="">全部企业性质</option>
-                {ENTERPRISE_NATURE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              </Select>
-              <Select value={filters.jobType} onChange={(e) => setFilters((prev) => ({ ...prev, jobType: e.target.value }))}>
-                <option value="">全部招聘类型</option>
-                {JOB_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              </Select>
-              <div className="flex gap-2">
-                <Button className="flex-1" onClick={() => void loadData(1, filters)}>搜索</Button>
-                <Button className="flex-1" variant="secondary" onClick={() => void handleReset()}>重置</Button>
-              </div>
+      <section className="space-y-4">
+        <Card className="rounded-3xl p-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <Input placeholder="搜索企业 / 岗位 / 地点 / 标题 / 行业" value={filters.keyword} onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))} />
+            <Select value={filters.enterpriseNature} onChange={(e) => setFilters((prev) => ({ ...prev, enterpriseNature: e.target.value }))}>
+              <option value="">全部企业性质</option>
+              {ENTERPRISE_NATURE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </Select>
+            <Select value={filters.jobType} onChange={(e) => setFilters((prev) => ({ ...prev, jobType: e.target.value }))}>
+              <option value="">全部招聘类型</option>
+              {JOB_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </Select>
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={() => void loadData(1, filters)}>搜索</Button>
+              <Button className="flex-1" variant="secondary" onClick={() => void handleReset()}>重置</Button>
             </div>
-          </Card>
+          </div>
+        </Card>
 
-          <AdminTable headers={['企业/单位全称', '岗位名称', '工作地点', '招聘类型', '截止日期', '录入日期']} hasData={data.list.length > 0} emptyText={loading ? '招聘公告加载中...' : '暂无招聘公告'}>
-            {data.list.map((item) => (
-              <tr
-                key={item.id}
-                className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
-                onClick={() => handleSelect(item)}
-              >
-                <td className="px-4 py-3 font-medium text-ink">{item.companyFullName}</td>
-                <td className="px-4 py-3 text-slate-600">{item.jobName || '-'}</td>
-                <td className="px-4 py-3 text-slate-600">{item.workLocation || '-'}</td>
-                <td className="px-4 py-3 text-slate-600">{item.recruitmentType || '-'}</td>
-                <td className="px-4 py-3 text-slate-600">{formatDate(item.deadlineAt)}</td>
-                <td className="px-4 py-3 text-slate-600">{formatDate(item.entryDate)}</td>
-              </tr>
-            ))}
-          </AdminTable>
+        <AdminTable headers={['企业/单位全称', '岗位名称', '工作地点', '招聘类型', '截止日期', '录入日期']} hasData={data.list.length > 0} emptyText={loading ? '招聘公告加载中...' : '暂无招聘公告'}>
+          {data.list.map((item) => (
+            <tr
+              key={item.id}
+              className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
+              onClick={() => openEditModal(item)}
+            >
+              <td className="px-4 py-3 font-medium text-ink">{item.companyFullName}</td>
+              <td className="px-4 py-3 text-slate-600">{item.jobName || '-'}</td>
+              <td className="px-4 py-3 text-slate-600">{item.workLocation || '-'}</td>
+              <td className="px-4 py-3 text-slate-600">{item.recruitmentType || '-'}</td>
+              <td className="px-4 py-3 text-slate-600">{formatDate(item.deadlineAt)}</td>
+              <td className="px-4 py-3 text-slate-600">{formatDate(item.entryDate)}</td>
+            </tr>
+          ))}
+        </AdminTable>
 
-          <AdminPagination
-            page={data.pagination.page || 1}
-            limit={data.pagination.limit || 10}
-            total={data.pagination.total || 0}
-            onPageChange={(nextPage) => void loadData(nextPage, filters)}
-          />
-        </div>
+        <AdminPagination
+          page={data.pagination.page || 1}
+          limit={data.pagination.limit || 10}
+          total={data.pagination.total || 0}
+          onPageChange={(nextPage) => void loadData(nextPage, filters)}
+        />
+      </section>
 
-        <Card className="rounded-3xl p-5 xl:sticky xl:top-6 xl:self-start">
+      <AdminModal
+        open={editorOpen}
+        title={selectedJob ? '编辑招聘公告' : '新增招聘公告'}
+        description="仅“企业/单位全称”为必填；录入日期留空时，新增记录会自动使用当前系统日期。"
+        onClose={closeEditorModal}
+      >
+        <div className="space-y-5">
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-xl font-semibold text-ink">{selectedJob ? '编辑招聘公告' : '新增招聘公告'}</h3>
-              <p className="mt-1 text-sm text-muted">仅“企业/单位全称”为必填；录入日期留空时，新增记录会自动使用当前系统日期。</p>
-            </div>
-            {selectedJob ? <Button variant="ghost" onClick={resetForm}>切换新增</Button> : null}
+            <div className="text-sm text-muted">弹窗宽度已放大，完整承载公告维护表单和多行字段。</div>
+            {selectedJob ? <Button variant="ghost" onClick={openCreateModal}>切换新增</Button> : null}
           </div>
 
-          <div className="mt-5 space-y-4">
-            <label className="block space-y-2">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">企业/单位全称 *</span>
               <Input placeholder="请输入企业/单位全称" value={form.companyFullName} onChange={(e) => setForm((prev) => ({ ...prev, companyFullName: e.target.value }))} />
             </label>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">企业性质</span>
-                <Select value={form.enterpriseNature} onChange={(e) => setForm((prev) => ({ ...prev, enterpriseNature: e.target.value }))}>
-                  <option value="">请选择</option>
-                  {ENTERPRISE_NATURE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-                </Select>
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">学历要求</span>
-                <Select value={form.degreeRequirement} onChange={(e) => setForm((prev) => ({ ...prev, degreeRequirement: e.target.value }))}>
-                  <option value="">请选择</option>
-                  {DEGREE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-                </Select>
-              </label>
-            </div>
-
             <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">企业性质</span>
+              <Select value={form.enterpriseNature} onChange={(e) => setForm((prev) => ({ ...prev, enterpriseNature: e.target.value }))}>
+                <option value="">请选择</option>
+                {ENTERPRISE_NATURE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              </Select>
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">学历要求</span>
+              <Select value={form.degreeRequirement} onChange={(e) => setForm((prev) => ({ ...prev, degreeRequirement: e.target.value }))}>
+                <option value="">请选择</option>
+                {DEGREE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              </Select>
+            </label>
+
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">工作地点</span>
               <Textarea placeholder="支持批量填写多个城市/地区，如：南京、上海、北京、全国多地 / 海外站点" value={form.workLocation} onChange={(e) => setForm((prev) => ({ ...prev, workLocation: e.target.value }))} className="min-h-[88px]" />
             </label>
 
-            <label className="block space-y-2">
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">岗位名称</span>
               <Textarea placeholder="可填写单个或多个岗位名称" value={form.jobName} onChange={(e) => setForm((prev) => ({ ...prev, jobName: e.target.value }))} className="min-h-[88px]" />
             </label>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">专业需求</span>
-                <Textarea placeholder="支持填写多个专业要求，如：计算机类、软件工程、信息安全、人工智能等" value={form.majorRequirement} onChange={(e) => setForm((prev) => ({ ...prev, majorRequirement: e.target.value }))} className="min-h-[88px]" />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">招聘类型</span>
-                <Select value={form.recruitmentType} onChange={(e) => setForm((prev) => ({ ...prev, recruitmentType: e.target.value }))}>
-                  <option value="">请选择</option>
-                  {JOB_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-                </Select>
-              </label>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">截止日期</span>
-                <Input placeholder="支持 yyyy-mm-dd / 2026/4/27 / 尽快投递" value={form.deadlineAt} onChange={(e) => setForm((prev) => ({ ...prev, deadlineAt: e.target.value }))} />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">录入日期</span>
-                <Input placeholder="支持 yyyy-mm-dd / 2026/4/27 / 46155" value={form.entryDate} onChange={(e) => setForm((prev) => ({ ...prev, entryDate: e.target.value }))} />
-              </label>
-            </div>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">专业需求</span>
+              <Textarea placeholder="支持填写多个专业要求，如：计算机类、软件工程、信息安全、人工智能等" value={form.majorRequirement} onChange={(e) => setForm((prev) => ({ ...prev, majorRequirement: e.target.value }))} className="min-h-[88px]" />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">招聘类型</span>
+              <Select value={form.recruitmentType} onChange={(e) => setForm((prev) => ({ ...prev, recruitmentType: e.target.value }))}>
+                <option value="">请选择</option>
+                {JOB_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              </Select>
+            </label>
 
             <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">截止日期</span>
+              <Input placeholder="支持 yyyy-mm-dd / 2026/4/27 / 尽快投递" value={form.deadlineAt} onChange={(e) => setForm((prev) => ({ ...prev, deadlineAt: e.target.value }))} />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">录入日期</span>
+              <Input placeholder="支持 yyyy-mm-dd / 2026/4/27 / 46155" value={form.entryDate} onChange={(e) => setForm((prev) => ({ ...prev, entryDate: e.target.value }))} />
+            </label>
+
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">公告链接</span>
               <Input placeholder="请输入招聘公告链接" value={form.announcementUrl} onChange={(e) => setForm((prev) => ({ ...prev, announcementUrl: e.target.value }))} />
             </label>
 
-            <label className="block space-y-2">
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">投递链接</span>
               <Input placeholder="请输入投递链接或邮箱" value={form.deliveryUrl} onChange={(e) => setForm((prev) => ({ ...prev, deliveryUrl: e.target.value }))} />
             </label>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">毕业届别</span>
-                <Input placeholder="如：2025届 / 2026届 / 2027届" value={form.graduationSession} onChange={(e) => setForm((prev) => ({ ...prev, graduationSession: e.target.value }))} />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-ink">内推码</span>
-                <Input placeholder="如有内推码可填写" value={form.referralCode} onChange={(e) => setForm((prev) => ({ ...prev, referralCode: e.target.value }))} />
-              </label>
-            </div>
-
             <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">毕业届别</span>
+              <Input placeholder="如：2025届 / 2026届 / 2027届" value={form.graduationSession} onChange={(e) => setForm((prev) => ({ ...prev, graduationSession: e.target.value }))} />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-ink">内推码</span>
+              <Input placeholder="如有内推码可填写" value={form.referralCode} onChange={(e) => setForm((prev) => ({ ...prev, referralCode: e.target.value }))} />
+            </label>
+
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">招聘公告标题</span>
               <Input placeholder="请输入招聘公告标题" value={form.announcementTitle} onChange={(e) => setForm((prev) => ({ ...prev, announcementTitle: e.target.value }))} />
             </label>
 
-            <label className="block space-y-2">
+            <label className="block space-y-2 lg:col-span-2">
               <span className="text-sm font-medium text-ink">行业</span>
               <Input placeholder="如：互联网 / 制造 / 金融" value={form.industry} onChange={(e) => setForm((prev) => ({ ...prev, industry: e.target.value }))} />
             </label>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Button className="flex-1" onClick={handleSubmit} disabled={saving}>{saving ? '保存中...' : '保存公告'}</Button>
-            {selectedJob ? <Button className="flex-1" variant="secondary" onClick={handleDelete}>删除公告</Button> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            {selectedJob ? <Button variant="secondary" onClick={handleDelete}>删除公告</Button> : null}
+            <Button variant="secondary" onClick={closeEditorModal}>取消</Button>
+            <Button onClick={handleSubmit} disabled={saving}>{saving ? '保存中...' : '保存公告'}</Button>
           </div>
-        </Card>
-      </section>
+        </div>
+      </AdminModal>
     </div>
   );
 }

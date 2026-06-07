@@ -7,6 +7,11 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
+.toast-safe-area {
+  right: calc(env(safe-area-inset-right, 0px) + 1rem);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+}
+
 .rich-html-content {
   color: #334155;
   line-height: 1.8;
@@ -219,6 +224,11 @@ body {
 }
 
 @media (min-width: 768px) {
+  .toast-safe-area {
+    left: calc(env(safe-area-inset-left, 0px) + 1.5rem);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 1.5rem);
+  }
+
   .membership-rich-content .membership-rich-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

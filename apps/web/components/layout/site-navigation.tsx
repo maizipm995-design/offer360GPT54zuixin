@@ -15,11 +15,11 @@ export interface SiteNavItem {
 
 export const SITE_MAIN_NAV_ITEMS: SiteNavItem[] = [
   { href: '/', label: '名企校招', icon: GraduationCap },
-  { href: '/campus-exam', label: '校招笔试', icon: PenSquare },
-  { href: '/resume-optimizer', label: '简历优化', icon: Sparkles },
-  { href: '/interview-transcript', label: '面试逐字稿', icon: FileText },
+  { href: '/campus-exam', label: '笔试真题', icon: PenSquare },
+  { href: '/resume-optimizer', label: 'AI简历优化', icon: Sparkles },
+  { href: '/interview-transcript', label: '面试辅导', icon: FileText },
   { href: '/services', label: '求职服务', icon: BriefcaseBusiness },
-  { href: '/career-journey', label: '我的故事', icon: Map },
+  { href: '/career-journey', label: '校招攻略', icon: Map },
   { href: '/personal-center', label: '个人中心', icon: UserRound },
 ];
 
@@ -50,7 +50,7 @@ function useNavPrefetch(pathname: string) {
   const router = useRouter();
 
   return useCallback((href: string) => {
-    if (href !== pathname) {
+    if (href !== pathname && href !== '/campus-exam') {
       router.prefetch(href);
     }
   }, [pathname, router]);
@@ -90,6 +90,7 @@ export function SiteDesktopNavigation({ pathname }: { pathname: string }) {
             <Link
               key={item.href}
               href={item.href}
+              prefetch={item.href === '/campus-exam' ? false : undefined}
               aria-current={active ? 'page' : undefined}
               aria-busy={pending || undefined}
               title={item.label}
@@ -134,6 +135,7 @@ export function SiteMobileNavigation({ pathname }: { pathname: string }) {
           <Link
             key={item.href}
             href={item.href}
+            prefetch={item.href === '/campus-exam' ? false : undefined}
             aria-current={active ? 'page' : undefined}
             aria-busy={pending || undefined}
             className={cn(

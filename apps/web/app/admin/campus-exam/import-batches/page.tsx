@@ -29,6 +29,23 @@ const initialFilters = {
   status: '',
 };
 
+function getImportBatchStatusLabel(status: string) {
+  switch (status) {
+    case 'previewed':
+      return '预览通过';
+    case 'preview_with_errors':
+      return '预览有误';
+    case 'imported':
+      return '导入完成';
+    case 'imported_with_errors':
+      return '导入部分失败';
+    case 'uploaded':
+      return '已上传';
+    default:
+      return status || '未知状态';
+  }
+}
+
 export default function CampusExamAdminImportBatchesPage() {
   const searchParams = useSearchParams();
   const [filters, setFilters] = useState(initialFilters);
@@ -168,10 +185,10 @@ export default function CampusExamAdminImportBatchesPage() {
                 onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
               >
                 <option value="">全部状态</option>
-                <option value="previewed">previewed</option>
-                <option value="previewed_with_errors">previewed_with_errors</option>
-                <option value="imported">imported</option>
-                <option value="imported_with_errors">imported_with_errors</option>
+                <option value="previewed">预览通过</option>
+                <option value="preview_with_errors">预览有误</option>
+                <option value="imported">导入完成</option>
+                <option value="imported_with_errors">导入部分失败</option>
               </Select>
               <div className="flex gap-2">
                 <Button
@@ -219,7 +236,7 @@ export default function CampusExamAdminImportBatchesPage() {
                   <td className="px-4 py-3 text-slate-600">{item.specialName}</td>
                   <td className="px-4 py-3 text-slate-600">{item.categoryName}</td>
                   <td className="px-4 py-3 text-slate-600">{successRate}</td>
-                  <td className="px-4 py-3 text-slate-600">{item.status}</td>
+                  <td className="px-4 py-3 text-slate-600">{getImportBatchStatusLabel(item.status)}</td>
                   <td className="px-4 py-3 text-slate-600">{formatDate(item.updatedAt)}</td>
                 </tr>
               );
@@ -256,7 +273,7 @@ export default function CampusExamAdminImportBatchesPage() {
                 </div>
                 <div className="rounded-2xl bg-slate-50 p-4">
                   <p className="text-xs text-slate-500">状态</p>
-                  <p className="mt-2 text-sm font-semibold text-ink">{detail.status}</p>
+                  <p className="mt-2 text-sm font-semibold text-ink">{getImportBatchStatusLabel(detail.status)}</p>
                 </div>
                 <div className="rounded-2xl bg-slate-50 p-4">
                   <p className="text-xs text-slate-500">题量统计</p>

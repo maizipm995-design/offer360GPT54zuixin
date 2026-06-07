@@ -93,37 +93,37 @@ verify_public_seo_signals() {
   robots_txt="$(curl_with_browser_ua -fsS "$robots_url")"
   sitemap_xml="$(curl_with_browser_ua -fsS "$sitemap_url")"
 
-  if printf '%s' "$robots_txt" | grep -Eq 'localhost|127\.0\.0\.1|0\.0\.0\.0'; then
+  if grep -Eq 'localhost|127\.0\.0\.1|0\.0\.0\.0' <<<"$robots_txt"; then
     echo "robots.txt 仍包含本地地址，发布结果异常。"
     return 1
   fi
 
-  if ! printf '%s' "$robots_txt" | grep -Fq "Host: ${normalized_public_base_url}"; then
+  if ! grep -Fq "Host: ${normalized_public_base_url}" <<<"$robots_txt"; then
     echo "robots.txt 未输出正确 Host：${normalized_public_base_url}"
     return 1
   fi
 
-  if ! printf '%s' "$robots_txt" | grep -Fq "Sitemap: ${sitemap_url}"; then
+  if ! grep -Fq "Sitemap: ${sitemap_url}" <<<"$robots_txt"; then
     echo "robots.txt 未输出正确 Sitemap：${sitemap_url}"
     return 1
   fi
 
-  if printf '%s' "$sitemap_xml" | grep -Eq 'localhost|127\.0\.0\.1|0\.0\.0\.0'; then
+  if grep -Eq 'localhost|127\.0\.0\.1|0\.0\.0\.0' <<<"$sitemap_xml"; then
     echo "sitemap.xml 仍包含本地地址，发布结果异常。"
     return 1
   fi
 
-  if ! printf '%s' "$sitemap_xml" | grep -Fq "<loc>${normalized_public_base_url}</loc>"; then
+  if ! grep -Fq "<loc>${normalized_public_base_url}</loc>" <<<"$sitemap_xml"; then
     echo "sitemap.xml 未包含正式首页 URL：${normalized_public_base_url}"
     return 1
   fi
 
-  if ! printf '%s' "$sitemap_xml" | grep -Fq "<loc>${normalized_public_base_url}/services</loc>"; then
+  if ! grep -Fq "<loc>${normalized_public_base_url}/services</loc>" <<<"$sitemap_xml"; then
     echo "sitemap.xml 未包含服务列表页 URL。"
     return 1
   fi
 
-  if ! printf '%s' "$sitemap_xml" | grep -Fq "${normalized_public_base_url}/services/"; then
+  if ! grep -Fq "${normalized_public_base_url}/services/" <<<"$sitemap_xml"; then
     echo "sitemap.xml 未包含任何服务详情页 URL，发布结果异常。"
     return 1
   fi

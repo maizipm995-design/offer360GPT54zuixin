@@ -1,17 +1,17 @@
 'use client';
 
+import { ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DEGREE_OPTIONS } from '@offer360/shared';
 import { KeywordSuggestionDropdown, useKeywordSuggestions } from '@/components/common/keyword-suggestion-dropdown';
-import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { clientFetch } from '@/lib/api';
 import { COMMON_TOAST_COPY } from '@/lib/toast-copy';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { useGlobalToast } from '@/store/toast-store';
 import {
@@ -44,6 +44,7 @@ const sections = [
   { id: 'invitation', label: '我的邀请' },
   { id: 'orders', label: '我的订单' },
 ] as const;
+type SectionId = (typeof sections)[number]['id'];
 
 type ProfileFormState = {
   name: string;
@@ -115,7 +116,7 @@ function isValidPhone(phone: string) {
 
 export function PersonalCenterClient() {
   const router = useRouter();
-  const { token, user, updateUser } = useAuthStore();
+  const { token, user, updateUser, logout } = useAuthStore();
   const [overview, setOverview] = useState<PersonalOverview | null>(null);
   const [invitation, setInvitation] = useState<InvitationData | null>(null);
   const [orders, setOrders] = useState<PersonalOrderItem[]>([]);
@@ -143,7 +144,8 @@ export function PersonalCenterClient() {
     invitation: useRef<HTMLDivElement | null>(null),
     orders: useRef<HTMLDivElement | null>(null),
   };
-  const [activeSection, setActiveSection] = useState('membership');
+  const [activeSection, setActiveSection] = useState<SectionId>('membership');
+  const [mobileActiveSection, setMobileActiveSection] = useState<SectionId | null>(null);
 
   useGlobalToast(message, setMessage);
   const citySuggestions = useKeywordSuggestions({
@@ -235,7 +237,6 @@ export function PersonalCenterClient() {
           <h1 className="text-2xl font-bold text-ink">请先登录后查看个人中心</h1>
           <Button className="mt-6" onClick={() => router.push('/login')}>前往登录</Button>
         </Card>
-        <SiteBeianFooter className="pb-0 pt-8" />
       </main>
     );
   }
@@ -504,11 +505,85 @@ export function PersonalCenterClient() {
     activeOrderGuide ? `${activeOrderGuide.productName} 已购买成功，我们会根据服务流程尽快与您联系，请留意站内通知或客服消息。` : ''
   );
   const activeOrderGuideImageUrl = activeOrderGuide?.orderServiceImageUrl?.trim() || '';
+  const mobileDisplayName = overview?.profile?.name?.trim() || user?.name?.trim() || '未命名用户';
+  const mobilePhone = overview?.phone?.trim() || user?.phone?.trim() || '未绑定手机号';
+  const mobileSectionLabel = sections.find((section) => section.id === mobileActiveSection)?.label || '';
+
+  const openMobileSection = (sectionId: SectionId) => {
+    setMobileActiveSection(sectionId);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const closeMobileSection = () => {
+    setMobileActiveSection(null);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    setMobileActiveSection(null);
+    router.push('/');
+  };
 
   return (
     <main className="mx-auto max-w-[1366px] px-4 py-8 lg:px-8">
+      <div className="mb-6 lg:hidden">
+        {mobileActiveSection ? (
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-2 text-sm font-medium text-ink shadow-card transition hover:bg-slate-50"
+              onClick={closeMobileSection}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              返回
+            </button>
+            <h1 className="text-lg font-semibold text-ink">{mobileSectionLabel}</h1>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <Card className="overflow-hidden border-0 bg-gradient-to-r from-[#1D4ED8] to-[#2563EB] p-5 text-white shadow-card">
+              <p className="text-sm text-white/80">个人中心</p>
+              <p className="mt-3 text-2xl font-bold">{mobileDisplayName}</p>
+              <p className="mt-2 text-sm text-white/85">{mobilePhone}</p>
+            </Card>
+
+            <Card className="p-3">
+              {sections.map((section, index) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-2xl px-4 py-4 text-left transition hover:bg-slate-50',
+                    index < sections.length - 1 && 'border-b border-slate-100',
+                  )}
+                  onClick={() => openMobileSection(section.id)}
+                >
+                  <span className="text-base font-medium text-ink">{section.label}</span>
+                  <ChevronRight className="h-5 w-5 text-slate-400" />
+                </button>
+              ))}
+            </Card>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-12 w-full border-rose-200 text-rose-500 hover:border-rose-300 hover:text-rose-600"
+              onClick={handleLogout}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              退出登录
+            </Button>
+          </div>
+        )}
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <Card className="h-fit p-4 lg:sticky lg:top-[84px]">
+        <Card className="hidden h-fit p-4 lg:sticky lg:top-[84px] lg:block">
           {sections.map((section) => (
             <button
               key={section.id}
@@ -520,8 +595,12 @@ export function PersonalCenterClient() {
           ))}
         </Card>
 
-        <div className="space-y-6">
-          <Card ref={refs.membership} className="p-6" id="membership">
+        <div className={cn('space-y-6', mobileActiveSection ? 'block' : 'hidden', 'lg:block')}>
+          <Card
+            ref={refs.membership}
+            className={cn('p-6', mobileActiveSection === 'membership' ? 'block' : 'hidden', 'lg:block')}
+            id="membership"
+          >
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-ink">会员权益</h2>
@@ -548,7 +627,11 @@ export function PersonalCenterClient() {
               </div>
             </div>
           </Card>
-          <Card ref={refs.profile} className="p-6" id="profile">
+          <Card
+            ref={refs.profile}
+            className={cn('p-6', mobileActiveSection === 'profile' ? 'block' : 'hidden', 'lg:block')}
+            id="profile"
+          >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-bold text-ink">个人信息</h2>
@@ -592,7 +675,11 @@ export function PersonalCenterClient() {
             </div>
           </Card>
 
-          <Card ref={refs.preference} className="p-6" id="preference">
+          <Card
+            ref={refs.preference}
+            className={cn('p-6', mobileActiveSection === 'preference' ? 'block' : 'hidden', 'lg:block')}
+            id="preference"
+          >
             <h2 className="text-2xl font-bold text-ink">求职意向</h2>
             <div className="mt-6 grid gap-6">
               {([
@@ -640,7 +727,11 @@ export function PersonalCenterClient() {
             </div>
           </Card>
 
-          <Card ref={refs.invitation} className="p-6" id="invitation">
+          <Card
+            ref={refs.invitation}
+            className={cn('p-6', mobileActiveSection === 'invitation' ? 'block' : 'hidden', 'lg:block')}
+            id="invitation"
+          >
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-ink">我的邀请</h2>
@@ -679,7 +770,11 @@ export function PersonalCenterClient() {
             </div>
           </Card>
 
-          <Card ref={refs.orders} className="p-6" id="orders">
+          <Card
+            ref={refs.orders}
+            className={cn('p-6', mobileActiveSection === 'orders' ? 'block' : 'hidden', 'lg:block')}
+            id="orders"
+          >
             <h2 className="text-2xl font-bold text-ink">我的订单</h2>
             <div className="mt-6 space-y-4">
               {orders.map((order) => (
@@ -847,7 +942,6 @@ export function PersonalCenterClient() {
           </Card>
         </div>
       ) : null}
-      <SiteBeianFooter className="pb-0 pt-8" />
     </main>
   );
 }

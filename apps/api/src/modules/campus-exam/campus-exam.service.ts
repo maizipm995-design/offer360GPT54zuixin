@@ -15,6 +15,7 @@ import {
   CAMPUS_EXAM_ALLOWED_IMPORT_MIME_TYPES,
   CAMPUS_EXAM_HERO_CARDS,
   CAMPUS_EXAM_IMPORT_OVERWRITE_POLICIES,
+  CAMPUS_EXAM_MAX_IMPORT_FILE_SIZE,
   CAMPUS_EXAM_QUESTION_TYPE_CODE_MAP,
   CAMPUS_EXAM_QUESTION_TYPE_LABEL_MAP,
   type CampusExamAnswerJson,
@@ -77,6 +78,28 @@ type PreviewQuestionRow = {
   status: string;
 };
 
+type CategoryFolderImportFileResult = {
+  fileName: string;
+  relativePath: string;
+  specialName: string;
+  specialId: number | null;
+  batchId: string | null;
+  totalCount: number;
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  status: 'imported' | 'skipped_existing_special' | 'skipped_invalid_file' | 'skipped_invalid_template' | 'failed';
+  message: string;
+};
+
+type CategoryFolderUploadCandidate = {
+  file: UploadedCampusExamFile;
+  relativePath: string;
+  folderName: string;
+  fileName: string;
+  specialName: string;
+};
+
 type QuestionOptionItem = { key: string; label: string; value: string };
 
 type CampusExamInteractionRule = {
@@ -133,6 +156,7 @@ export class CampusExamService {
     return {
       list: list.map((item) => ({
         id: item.id,
+        specialCode: item.specialCode,
         name: item.name,
         slug: item.slug,
         description: item.description,
@@ -152,6 +176,7 @@ export class CampusExamService {
     await this.assertCategorySlugAvailable(slug);
     const created = await this.prisma.campusExamCategory.create({
       data: {
+        specialCode: await this.generateUniqueCategorySpecialCode(),
         name,
         slug,
         description: this.readNullableString(body.description),
@@ -181,6 +206,197 @@ export class CampusExamService {
         status: body.status !== undefined ? this.readStatus(body.status, current.status) : undefined,
       },
     });
+  }
+
+  async deleteAdminCategory(id: string) {
+    const category = await this.prisma.campusExamCategory.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            specials: true,
+          },
+        },
+      },
+    });
+    if (!category) {
+      throw new NotFoundException('一级分类不存在');
+    }
+
+    const questionCount = await this.prisma.campusExamQuestion.count({
+      where: {
+        special: {
+          categoryId: id,
+        },
+      },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.campusExamCategory.delete({
+        where: { id },
+      });
+    });
+
+    return {
+      id: category.id,
+      name: category.name,
+      deletedSpecialCount: category._count.specials,
+      deletedQuestionCount: questionCount,
+      status: 'deleted',
+    };
+  }
+
+  async deleteAdminSpecial(specialId: number) {
+    const special = await this.prisma.campusExamSpecial.findUnique({
+      where: { id: specialId },
+    });
+    if (!special) {
+      throw new NotFoundException('二级分类不存在');
+    }
+
+    const questionCount = await this.prisma.campusExamQuestion.count({
+      where: { specialId },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.campusExamSpecial.delete({
+        where: { id: specialId },
+      });
+    });
+
+    return {
+      id: special.id,
+      name: special.name,
+      deletedQuestionCount: questionCount,
+      status: 'deleted',
+    };
+  }
+
+  async importCategoryFolder(
+    files: UploadedCampusExamFile[] | undefined,
+    body: Record<string, unknown>,
+    admin: CurrentAdminPayload,
+  ) {
+    const uploadPayload = this.normalizeCategoryFolderUpload(files, body.relativePaths);
+    const fileResults: CategoryFolderImportFileResult[] = [...uploadPayload.skippedFiles];
+    const skippedFileCountBase = uploadPayload.skippedFiles.length;
+    let skippedFileCount = skippedFileCountBase;
+    let skippedSpecialCount = 0;
+    let createdSpecialCount = 0;
+    let importedQuestionCount = 0;
+    let skippedQuestionCount = 0;
+    let failedQuestionCount = 0;
+
+    const readyFiles: CategoryFolderUploadCandidate[] = [];
+    for (const item of uploadPayload.validFiles) {
+      const precheckResult = this.precheckCategoryFolderImportFile(item.file);
+      if (!precheckResult.ok) {
+        skippedFileCount += 1;
+        fileResults.push({
+          fileName: item.fileName,
+          relativePath: item.relativePath,
+          specialName: item.specialName,
+          specialId: null,
+          batchId: null,
+          totalCount: 0,
+          importedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          status: precheckResult.status,
+          message: precheckResult.message,
+        });
+        continue;
+      }
+
+      const existingSpecial = await this.prisma.campusExamSpecial.findFirst({
+        where: { name: item.specialName },
+        include: {
+          category: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (existingSpecial) {
+        skippedSpecialCount += 1;
+        fileResults.push({
+          fileName: item.fileName,
+          relativePath: item.relativePath,
+          specialName: item.specialName,
+          specialId: existingSpecial.id,
+          batchId: null,
+          totalCount: 0,
+          importedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          status: 'skipped_existing_special',
+          message: `已跳过：二级分类“${item.specialName}”已存在，本次不重复创建，也不重复导入题目`,
+        });
+        continue;
+      }
+
+      readyFiles.push(item);
+    }
+
+    const categoryResult = readyFiles.length && uploadPayload.folderName
+      ? await this.findOrCreateCategoryByName(uploadPayload.folderName)
+      : null;
+    let nextSpecialId = await this.readNextSpecialId();
+
+    for (const item of readyFiles) {
+      const specialId = nextSpecialId;
+      nextSpecialId += 1;
+      const createdSpecial = await this.prisma.campusExamSpecial.create({
+        data: {
+          id: specialId,
+          specialCode: await this.generateUniqueSpecialCode(),
+          categoryId: categoryResult!.category.id,
+          name: item.specialName,
+          status: 'active',
+        },
+      });
+      createdSpecialCount += 1;
+
+      try {
+        const result = await this.importCategoryFolderFile(createdSpecial.id, item.file, item.relativePath, admin);
+        importedQuestionCount += result.importedCount;
+        skippedQuestionCount += result.skippedCount;
+        failedQuestionCount += result.failedCount;
+        fileResults.push({
+          fileName: item.fileName,
+          relativePath: item.relativePath,
+          specialName: item.specialName,
+          specialId: createdSpecial.id,
+          ...result,
+        });
+      } catch (error) {
+        fileResults.push({
+          fileName: item.fileName,
+          relativePath: item.relativePath,
+          specialName: item.specialName,
+          specialId: createdSpecial.id,
+          batchId: null,
+          totalCount: 0,
+          importedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          status: 'failed',
+          message: error instanceof Error ? `导入失败：${error.message}` : '导入失败：请检查文件内容后重试',
+        });
+      }
+    }
+
+    return {
+      categoryId: categoryResult?.category.id ?? null,
+      categoryName: categoryResult?.category.name ?? uploadPayload.folderName ?? '',
+      categoryStatus: categoryResult?.status ?? 'not_created',
+      totalFileCount: uploadPayload.totalFileCount,
+      skippedFileCount,
+      createdSpecialCount,
+      skippedSpecialCount,
+      importedQuestionCount,
+      skippedQuestionCount,
+      failedQuestionCount,
+      fileResults,
+    };
   }
 
   async getAdminSpecials(query: Record<string, string | undefined>) {
@@ -217,7 +433,9 @@ export class CampusExamService {
     return {
       list: list.map((item) => ({
         id: item.id,
+        specialCode: item.specialCode,
         categoryId: item.categoryId,
+        categorySpecialCode: item.category.specialCode,
         categoryName: item.category.name,
         name: item.name,
         description: item.description,
@@ -233,16 +451,13 @@ export class CampusExamService {
   }
 
   async createAdminSpecial(body: Record<string, unknown>) {
-    const id = toInt(body.id);
     const categoryId = this.readRequiredString(body.categoryId, '请选择所属一级分类');
     await this.ensureCategoryExists(categoryId);
-    const existing = await this.prisma.campusExamSpecial.findUnique({ where: { id } });
-    if (existing) {
-      throw new BadRequestException('该二级分类 id 已存在，请与 Excel 分类专项id 对齐后重试');
-    }
+    const id = await this.readNextSpecialId();
     return this.prisma.campusExamSpecial.create({
       data: {
         id,
+        specialCode: await this.generateUniqueSpecialCode(),
         categoryId,
         name: this.readRequiredString(body.name, '二级分类名称不能为空'),
         description: this.readNullableString(body.description),
@@ -273,7 +488,9 @@ export class CampusExamService {
     }
     return {
       id: special.id,
+      specialCode: special.specialCode,
       categoryId: special.categoryId,
+      categorySpecialCode: special.category.specialCode,
       categoryName: special.category.name,
       name: special.name,
       description: special.description,
@@ -321,10 +538,10 @@ export class CampusExamService {
     this.assertImportFile(file);
     const rows = this.readExcelRows(file!.buffer);
     if (rows.length <= 1) {
-      throw new BadRequestException('请上传包含表头和数据行的 Excel 文件');
+      throw new BadRequestException('上传失败：Excel 中未检测到可预览的数据，请确认第 1 行为表头，且至少包含 1 行题目数据');
     }
 
-    const headerResult = this.resolveImportHeaderMap(rows[0]);
+    const headerResult = this.resolveImportHeaderMap(rows[0], { requireSpecialId: false });
     const errors: CampusExamImportErrorItem[] = [];
     const previewRows: PreviewQuestionRow[] = [];
     let totalCount = 0;
@@ -365,7 +582,9 @@ export class CampusExamService {
         }
         totalCount += 1;
         try {
-          previewRows.push(this.normalizeImportRow(row, headerResult.map, specialId, rowIndex + 1));
+          previewRows.push(this.normalizeImportRow(row, headerResult.map, specialId, rowIndex + 1, {
+            validateSpecialId: false,
+          }));
         } catch (error) {
           errors.push({
             rowNo: rowIndex + 1,
@@ -394,7 +613,7 @@ export class CampusExamService {
         totalCount,
         successCount: previewRows.length,
         failCount: errors.length,
-        status: errors.length ? 'previewed_with_errors' : 'previewed',
+        status: errors.length ? 'preview_with_errors' : 'previewed',
         summaryJson: summary as unknown as Prisma.InputJsonValue,
       },
     });
@@ -448,18 +667,18 @@ export class CampusExamService {
     const batchId = this.readRequiredString(body.batchId, '缺少预览批次号');
     const overwritePolicy = normalizeText(body.overwritePolicy || 'skip_existing');
     if (!CAMPUS_EXAM_IMPORT_OVERWRITE_POLICIES.includes(overwritePolicy as (typeof CAMPUS_EXAM_IMPORT_OVERWRITE_POLICIES)[number])) {
-      throw new BadRequestException('覆盖策略不支持');
+      throw new BadRequestException('正式导入失败：当前选择的覆盖策略无效，请重新选择后再试');
     }
     const batch = await this.prisma.campusExamImportBatch.findUnique({
       where: { id: batchId },
     });
     if (!batch || batch.specialId !== specialId) {
-      throw new NotFoundException('导入批次不存在或与当前专项不匹配');
+      throw new NotFoundException('正式导入失败：未找到对应的预览批次，或该批次不属于当前二级分类');
     }
     const summaryJson = (batch.summaryJson ?? {}) as Record<string, unknown>;
     const previewRows = Array.isArray(summaryJson.previewRows) ? (summaryJson.previewRows as PreviewQuestionRow[]) : [];
     if (!previewRows.length) {
-      throw new BadRequestException('该批次没有可正式导入的数据');
+      throw new BadRequestException('正式导入失败：当前预览批次没有可导入的有效题目，请先修复 Excel 问题后重新预览');
     }
 
     const confirmErrors: CampusExamImportErrorItem[] = [];
@@ -912,11 +1131,13 @@ export class CampusExamService {
       name: category.name,
       slug: category.slug,
       description: category.description,
+      updatedAt: category.updatedAt.toISOString(),
       specials: category.specials.map((item) => ({
         id: item.id,
         name: item.name,
         description: item.description,
         questionCount: item.questionCount,
+        updatedAt: item.updatedAt.toISOString(),
       })),
     };
   }
@@ -950,12 +1171,14 @@ export class CampusExamService {
       id: special.id,
       name: special.name,
       description: special.description,
+      updatedAt: special.updatedAt.toISOString(),
       category: {
         id: special.category.id,
         name: special.category.name,
         slug: special.category.slug,
       },
       questionCount: special.questionCount,
+      questionIds: special.questions.map((item) => item.id),
       questionTypeDistribution: Object.entries(questionTypeDistribution).map(([key, count]) => ({
         questionType: Number(key),
         label: CAMPUS_EXAM_QUESTION_TYPE_LABEL_MAP[Number(key)] ?? key,
@@ -1046,27 +1269,81 @@ export class CampusExamService {
     if (!question) {
       throw new NotFoundException('题目不存在');
     }
-    const answer = userId && sessionId
-      ? await this.prisma.campusExamPracticeAnswer.findFirst({
-          where: {
-            sessionId,
-            questionId,
-            session: { userId },
-          },
-          include: {
-            judgements: {
-              orderBy: { createdAt: 'desc' },
-              take: 1,
+    const [answer, favorite] = await Promise.all([
+      userId && sessionId
+        ? this.prisma.campusExamPracticeAnswer.findFirst({
+            where: {
+              sessionId,
+              questionId,
+              session: { userId },
             },
-          },
-        })
-      : null;
-    return this.toQuestionDetail(question, answer);
+            include: {
+              judgements: {
+                orderBy: { createdAt: 'desc' },
+                take: 1,
+              },
+            },
+          })
+        : Promise.resolve(null),
+      userId
+        ? this.prisma.campusExamFavorite.findUnique({
+            where: {
+              userId_questionId: {
+                userId,
+                questionId,
+              },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    return this.toQuestionDetail(question, answer, { isFavorited: Boolean(favorite) });
+  }
+
+  async favoriteQuestion(userId: string, questionId: string) {
+    const question = await this.prisma.campusExamQuestion.findFirst({
+      where: { id: questionId, status: 'active' },
+      select: { id: true },
+    });
+    if (!question) {
+      throw new NotFoundException('题目不存在');
+    }
+    await this.prisma.campusExamFavorite.upsert({
+      where: {
+        userId_questionId: {
+          userId,
+          questionId,
+        },
+      },
+      create: {
+        userId,
+        questionId,
+      },
+      update: {},
+    });
+    return {
+      questionId,
+      isFavorited: true,
+    };
+  }
+
+  async unfavoriteQuestion(userId: string, questionId: string) {
+    await this.prisma.campusExamFavorite.deleteMany({
+      where: {
+        userId,
+        questionId,
+      },
+    });
+    return {
+      questionId,
+      isFavorited: false,
+    };
   }
 
   async submitPracticeAnswer(userId: string, sessionId: string, body: Record<string, unknown>) {
     const questionId = this.readRequiredString(body.questionId, '缺少题目 id');
     const usedTimeSec = this.readPositiveInt(body.usedTimeSec, 0);
+    const allowIncompleteSubmit = body.allowIncompleteSubmit === true;
     const session = await this.prisma.campusExamPracticeSession.findFirst({
       where: { id: sessionId, userId },
     });
@@ -1091,27 +1368,33 @@ export class CampusExamService {
       this.normalizeUserAnswer(body.userAnswer),
       optionsJson,
     );
-    this.assertPracticeAnswerValid(question.questionType, userAnswer, interactionRule, optionsJson);
+    this.assertPracticeAnswerValid(question.questionType, userAnswer, interactionRule, optionsJson, { allowIncompleteSubmit });
     let isCorrect: boolean | null = null;
     let score: number | null = null;
     let judgementResult: string | null = null;
     let subjectivePayload: Record<string, unknown> | null = null;
 
     if (question.questionType === 6) {
-      const scoring = await this.subjectiveScoringService.score({
-        stemHtml: question.stemHtml,
-        referenceAnswer: answerJson,
-        userAnswerText: userAnswer.values[0] ?? '',
-      });
-      isCorrect = scoring.judgementResult === 'correct';
-      score = scoring.normalizedScore;
-      judgementResult = scoring.judgementResult;
-      subjectivePayload = {
-        scoringMode: scoring.scoringMode,
-        matchedKeywords: scoring.matchedKeywords,
-        missingKeywords: scoring.missingKeywords,
-        reason: scoring.reason,
-      };
+      if (allowIncompleteSubmit && !normalizeText(userAnswer.values[0] ?? '')) {
+        isCorrect = false;
+        score = 0;
+        judgementResult = 'wrong';
+      } else {
+        const scoring = await this.subjectiveScoringService.score({
+          stemHtml: question.stemHtml,
+          referenceAnswer: answerJson,
+          userAnswerText: userAnswer.values[0] ?? '',
+        });
+        isCorrect = scoring.judgementResult === 'correct';
+        score = scoring.normalizedScore;
+        judgementResult = scoring.judgementResult;
+        subjectivePayload = {
+          scoringMode: scoring.scoringMode,
+          matchedKeywords: scoring.matchedKeywords,
+          missingKeywords: scoring.missingKeywords,
+          reason: scoring.reason,
+        };
+      }
     } else {
       const objectiveResult = this.scoreObjectiveQuestion(question.questionType, answerJson, userAnswer);
       isCorrect = objectiveResult.isCorrect;
@@ -1221,11 +1504,24 @@ export class CampusExamService {
       where: { userId },
       include: {
         special: { include: { category: true } },
+        answers: {
+          select: {
+            score: true,
+          },
+        },
       },
       orderBy: { updatedAt: 'desc' },
       take: 50,
     });
-    return sessions.map((item) => ({
+    return sessions.map((item) => {
+      const answeredScoreSum = item.answers.reduce((sum, answer) => sum + Number(answer.score ?? 0), 0);
+      const scoreRate = item.totalQuestions
+        ? Math.round((answeredScoreSum / item.totalQuestions) * 100)
+        : 0;
+      const currentScoreRate = item.answeredCount
+        ? Math.round((answeredScoreSum / item.answeredCount) * 100)
+        : 0;
+      return {
       sessionId: item.id,
       mode: item.mode,
       title: item.title,
@@ -1235,11 +1531,14 @@ export class CampusExamService {
       totalQuestions: item.totalQuestions,
       answeredCount: item.answeredCount,
       correctCount: item.correctCount,
+      scoreRate,
+      currentScoreRate,
       status: item.status,
       lastQuestionId: item.lastQuestionId,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
-    }));
+      };
+    });
   }
 
   async getStats(userId: string | null) {
@@ -1505,11 +1804,22 @@ export class CampusExamService {
     return 'jpg';
   }
 
-  private normalizeImportRow(row: unknown[], headerMap: Record<ImportColumnKey, number>, specialId: number, sourceRowNo: number): PreviewQuestionRow {
-    const read = (key: ImportColumnKey) => row[headerMap[key]];
-    const rowSpecialId = toInt(read('specialId'));
-    if (rowSpecialId !== specialId) {
-      throw new BadRequestException(`分类专项id 不匹配，当前上传上下文为 ${specialId}，Excel 行值为 ${rowSpecialId}`);
+  private normalizeImportRow(
+    row: unknown[],
+    headerMap: Partial<Record<ImportColumnKey, number>>,
+    specialId: number,
+    sourceRowNo: number,
+    options?: { validateSpecialId?: boolean },
+  ): PreviewQuestionRow {
+    const read = (key: ImportColumnKey) => {
+      const index = headerMap[key];
+      return index === undefined ? undefined : row[index];
+    };
+    if (options?.validateSpecialId !== false) {
+      const rowSpecialId = toInt(read('specialId'));
+      if (rowSpecialId !== specialId) {
+        throw new BadRequestException(`分类专项id 不匹配，当前上传上下文为 ${specialId}，Excel 行值为 ${rowSpecialId}`);
+      }
     }
     const questionType = parseQuestionType(read('questionType'));
     const stemHtml = normalizeRichTextContent(this.readRequiredString(read('stemHtml'), '题干不能为空'));
@@ -1730,6 +2040,14 @@ export class CampusExamService {
       });
     }
 
+    if (mode === 'wrong_practice') {
+      return this.buildTaggedSequentialPracticeSeed(userId, 'wrong');
+    }
+
+    if (mode === 'favorite_practice') {
+      return this.buildTaggedSequentialPracticeSeed(userId, 'favorite');
+    }
+
     if (mode === 'wrong_retry') {
       const wrongQuestions = await this.prisma.campusExamWrongQuestion.findMany({
         where: {
@@ -1870,6 +2188,55 @@ export class CampusExamService {
     };
   }
 
+  private async buildTaggedSequentialPracticeSeed(userId: string, tag: 'wrong' | 'favorite') {
+    const records = tag === 'wrong'
+      ? await this.prisma.campusExamWrongQuestion.findMany({
+          where: {
+            userId,
+            question: { status: 'active' },
+          },
+          include: {
+            question: {
+              include: {
+                special: {
+                  include: {
+                    category: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+      : await this.prisma.campusExamFavorite.findMany({
+          where: {
+            userId,
+            question: { status: 'active' },
+          },
+          include: {
+            question: {
+              include: {
+                special: {
+                  include: {
+                    category: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+    if (!records.length) {
+      throw new BadRequestException(tag === 'wrong' ? '当前错题库暂无可练习题目' : '当前收藏题库暂无可练习题目');
+    }
+    const orderedQuestions = [...records]
+      .map((item) => item.question)
+      .sort((left, right) => this.compareTaggedPracticeQuestionSequence(left, right));
+    return {
+      specialId: null,
+      title: tag === 'wrong' ? '错题顺序练习' : '收藏顺序练习',
+      questionOrder: orderedQuestions.map((item) => item.id),
+    };
+  }
+
   private async buildPracticeQuestionGroups(mode: string, specialId: number | null, questionOrder: string[]) {
     if (!questionOrder.length) return [];
     if (mode === 'wrong_retry') {
@@ -1908,6 +2275,19 @@ export class CampusExamService {
     return groups;
   }
 
+  private compareTaggedPracticeQuestionSequence(left: any, right: any) {
+    const byCategorySort = (left.special?.category?.sortOrder ?? 0) - (right.special?.category?.sortOrder ?? 0);
+    if (byCategorySort !== 0) return byCategorySort;
+    const byCategoryCreated = new Date(left.special?.category?.createdAt ?? 0).getTime()
+      - new Date(right.special?.category?.createdAt ?? 0).getTime();
+    if (byCategoryCreated !== 0) return byCategoryCreated;
+    const bySpecialSort = (left.special?.sortOrder ?? 0) - (right.special?.sortOrder ?? 0);
+    if (bySpecialSort !== 0) return bySpecialSort;
+    const bySpecialCreated = new Date(left.special?.createdAt ?? 0).getTime() - new Date(right.special?.createdAt ?? 0).getTime();
+    if (bySpecialCreated !== 0) return bySpecialCreated;
+    return this.comparePracticeQuestionSequence(left, right);
+  }
+
   private shuffleArray<T>(list: T[]) {
     const next = [...list];
     for (let index = next.length - 1; index > 0; index -= 1) {
@@ -1935,10 +2315,11 @@ export class CampusExamService {
     return left.createdAt.getTime() - right.createdAt.getTime();
   }
 
-  private async toQuestionDetail(question: any, answer?: any) {
+  private async toQuestionDetail(question: any, answer?: any, extra?: { isFavorited?: boolean }) {
     const detail = await this.toQuestionItem(question, false);
     return {
       ...detail,
+      isFavorited: extra?.isFavorited ?? false,
       special: question.special
         ? {
             id: question.special.id,
@@ -2093,13 +2474,20 @@ export class CampusExamService {
     }) as unknown[][];
   }
 
-  private resolveImportHeaderMap(headerRow: unknown[]) {
+  private resolveImportHeaderMap(headerRow: unknown[], options?: { requireSpecialId?: boolean }) {
+    const requireSpecialId = options?.requireSpecialId ?? true;
     const normalizedHeaders = headerRow.map((item) => normalizeText(item));
-    const map = {} as Record<ImportColumnKey, number>;
+    const containsSpecialIdHeader = normalizedHeaders.includes(
+      IMPORT_COLUMNS.find((column) => column.key === 'specialId')!.templateHeader,
+    );
+    const expectedColumns = requireSpecialId || containsSpecialIdHeader
+      ? IMPORT_COLUMNS
+      : IMPORT_COLUMNS.filter((column) => column.key !== 'specialId');
+    const map: Partial<Record<ImportColumnKey, number>> = {};
     const missingRequired: string[] = [];
     const positionMismatches: Array<{ columnNo: number; expectedHeader: string; actualHeader: string }> = [];
     const matchedIndexes = new Set<number>();
-    for (const column of IMPORT_COLUMNS) {
+    for (const column of expectedColumns) {
       const matchedIndex = normalizedHeaders.findIndex((header) => header === column.templateHeader);
       if (matchedIndex === -1) {
         if (column.required) {
@@ -2109,9 +2497,9 @@ export class CampusExamService {
       }
       map[column.key] = matchedIndex;
       matchedIndexes.add(matchedIndex);
-      if (matchedIndex !== IMPORT_COLUMNS.findIndex((item) => item.key === column.key)) {
+      if (matchedIndex !== expectedColumns.findIndex((item) => item.key === column.key)) {
         positionMismatches.push({
-          columnNo: IMPORT_COLUMNS.findIndex((item) => item.key === column.key) + 1,
+          columnNo: expectedColumns.findIndex((item) => item.key === column.key) + 1,
           expectedHeader: column.templateHeader,
           actualHeader: normalizeText(headerRow[matchedIndex]),
         });
@@ -2384,14 +2772,388 @@ export class CampusExamService {
     return comparable;
   }
 
+  private normalizeCategoryFolderUpload(files: UploadedCampusExamFile[] | undefined, relativePathsInput: unknown) {
+    if (!files?.length) {
+      throw new BadRequestException('请先选择一级分类文件夹');
+    }
+    const relativePaths = Array.isArray(relativePathsInput)
+      ? relativePathsInput.map((item) => normalizeText(item))
+      : [normalizeText(relativePathsInput)];
+    if (relativePaths.length !== files.length) {
+      throw new BadRequestException('上传文件路径信息不完整，请重新选择文件夹后重试');
+    }
+
+    const validFiles: CategoryFolderUploadCandidate[] = [];
+    const skippedFiles: CategoryFolderImportFileResult[] = [];
+    let folderName: string | null = null;
+
+    files.forEach((file, index) => {
+      const relativePath = relativePaths[index];
+      if (!relativePath) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, '', 'skipped_invalid_file', `已跳过：文件 ${file.originalname} 未读取到文件夹路径信息，请重新选择文件夹后再试`));
+        return;
+      }
+      const segments = relativePath.split('/').filter(Boolean);
+      const nextFolderName = normalizeText(segments[0]);
+      if (!folderName && nextFolderName) {
+        folderName = nextFolderName;
+      }
+      if (segments.length !== 2) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, relativePath, 'skipped_invalid_file', '已跳过：目录结构不符合要求，仅支持“一级分类文件夹/题库文件.xlsx”'));
+        return;
+      }
+      const fileName = normalizeText(segments[1]);
+      if (!nextFolderName) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, relativePath, 'skipped_invalid_file', `已跳过：文件 ${file.originalname} 无法识别一级分类名称，请检查文件夹名称`));
+        return;
+      }
+      if (folderName && nextFolderName !== folderName) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, relativePath, 'skipped_invalid_file', '已跳过：检测到其他一级分类文件夹下的文件，本次不参与导入'));
+        return;
+      }
+      if (/^\.DS_Store$/i.test(fileName || file.originalname || '')) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, relativePath, 'skipped_invalid_file', '已跳过：系统文件 .DS_Store 不参与导入'));
+        return;
+      }
+      if (!/\.(xlsx|xls)$/i.test(fileName || file.originalname || '')) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, relativePath, 'skipped_invalid_file', `已跳过：文件 ${file.originalname || fileName} 不是表格文件`));
+        return;
+      }
+      if (file.size > CAMPUS_EXAM_MAX_IMPORT_FILE_SIZE) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(
+          file,
+          relativePath,
+          'skipped_invalid_file',
+          `已跳过：文件 ${file.originalname || fileName} 超过 ${Math.round(CAMPUS_EXAM_MAX_IMPORT_FILE_SIZE / 1024 / 1024)}MB 上限`,
+        ));
+        return;
+      }
+      const specialName = fileName.replace(/\.(xlsx|xls)$/i, '').trim();
+      if (!specialName) {
+        skippedFiles.push(this.buildSkippedCategoryFolderFileResult(file, relativePath, 'skipped_invalid_file', `已跳过：文件 ${file.originalname} 无法识别二级分类名称，请检查文件名`));
+        return;
+      }
+      validFiles.push({
+        file,
+        relativePath,
+        folderName: nextFolderName,
+        fileName,
+        specialName,
+      });
+    });
+    return {
+      totalFileCount: files.length,
+      folderName,
+      validFiles,
+      skippedFiles,
+    };
+  }
+
+  private precheckCategoryFolderImportFile(file: UploadedCampusExamFile) {
+    try {
+      this.assertImportFile(file);
+    } catch (error) {
+      return {
+        ok: false as const,
+        status: 'skipped_invalid_file' as const,
+        message: error instanceof Error ? `已跳过：${error.message}` : '已跳过：文件不符合上传要求',
+      };
+    }
+    try {
+      const rows = this.readExcelRows(file.buffer);
+      if (rows.length <= 1) {
+        return {
+          ok: false as const,
+          status: 'skipped_invalid_template' as const,
+          message: `已跳过：文件 ${file.originalname} 未检测到可导入数据`,
+        };
+      }
+      const headerResult = this.resolveImportHeaderMap(rows[0], { requireSpecialId: false });
+      if (headerResult.missingRequired.length || headerResult.positionMismatches.length || headerResult.unexpectedHeaders.length) {
+        const firstError = headerResult.missingRequired[0]
+          ? `缺少必要表头：${headerResult.missingRequired[0]}`
+          : headerResult.positionMismatches[0]
+            ? `表头顺序错误：第 ${headerResult.positionMismatches[0].columnNo} 列应为“${headerResult.positionMismatches[0].expectedHeader}”`
+            : `存在非模板字段：${headerResult.unexpectedHeaders[0]?.header || '未知字段'}`;
+        return {
+          ok: false as const,
+          status: 'skipped_invalid_template' as const,
+          message: `已跳过：文件 ${file.originalname} 与标准模板不匹配。${firstError}`,
+        };
+      }
+      return {
+        ok: true as const,
+      };
+    } catch (error) {
+      return {
+        ok: false as const,
+        status: 'skipped_invalid_file' as const,
+        message: error instanceof Error ? `已跳过：文件 ${file.originalname} 无法读取。${error.message}` : `已跳过：文件 ${file.originalname} 无法读取`,
+      };
+    }
+  }
+
+  private buildSkippedCategoryFolderFileResult(
+    file: UploadedCampusExamFile,
+    relativePath: string,
+    status: 'skipped_invalid_file' | 'skipped_invalid_template',
+    message: string,
+  ): CategoryFolderImportFileResult {
+    const fileName = normalizeText(file.originalname) || normalizeText(relativePath.split('/').pop()) || '未识别文件';
+    const specialName = fileName.replace(/\.(xlsx|xls)$/i, '').trim() || fileName;
+    return {
+      fileName,
+      relativePath,
+      specialName,
+      specialId: null,
+      batchId: null,
+      totalCount: 0,
+      importedCount: 0,
+      skippedCount: 0,
+      failedCount: 0,
+      status,
+      message,
+    };
+  }
+
+  private async findOrCreateCategoryByName(name: string) {
+    const existing = await this.prisma.campusExamCategory.findFirst({
+      where: { name },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (existing) {
+      return {
+        category: existing,
+        status: 'reused' as const,
+      };
+    }
+    const slug = await this.generateAvailableCategorySlug(name);
+    const category = await this.prisma.campusExamCategory.create({
+      data: {
+        specialCode: await this.generateUniqueCategorySpecialCode(),
+        name,
+        slug,
+        status: 'active',
+      },
+    });
+    return {
+      category,
+      status: 'created' as const,
+    };
+  }
+
+  private async generateAvailableCategorySlug(name: string) {
+    const baseSlug = slugifyCampusExamCategory(name);
+    let nextSlug = baseSlug;
+    let suffix = 2;
+    // 一级分类名称可能不重复，但 slug 仍可能因为历史数据冲突，需要自动避让。
+    while (await this.prisma.campusExamCategory.findUnique({ where: { slug: nextSlug } })) {
+      nextSlug = `${baseSlug}-${suffix}`;
+      suffix += 1;
+    }
+    return nextSlug;
+  }
+
+  private async generateUniqueCategorySpecialCode() {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const specialCode = this.buildRandomSpecialCode('CAT');
+      const existing = await this.prisma.campusExamCategory.findUnique({
+        where: { specialCode },
+        select: { id: true },
+      });
+      if (!existing) {
+        return specialCode;
+      }
+    }
+    throw new BadRequestException('系统生成一级分类专项ID失败，请重试');
+  }
+
+  private async generateUniqueSpecialCode() {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const specialCode = this.buildRandomSpecialCode('SP');
+      const existing = await this.prisma.campusExamSpecial.findUnique({
+        where: { specialCode },
+        select: { id: true },
+      });
+      if (!existing) {
+        return specialCode;
+      }
+    }
+    throw new BadRequestException('系统生成二级分类专项ID失败，请重试');
+  }
+
+  private buildRandomSpecialCode(prefix: 'CAT' | 'SP') {
+    return `${prefix}${Math.random().toString(36).slice(2, 10).toUpperCase()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  }
+
+  private async readNextSpecialId() {
+    const maxSpecial = await this.prisma.campusExamSpecial.aggregate({
+      _max: { id: true },
+    });
+    return (maxSpecial._max.id ?? 0) + 1;
+  }
+
+  private async importCategoryFolderFile(
+    specialId: number,
+    file: UploadedCampusExamFile,
+    relativePath: string,
+    admin: CurrentAdminPayload,
+  ) {
+    this.assertImportFile(file);
+    const rows = this.readExcelRows(file.buffer);
+    if (rows.length <= 1) {
+      throw new BadRequestException(`文件 ${file.originalname} 不包含可导入的数据行`);
+    }
+
+    const headerResult = this.resolveImportHeaderMap(rows[0], { requireSpecialId: false });
+    const validationErrors: CampusExamImportErrorItem[] = [];
+    const previewRows: PreviewQuestionRow[] = [];
+    let totalCount = 0;
+
+    if (headerResult.missingRequired.length || headerResult.positionMismatches.length || headerResult.unexpectedHeaders.length) {
+      headerResult.missingRequired.forEach((header, index) => {
+        validationErrors.push({
+          rowNo: 1,
+          fieldName: '表头',
+          errorCode: 'HEADER_MISSING',
+          errorMessage: `缺少必要表头：${header}`,
+          rawPayload: { index, header } as Prisma.InputJsonValue,
+        });
+      });
+      headerResult.positionMismatches.forEach((item) => {
+        validationErrors.push({
+          rowNo: 1,
+          fieldName: '表头顺序',
+          errorCode: 'HEADER_ORDER_INVALID',
+          errorMessage: `第 ${item.columnNo} 列应为“${item.expectedHeader}”，当前识别为“${item.actualHeader || '空列'}”`,
+          rawPayload: item as unknown as Prisma.InputJsonValue,
+        });
+      });
+      headerResult.unexpectedHeaders.forEach((item) => {
+        validationErrors.push({
+          rowNo: 1,
+          fieldName: '表头',
+          errorCode: 'HEADER_UNEXPECTED',
+          errorMessage: `检测到模板之外的表头：第 ${item.columnNo} 列“${item.header}”`,
+          rawPayload: item as unknown as Prisma.InputJsonValue,
+        });
+      });
+    } else {
+      for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+        const row = rows[rowIndex];
+        if (!row.some((cell) => normalizeText(cell))) {
+          continue;
+        }
+        totalCount += 1;
+        try {
+          previewRows.push(this.normalizeImportRow(row, headerResult.map, specialId, rowIndex + 1, {
+            validateSpecialId: false,
+          }));
+        } catch (error) {
+          validationErrors.push({
+            rowNo: rowIndex + 1,
+            fieldName: '行校验',
+            errorCode: 'ROW_INVALID',
+            errorMessage: error instanceof Error ? error.message : '行数据不合法',
+            rawPayload: this.toJsonRow(row) as Prisma.InputJsonValue,
+          });
+        }
+      }
+    }
+
+    const batch = await this.prisma.campusExamImportBatch.create({
+      data: {
+        specialId,
+        fileName: file.originalname,
+        uploadedByAdminId: admin.adminId,
+        totalCount,
+        successCount: 0,
+        failCount: validationErrors.length,
+        status: validationErrors.length ? 'imported_with_errors' : 'imported',
+        summaryJson: {
+          source: 'category_folder_import',
+          relativePath,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    let importedCount = 0;
+    let skippedCount = 0;
+    const importErrors: CampusExamImportErrorItem[] = [];
+
+    for (const row of previewRows) {
+      try {
+        const result = await this.persistPreviewQuestion(row, batch.id, 'skip_existing');
+        if (result === 'skipped') {
+          skippedCount += 1;
+        } else {
+          importedCount += 1;
+        }
+      } catch (error) {
+        importErrors.push({
+          rowNo: row.sourceRowNo,
+          fieldName: '正式导入',
+          errorCode: 'IMPORT_FAILED',
+          errorMessage: error instanceof Error ? error.message : '正式导入失败',
+          rawPayload: row as unknown as Prisma.InputJsonValue,
+        });
+      }
+    }
+
+    const allErrors = [...validationErrors, ...importErrors];
+    if (allErrors.length) {
+      await this.prisma.campusExamImportError.createMany({
+        data: allErrors.map((item) => ({
+          batchId: batch.id,
+          rowNo: item.rowNo,
+          fieldName: item.fieldName,
+          errorCode: item.errorCode,
+          errorMessage: item.errorMessage,
+          rawPayload: item.rawPayload ?? Prisma.JsonNull,
+        })),
+      });
+    }
+
+    await this.prisma.campusExamImportBatch.update({
+      where: { id: batch.id },
+      data: {
+        successCount: importedCount,
+        failCount: allErrors.length,
+        status: allErrors.length ? 'imported_with_errors' : 'imported',
+        summaryJson: {
+          source: 'category_folder_import',
+          relativePath,
+          importedCount,
+          skippedCount,
+          failedCount: allErrors.length,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    await this.refreshSpecialQuestionCount(specialId);
+
+    return {
+      batchId: batch.id,
+      totalCount,
+      importedCount,
+      skippedCount,
+      failedCount: allErrors.length,
+      status: allErrors.length ? 'imported' as const : 'imported' as const,
+      message: `导入完成：成功导入 ${importedCount} 题，跳过 ${skippedCount} 题，失败 ${allErrors.length} 题`,
+    };
+  }
+
   private assertPracticeAnswerValid(
     questionType: number,
     userAnswer: { type: string; values: string[] },
     interactionRule: CampusExamInteractionRule,
     optionsJson: QuestionOptionItem[] | null,
+    options?: {
+      allowIncompleteSubmit?: boolean;
+    },
   ) {
     const nonEmptyValues = userAnswer.values.filter((item) => normalizeText(item));
-    if (interactionRule.requiresNonEmptyAnswer && !nonEmptyValues.length) {
+    const allowIncompleteSubmit = options?.allowIncompleteSubmit === true;
+    if (!allowIncompleteSubmit && interactionRule.requiresNonEmptyAnswer && !nonEmptyValues.length) {
       throw new BadRequestException('请先完成当前题目的作答');
     }
     if (questionType === 1) {
@@ -2402,8 +3164,14 @@ export class CampusExamService {
       return;
     }
     if (questionType === 2) {
-      if (nonEmptyValues.length < interactionRule.minSelectionCount || nonEmptyValues.length > interactionRule.maxSelectionCount) {
+      if (!allowIncompleteSubmit && (
+        nonEmptyValues.length < interactionRule.minSelectionCount
+        || nonEmptyValues.length > interactionRule.maxSelectionCount
+      )) {
         throw new BadRequestException(`多选题需选择 ${interactionRule.minSelectionCount}~${interactionRule.maxSelectionCount} 个选项`);
+      }
+      if (allowIncompleteSubmit && nonEmptyValues.length > interactionRule.maxSelectionCount) {
+        throw new BadRequestException(`多选题最多选择 ${interactionRule.maxSelectionCount} 个选项`);
       }
       this.assertSelectedOptionExists(nonEmptyValues, optionsJson);
       return;
@@ -2415,18 +3183,24 @@ export class CampusExamService {
       return;
     }
     if (questionType === 4) {
-      if (nonEmptyValues.length !== 1) {
+      if (!allowIncompleteSubmit && nonEmptyValues.length !== 1) {
         throw new BadRequestException('单项填空题需要填写 1 个答案');
+      }
+      if (allowIncompleteSubmit && nonEmptyValues.length > 1) {
+        throw new BadRequestException('单项填空题最多填写 1 个答案');
       }
       return;
     }
     if (questionType === 5) {
-      if (nonEmptyValues.length !== interactionRule.blankCount) {
+      if (!allowIncompleteSubmit && nonEmptyValues.length !== interactionRule.blankCount) {
         throw new BadRequestException(`多项填空题需要填写 ${interactionRule.blankCount} 个答案`);
+      }
+      if (allowIncompleteSubmit && nonEmptyValues.length > interactionRule.blankCount) {
+        throw new BadRequestException(`多项填空题最多填写 ${interactionRule.blankCount} 个答案`);
       }
       return;
     }
-    if (questionType === 6 && !nonEmptyValues[0]) {
+    if (questionType === 6 && !allowIncompleteSubmit && !nonEmptyValues[0]) {
       throw new BadRequestException('简答题答案不能为空');
     }
   }

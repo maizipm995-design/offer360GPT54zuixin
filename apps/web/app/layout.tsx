@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { GlobalToastViewport } from '@/components/ui/global-toast-viewport';
-import { buildOrganizationSchema, buildRootMetadata } from '@/lib/seo';
+import { buildOrganizationSchema, buildRootMetadata, buildSiteNavigationSchema, buildWebsiteSchema } from '@/lib/seo';
 import './globals.css';
 
 export const metadata: Metadata = buildRootMetadata();
@@ -19,6 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const organizationSchema = buildOrganizationSchema();
+  const websiteSchema = buildWebsiteSchema();
+  const siteNavigationSchema = buildSiteNavigationSchema();
 
   return (
     <html lang="zh-CN">
@@ -27,6 +29,18 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(organizationSchema),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(websiteSchema),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(siteNavigationSchema),
           }}
         />
         {children}

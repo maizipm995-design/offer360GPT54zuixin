@@ -379,13 +379,13 @@ export const RESUME_TITLE_STYLE_OPTIONS: Array<{ value: ResumeTitleStyle; label:
 export const RESUME_SECTION_DEFINITIONS: ResumeSectionDefinition[] = [
   { id: 'personal', label: '基本信息', deletable: false },
   { id: 'education', label: '教育经历', deletable: false },
-  { id: 'internships', label: '工作经历', deletable: false },
+  { id: 'internships', label: '实习经历', deletable: false },
   { id: 'projects', label: '项目经历', deletable: false },
   { id: 'skills', label: '专业技能', deletable: false },
   { id: 'awards', label: '荣誉奖项', deletable: true },
   { id: 'languages', label: '语言能力', deletable: true },
   { id: 'campusRoles', label: '校内职务', deletable: true },
-  { id: 'selfEvaluation', label: '个人总结', deletable: true },
+  { id: 'selfEvaluation', label: '个人评价', deletable: true },
   { id: 'links', label: '社交主页 / 作品集', deletable: true },
 ];
 

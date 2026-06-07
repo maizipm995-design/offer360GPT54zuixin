@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CircleHelp, Crown, Ticket } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { clientFetch } from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
 import { showToast, useGlobalToast } from '@/store/toast-store';
@@ -34,9 +33,9 @@ const freeUserBenefits: BenefitItem[] = [
     content: '网上零散拼凑优质资料,简历/面试题缺乏体系,求职竞争力较弱',
   },
   {
-    title: '面试逐字稿生成：',
-    content: '普通用户与标准会员统一仅可免费生成 1 次,用尽后需开通超级会员继续使用',
-    hint: '提交生成时立即扣减次数；若接口返回失败系统会自动返还。开通或续费超级会员后可直接解锁 20 次面试逐字稿生成机会。',
+    title: '面试辅导：',
+    content: '普通用户与标准会员统一仅可免费使用 1 次逐字稿复盘能力,用尽后需开通超级会员继续使用',
+    hint: '提交生成时立即扣减次数；若接口返回失败系统会自动返还。开通或续费超级会员后可直接解锁 20 次面试辅导次数，可用于逐字稿生成与复盘。',
   },
   {
     title: '商品购买权益：',
@@ -72,8 +71,8 @@ const superMemberBenefits: BenefitItem[] = [
     content: '全套求职资料:高分简历模板+大厂面试题+行业科普,一站式备齐',
   },
   {
-    title: '面试逐字稿生成：',
-    content: '每次开通或续费超级会员，都会新增 20 次面试逐字稿生成机会',
+    title: '面试辅导：',
+    content: '每次开通或续费超级会员，都会新增 20 次面试辅导机会，可用于逐字稿生成与复盘',
     hint: '20 次全部用完后，再次开通或续费超级会员会再新增 20 次，同时顺延延长超级会员有效期。',
   },
   {
@@ -92,7 +91,7 @@ const superMemberBenefits: BenefitItem[] = [
   },
   {
     title: '服务周期：',
-    content: '365天年付会员',
+    content: '按后台套餐配置生效',
   },
 ] as const;
 
@@ -135,18 +134,25 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
     [plans],
   );
 
-  const displaySuperPlan = useMemo(() => {
-    if (!superPlan) {
-      return null;
-    }
-    return {
-      ...superPlan,
-      name: 'offer360求职会员',
-      price: 99,
-      originalPrice: superPlan.originalPrice > 99 ? superPlan.originalPrice : 199,
-      grantDays: 365,
-    };
-  }, [superPlan]);
+  const displaySuperPlan = superPlan;
+  const displaySuperBenefits = useMemo(
+    () =>
+      superMemberBenefits.map((item) => (
+        item.title === '服务周期：'
+          ? {
+              ...item,
+              content: displaySuperPlan
+                ? `${displaySuperPlan.grantDays} 天会员服务`
+                : item.content,
+            }
+          : item
+      )),
+    [displaySuperPlan],
+  );
+  const durationUnitLabel = displaySuperPlan ? `/${formatGrantDaysLabel(displaySuperPlan.grantDays)}` : '/180天';
+  const dailyPriceText = displaySuperPlan && displaySuperPlan.grantDays > 0
+    ? `平均每天仅约 ¥${(displaySuperPlan.price / displaySuperPlan.grantDays).toFixed(2)}`
+    : '';
 
   const ensureLogin = () => {
     if (!token) {
@@ -275,7 +281,7 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                   <h1 className="text-[24px] font-bold leading-none sm:text-[36px]">offer360会员</h1>
                 </div>
                 <p className="mx-auto max-w-[760px] text-center text-xs leading-6 text-[#666666] sm:mt-3 sm:text-sm">
-                  面向大学生与应届生的求职会员权益，覆盖校招公告查看、岗位搜索、专属推荐、求职资料包、面试逐字稿与求职全流程支持。
+                  面向大学生与应届生的求职会员权益，覆盖校招公告查看、岗位搜索、专属推荐、求职资料包、面试辅导与求职全流程支持。
                 </p>
                 <button
                   type="button"
@@ -310,9 +316,9 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                 </article>
 
                 <article className="flex min-h-[388px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-brand bg-white px-2.5 py-4 shadow-[0_8px_20px_rgba(65,131,255,0.08)] sm:min-h-[430px] sm:rounded-[18px] sm:px-7 sm:py-6">
-                  <h2 className="text-center text-[15px] font-bold text-brand sm:text-[22px]">offer360求职会员</h2>
+                  <h2 className="text-center text-[15px] font-bold text-brand sm:text-[22px]">{displaySuperPlan?.name ?? 'offer360求职会员'}</h2>
                   <div className="mt-4 space-y-3 text-[10px] leading-[1.45] text-[#555555] sm:mt-6 sm:space-y-5 sm:text-[15px] sm:leading-7">
-                    {superMemberBenefits.map((item) => (
+                    {displaySuperBenefits.map((item) => (
                       <div key={item.title} className="min-w-0">
                         <BenefitTitle title={item.title} hint={item.hint} tone="accent" />
                         <p>{item.content}</p>
@@ -326,13 +332,13 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
                         <div className="flex flex-wrap items-end gap-1 sm:gap-2">
                           <span className="text-[25px] font-bold leading-none text-brand sm:text-[36px]">¥{displaySuperPlan?.price ?? 99}</span>
                           <span className="pb-0.5 text-[10px] text-[#9CA3AF] line-through sm:pb-1 sm:text-sm">¥{displaySuperPlan?.originalPrice ?? 199}</span>
-                          <span className="pb-0.5 text-[10px] text-[#666666] sm:pb-1 sm:text-sm">/年</span>
+                          <span className="pb-0.5 text-[10px] text-[#666666] sm:pb-1 sm:text-sm">{durationUnitLabel}</span>
                         </div>
-                        <p className="mt-1 text-[10px] text-[#666666] sm:text-sm">日均仅约 ¥{((displaySuperPlan?.price ?? 99) / 365).toFixed(2)}</p>
+                        {dailyPriceText ? <p className="mt-1 text-[10px] text-[#666666] sm:text-sm">{dailyPriceText}</p> : null}
                         <div className="mt-2 space-y-1 text-[10px] leading-4 text-[#666666] sm:text-sm sm:leading-5">
                           <p>标准会员为系统赠送权益，不支持单独购买。</p>
-                          <p>超级会员支持随时购买、提前续费，系统会自动顺延叠加时长。</p>
-                          <p>每次开通或续费超级会员后，都会新增 20 次面试逐字稿生成机会。</p>
+                          <p>会员套餐支持随时购买、提前续费，系统会自动在当前剩余有效期基础上顺延叠加时长。</p>
+                          <p>每次开通或续费超级会员后，都会新增 20 次面试辅导机会，可用于逐字稿生成与复盘。</p>
                         </div>
                         <label className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-[#666666] sm:gap-2 sm:text-sm sm:leading-5">
                           <input
@@ -382,9 +388,12 @@ export function MembershipOpenPageClient({ benefitsContent, plans }: Props) {
           </section>
         </>
       )}
-      <SiteBeianFooter />
     </main>
   );
+}
+
+function formatGrantDaysLabel(grantDays: number) {
+  return `${grantDays}天`;
 }
 
 function BenefitTitle({

@@ -1,6 +1,7 @@
 'use client';
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { AdminModal } from '@/components/admin/admin-modal';
 import { AdminPagination } from '@/components/admin/admin-pagination';
 import { AdminTable } from '@/components/admin/admin-table';
 import { Button } from '@/components/ui/button';
@@ -123,39 +124,6 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function ModalShell({
-  open,
-  title,
-  description,
-  onClose,
-  children,
-  widthClass = 'max-w-6xl',
-}: {
-  open: boolean;
-  title: string;
-  description: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  widthClass?: string;
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-8">
-      <div className={`max-h-[90vh] w-full overflow-hidden rounded-[28px] bg-white shadow-2xl ${widthClass}`}>
-        <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
-          <div>
-            <h3 className="text-2xl font-bold text-ink">{title}</h3>
-            <p className="mt-2 text-sm text-muted">{description}</p>
-          </div>
-          <Button variant="ghost" onClick={onClose}>关闭</Button>
-        </div>
-        <div className="max-h-[calc(90vh-96px)] overflow-y-auto px-6 py-6">{children}</div>
-      </div>
-    </div>
-  );
 }
 
 function buildTermForm(item?: AdminNormalizationTermItem | null): TermFormState {
@@ -1010,15 +978,29 @@ export default function AdminNormalizationDictionaryPage() {
         </section>
       ) : null}
 
-      <ModalShell
+      <AdminModal
         open={termModalOpen}
         title={selectedTerm ? `编辑标准词：${selectedTerm.canonicalName}` : '新增标准词'}
         description="标准词保存成功后，可在同一窗口继续维护别名。对于 LOCATION 域，必须选择省份或城市层级。"
         onClose={closeTermModal}
       >
-        <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-          <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <div className="grid gap-3">
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h4 className="text-xl font-semibold text-ink">标准词信息</h4>
+                <p className="mt-1 text-sm text-muted">先保存标准词，再继续维护别名和匹配方式。</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void handleTermSubmit()} disabled={termSaving}>{termSaving ? '保存中...' : '保存标准词'}</Button>
+                <Button variant="secondary" onClick={closeTermModal}>取消</Button>
+                {selectedTerm ? (
+                  <Button variant="ghost" onClick={() => void handleDeleteTerm()} disabled={termDeleting}>{termDeleting ? '删除中...' : '删除标准词'}</Button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
               <label>
                 <span className="mb-2 block text-sm font-medium text-ink">词典域</span>
                 <Select value={termForm.domain} onChange={(event) => setTermForm((prev) => ({ ...prev, domain: event.target.value as TermFormState['domain'], level: event.target.value === 'LOCATION' ? prev.level : '' }))}>
@@ -1039,19 +1021,17 @@ export default function AdminNormalizationDictionaryPage() {
                   {locationLevelOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </Select>
               </label>
-              <div className="grid gap-3 md:grid-cols-2">
-                <label>
-                  <span className="mb-2 block text-sm font-medium text-ink">状态</span>
-                  <Select value={termForm.status} onChange={(event) => setTermForm((prev) => ({ ...prev, status: event.target.value as TermFormState['status'] }))}>
-                    {statusOptions.filter((item) => item.value).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                  </Select>
-                </label>
-                <label>
-                  <span className="mb-2 block text-sm font-medium text-ink">排序</span>
-                  <Input type="number" value={termForm.sortOrder} onChange={(event) => setTermForm((prev) => ({ ...prev, sortOrder: event.target.value }))} />
-                </label>
-              </div>
               <label>
+                <span className="mb-2 block text-sm font-medium text-ink">状态</span>
+                <Select value={termForm.status} onChange={(event) => setTermForm((prev) => ({ ...prev, status: event.target.value as TermFormState['status'] }))}>
+                  {statusOptions.filter((item) => item.value).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </Select>
+              </label>
+              <label>
+                <span className="mb-2 block text-sm font-medium text-ink">排序</span>
+                <Input type="number" value={termForm.sortOrder} onChange={(event) => setTermForm((prev) => ({ ...prev, sortOrder: event.target.value }))} />
+              </label>
+              <label className="lg:col-span-2">
                 <span className="mb-2 block text-sm font-medium text-ink">metadata（JSON 对象）</span>
                 <Textarea
                   rows={8}
@@ -1061,40 +1041,31 @@ export default function AdminNormalizationDictionaryPage() {
                 />
               </label>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void handleTermSubmit()} disabled={termSaving}>{termSaving ? '保存中...' : '保存标准词'}</Button>
-              <Button variant="secondary" onClick={closeTermModal}>取消</Button>
-              {selectedTerm ? (
-                <Button variant="ghost" onClick={() => void handleDeleteTerm()} disabled={termDeleting}>{termDeleting ? '删除中...' : '删除标准词'}</Button>
-              ) : null}
-            </div>
           </div>
 
           <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h4 className="text-xl font-semibold text-ink">别名维护</h4>
                 <p className="mt-1 text-sm text-muted">别名保存后会立即进入标准化查词与推荐匹配链路。</p>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={!selectedTerm}
-                  onClick={() => {
-                    setSelectedAlias(null);
-                    setAliasForm(emptyAliasForm);
-                  }}
-                >
-                  新增别名
-                </Button>
-              </div>
+              <Button
+                variant="secondary"
+                disabled={!selectedTerm}
+                onClick={() => {
+                  setSelectedAlias(null);
+                  setAliasForm(emptyAliasForm);
+                }}
+              >
+                新增别名
+              </Button>
             </div>
 
             {!selectedTerm ? (
               <Card className="rounded-3xl p-6 text-sm text-muted">请先保存标准词，然后再在这里维护别名。</Card>
             ) : (
               <>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_160px_auto]">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_220px_160px_160px]">
                   <Input
                     value={aliasFilters.keyword}
                     placeholder="搜索别名"
@@ -1115,99 +1086,96 @@ export default function AdminNormalizationDictionaryPage() {
                   </Button>
                 </div>
 
-                <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <h5 className="text-base font-semibold text-ink">{selectedAlias ? `编辑别名：${selectedAlias.aliasName}` : '新增别名'}</h5>
-                    <div className="mt-4 grid gap-3">
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-ink">别名</span>
-                        <Input value={aliasForm.aliasName} onChange={(event) => setAliasForm((prev) => ({ ...prev, aliasName: event.target.value }))} />
-                      </label>
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                        <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">aliasNormalized 预览</p>
-                        <p className="mt-2 break-all text-sm font-semibold text-ink">{aliasNormalizedPreview || '请输入别名后查看标准化结果'}</p>
-                        <p className="mt-2 text-xs leading-5 text-slate-500">只读预览用于帮助排查空格、括号和标点折叠后的命中效果；实际入库结果仍以后端统一标准化逻辑为准。</p>
-                      </div>
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-ink">匹配方式</span>
-                        <Select value={aliasForm.matchMode} onChange={(event) => setAliasForm((prev) => ({ ...prev, matchMode: event.target.value as AliasFormState['matchMode'] }))}>
-                          {matchModeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                        </Select>
-                        <p className="mt-2 text-xs leading-5 text-slate-500">`exact`：仅用于查词归一；`contains`：除归一外，还会进入搜索与推荐的文本召回，请只给稳定长词使用。</p>
-                      </label>
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-ink">状态</span>
-                        <Select value={aliasForm.status} onChange={(event) => setAliasForm((prev) => ({ ...prev, status: event.target.value as AliasFormState['status'] }))}>
-                          {statusOptions.filter((item) => item.value).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                        </Select>
-                      </label>
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-ink">来源</span>
-                        <Input value={aliasForm.source} onChange={(event) => setAliasForm((prev) => ({ ...prev, source: event.target.value }))} placeholder="如：manual / seed / import" />
-                      </label>
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-ink">排序</span>
-                        <Input type="number" value={aliasForm.sortOrder} onChange={(event) => setAliasForm((prev) => ({ ...prev, sortOrder: event.target.value }))} />
-                      </label>
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <h5 className="text-base font-semibold text-ink">{selectedAlias ? `编辑别名：${selectedAlias.aliasName}` : '新增别名'}</h5>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <label>
+                      <span className="mb-2 block text-sm font-medium text-ink">别名</span>
+                      <Input value={aliasForm.aliasName} onChange={(event) => setAliasForm((prev) => ({ ...prev, aliasName: event.target.value }))} />
+                    </label>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">aliasNormalized 预览</p>
+                      <p className="mt-2 break-all text-sm font-semibold text-ink">{aliasNormalizedPreview || '请输入别名后查看标准化结果'}</p>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">只读预览用于帮助排查空格、括号和标点折叠后的命中效果；实际入库结果仍以后端统一标准化逻辑为准。</p>
                     </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Button onClick={() => void handleAliasSubmit()} disabled={aliasSaving}>{aliasSaving ? '保存中...' : '保存别名'}</Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setSelectedAlias(null);
-                          setAliasForm(emptyAliasForm);
-                        }}
-                      >
-                        清空表单
-                      </Button>
-                    </div>
+                    <label>
+                      <span className="mb-2 block text-sm font-medium text-ink">匹配方式</span>
+                      <Select value={aliasForm.matchMode} onChange={(event) => setAliasForm((prev) => ({ ...prev, matchMode: event.target.value as AliasFormState['matchMode'] }))}>
+                        {matchModeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                      </Select>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">`exact`：仅用于查词归一；`contains`：除归一外，还会进入搜索与推荐的文本召回，请只给稳定长词使用。</p>
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-sm font-medium text-ink">状态</span>
+                      <Select value={aliasForm.status} onChange={(event) => setAliasForm((prev) => ({ ...prev, status: event.target.value as AliasFormState['status'] }))}>
+                        {statusOptions.filter((item) => item.value).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                      </Select>
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-sm font-medium text-ink">来源</span>
+                      <Input value={aliasForm.source} onChange={(event) => setAliasForm((prev) => ({ ...prev, source: event.target.value }))} placeholder="如：manual / seed / import" />
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-sm font-medium text-ink">排序</span>
+                      <Input type="number" value={aliasForm.sortOrder} onChange={(event) => setAliasForm((prev) => ({ ...prev, sortOrder: event.target.value }))} />
+                    </label>
                   </div>
-
-                  <AdminTable
-                    headers={['别名', '标准化预览', '匹配方式', '状态', '来源', '排序', '更新时间', '操作']}
-                    hasData={aliasData.list.length > 0}
-                    emptyText={aliasLoading ? '正在加载别名...' : '当前标准词暂无别名'}
-                  >
-                    {aliasData.list.map((item) => (
-                      <tr key={item.id} className="border-b border-slate-100 last:border-b-0">
-                        <td className="px-4 py-3 font-semibold text-ink">{item.aliasName}</td>
-                        <td className="px-4 py-3 text-slate-600">{item.aliasNormalized}</td>
-                        <td className="px-4 py-3 text-slate-600">{item.matchMode}</td>
-                        <td className="px-4 py-3 text-slate-600">{item.status === 'active' ? '启用' : '停用'}</td>
-                        <td className="px-4 py-3 text-slate-600">{item.source || '-'}</td>
-                        <td className="px-4 py-3 text-slate-600">{item.sortOrder}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatDate(item.updatedAt)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex gap-2">
-                            <Button
-                              variant="secondary"
-                              onClick={() => {
-                                setSelectedAlias(item);
-                                setAliasForm(buildAliasForm(item));
-                              }}
-                            >
-                              编辑
-                            </Button>
-                            <Button variant="ghost" disabled={aliasDeleting} onClick={() => void handleDeleteAlias(item)}>删除</Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </AdminTable>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button onClick={() => void handleAliasSubmit()} disabled={aliasSaving}>{aliasSaving ? '保存中...' : '保存别名'}</Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSelectedAlias(null);
+                        setAliasForm(emptyAliasForm);
+                      }}
+                    >
+                      清空表单
+                    </Button>
+                  </div>
                 </div>
+
+                <AdminTable
+                  headers={['别名', '标准化预览', '匹配方式', '状态', '来源', '排序', '更新时间', '操作']}
+                  hasData={aliasData.list.length > 0}
+                  emptyText={aliasLoading ? '正在加载别名...' : '当前标准词暂无别名'}
+                >
+                  {aliasData.list.map((item) => (
+                    <tr key={item.id} className="border-b border-slate-100 last:border-b-0">
+                      <td className="px-4 py-3 font-semibold text-ink">{item.aliasName}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.aliasNormalized}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.matchMode}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.status === 'active' ? '启用' : '停用'}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.source || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.sortOrder}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDate(item.updatedAt)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-2">
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setSelectedAlias(item);
+                              setAliasForm(buildAliasForm(item));
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button variant="ghost" disabled={aliasDeleting} onClick={() => void handleDeleteAlias(item)}>删除</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </AdminTable>
               </>
             )}
           </div>
         </div>
-      </ModalShell>
+      </AdminModal>
 
-      <ModalShell
+      <AdminModal
         open={hierarchyModalOpen}
         title={selectedHierarchy ? '编辑省市关系' : '新增省市关系'}
         description="省份必须来自 LOCATION 域下的 province 词条，城市必须来自 LOCATION 域下的 city 词条；同一城市只能绑定一个父级省份。"
         onClose={closeHierarchyModal}
-        widthClass="max-w-3xl"
       >
         <div className="grid gap-4 md:grid-cols-2">
           <label>
@@ -1238,7 +1206,7 @@ export default function AdminNormalizationDictionaryPage() {
             <Button variant="ghost" onClick={() => void handleDeleteHierarchy()} disabled={hierarchyDeleting}>{hierarchyDeleting ? '删除中...' : '删除关系'}</Button>
           ) : null}
         </div>
-      </ModalShell>
+      </AdminModal>
     </div>
   );
 }

@@ -26,6 +26,37 @@ function formatFileSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function getImportBatchStatusLabel(status: string) {
+  switch (status) {
+    case 'previewed':
+      return '预览通过';
+    case 'preview_with_errors':
+      return '预览有误';
+    case 'imported':
+      return '导入完成';
+    case 'imported_with_errors':
+      return '导入部分失败';
+    case 'uploaded':
+      return '已上传';
+    default:
+      return status || '未知状态';
+  }
+}
+
+function getImportPageErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) {
+    return fallback;
+  }
+  const message = error.message.trim();
+  if (!message) {
+    return fallback;
+  }
+  if (message.toLowerCase() === 'internal server error') {
+    return `${fallback}：服务器处理导入文件时发生异常，请重新上传后再试；若持续失败，请检查 Excel 模板字段与题目内容是否正确`;
+  }
+  return message;
+}
+
 export default function CampusExamAdminSpecialDetailPage() {
   const params = useParams<{ specialId: string }>();
   const [detail, setDetail] = useState<CampusExamAdminSpecialDetail | null>(null);
@@ -48,7 +79,7 @@ export default function CampusExamAdminSpecialDetailPage() {
       const result = await clientFetch<CampusExamAdminSpecialDetail>(`/admin/campus-exam/specials/${specialId}`);
       setDetail(result);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '专项详情加载失败');
+      setMessage(getImportPageErrorMessage(error, '专项详情加载失败，请刷新页面后重试'));
     } finally {
       setLoading(false);
     }
@@ -67,19 +98,19 @@ export default function CampusExamAdminSpecialDetailPage() {
       return;
     }
     if (!/\.(xlsx|xls)$/i.test(file.name)) {
-      setMessage('请上传 .xlsx 或 .xls 格式的 Excel 文件');
+      setMessage('文件选择失败：仅支持上传 .xlsx 或 .xls 格式的 Excel 题库文件');
       event.target.value = '';
       return;
     }
     if (file.size > MAX_IMPORT_FILE_SIZE) {
-      setMessage(`Excel 文件不能超过 ${formatFileSize(MAX_IMPORT_FILE_SIZE)}`);
+      setMessage(`文件选择失败：Excel 文件大小不能超过 ${formatFileSize(MAX_IMPORT_FILE_SIZE)}`);
       event.target.value = '';
       return;
     }
     setSelectedFile(file);
     setPreviewResult(null);
     setConfirmResult(null);
-    setMessage(`已选择 ${file.name}`);
+    setMessage(`已选择题库文件：${file.name}（${formatFileSize(file.size)}），可以开始预览校验`);
   };
 
   const handleTemplateDownload = async () => {
@@ -87,9 +118,9 @@ export default function CampusExamAdminSpecialDetailPage() {
       setDownloadingTemplate(true);
       const payload = await clientFetch<AdminFileDownloadPayload>('/admin/campus-exam/specials/import/template');
       downloadFilePayload(payload);
-      setMessage('模板下载完成，请严格按 12 个标准字段填写');
+      setMessage('模板下载成功：请严格按标准模板填写题目字段，若保留旧版分类专项ID列，系统会自动忽略其内容');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '模板下载失败');
+      setMessage(getImportPageErrorMessage(error, '模板下载失败，请稍后重试'));
     } finally {
       setDownloadingTemplate(false);
     }
@@ -98,7 +129,7 @@ export default function CampusExamAdminSpecialDetailPage() {
   const openFilePicker = () => {
     const input = inputRef.current;
     if (!input) {
-      setMessage('文件选择器初始化失败，请刷新页面后重试');
+      setMessage('文件选择器初始化失败，请刷新页面后重新选择题库文件');
       return;
     }
     input.value = '';
@@ -115,12 +146,12 @@ export default function CampusExamAdminSpecialDetailPage() {
 
   const handlePreview = async () => {
     if (!selectedFile) {
-      setMessage('请先选择 Excel 文件');
+      setMessage('开始预览前，请先选择 1 个 Excel 题库文件');
       return;
     }
     try {
       setUploading(true);
-      setMessage('正在上传并执行预览校验...');
+      setMessage('正在上传文件并校验表头、字段格式、答案和图片链接，Excel 内的分类专项ID列会自动忽略，请稍候...');
       const formData = new FormData();
       formData.append('file', selectedFile);
       const result = await clientUpload<CampusExamAdminImportPreviewResult>(
@@ -129,10 +160,10 @@ export default function CampusExamAdminSpecialDetailPage() {
       );
       setPreviewResult(result);
       setConfirmResult(null);
-      setMessage('预览完成，可以继续正式导入');
+      setMessage(`预览完成：共检测 ${result.totalCount} 行，校验通过 ${result.successCount} 行，发现 ${result.failCount} 处问题，可以继续正式导入`);
       await loadDetail();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Excel 预览失败');
+      setMessage(getImportPageErrorMessage(error, '题库预览失败，请检查 Excel 模板和字段内容后重试'));
     } finally {
       setUploading(false);
     }
@@ -140,7 +171,7 @@ export default function CampusExamAdminSpecialDetailPage() {
 
   const handleConfirm = async () => {
     if (!previewResult?.batchId) {
-      setMessage('请先完成 Excel 预览');
+      setMessage('正式导入前，请先完成题库预览并生成有效批次');
       return;
     }
     try {
@@ -156,10 +187,10 @@ export default function CampusExamAdminSpecialDetailPage() {
         },
       );
       setConfirmResult(result);
-      setMessage('正式导入完成');
+      setMessage(`正式导入完成：成功导入 ${result.importedCount} 题，跳过 ${result.skippedCount} 题，失败 ${result.failedCount} 题`);
       await loadDetail();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '正式导入失败');
+      setMessage(getImportPageErrorMessage(error, '正式导入失败，请根据预览结果修正后重试'));
     } finally {
       setConfirming(false);
     }
@@ -195,8 +226,8 @@ export default function CampusExamAdminSpecialDetailPage() {
 
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs text-slate-500">专项 ID</p>
-              <p className="mt-2 text-xl font-semibold text-ink">{detail?.id ?? '-'}</p>
+              <p className="text-xs text-slate-500">专项业务ID</p>
+              <p className="mt-2 font-mono text-xl font-semibold text-ink">{detail?.specialCode ?? '-'}</p>
             </div>
             <div className="rounded-2xl bg-slate-50 p-4">
               <p className="text-xs text-slate-500">当前题量</p>
@@ -206,8 +237,8 @@ export default function CampusExamAdminSpecialDetailPage() {
 
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <p className="font-semibold">导入规则提醒</p>
-            <p className="mt-2">1. Excel 需严格使用 12 列标准模板，列名与顺序必须一致。</p>
-            <p className="mt-1">2. 当前上传上下文的 `分类专项id` 必须严格等于 {detail?.id ?? specialId}。</p>
+            <p className="mt-2">1. Excel 需使用标准模板字段；若沿用旧版 `分类专项id` 列，系统会兼容识别并自动忽略其内容。</p>
+            <p className="mt-1">2. 管理员先选定当前二级分类后再上传，Excel 内自带的 `分类专项ID` 列会被直接忽略，不参与读取与校验。</p>
             <p className="mt-1">3. 题目、选项、解析支持富文本 HTML，若内容里直接出现图片 URL，展示时会自动转成图片。</p>
             <p className="mt-1">4. 预览只校验不正式落库，确认导入时会执行资源转存并写入题库。</p>
           </div>
@@ -220,6 +251,7 @@ export default function CampusExamAdminSpecialDetailPage() {
             <p className="mt-2 break-all">{selectedFile ? `${selectedFile.name} (${formatFileSize(selectedFile.size)})` : '尚未选择文件'}</p>
             <p className="mt-2 text-xs text-slate-500">支持 `.xlsx / .xls`，单文件上限 {formatFileSize(MAX_IMPORT_FILE_SIZE)}。</p>
             <p className="mt-2 text-xs text-slate-500">模板列顺序：题目、题型、题目类型、分类专项id、难度、是否高频错题、选项、选项类型、答案、题目解析、题目图片链接、解析图片链接。</p>
+            <p className="mt-1 text-xs text-slate-500">其中 `分类专项id` 仅为兼容旧表保留，上传时不会读取、不会校验、也不会决定入库归属。</p>
             <p className="mt-1 text-xs text-slate-500">富文本选项支持模板里的 `|||` 分隔写法，也兼容英文分号分隔。</p>
           </div>
           <input
@@ -296,7 +328,7 @@ export default function CampusExamAdminSpecialDetailPage() {
                 </div>
                 <div className="rounded-2xl bg-slate-50 p-4 md:col-span-2">
                   <p className="text-xs text-slate-500">状态</p>
-                  <p className="mt-2 text-xl font-semibold text-ink">{confirmResult.status}</p>
+                  <p className="mt-2 text-xl font-semibold text-ink">{getImportBatchStatusLabel(confirmResult.status)}</p>
                 </div>
               </div>
             ) : (
@@ -325,7 +357,7 @@ export default function CampusExamAdminSpecialDetailPage() {
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span className="rounded-full bg-brand/10 px-3 py-1 text-brand">第 {row.sourceRowNo} 行</span>
                     <span>{row.questionTypeLabel}</span>
-                    <span>专项 ID {row.specialId}</span>
+                    <span>绑定专项业务ID {detail?.specialCode ?? '-'}</span>
                     <span>难度 {row.difficulty}</span>
                     <span>{row.isHighFrequencyWrong ? '高频错题' : '非高频错题'}</span>
                     <span>题目类型 {row.stemContentType}</span>
@@ -409,7 +441,7 @@ export default function CampusExamAdminSpecialDetailPage() {
               <div key={item.id} className="rounded-2xl border border-slate-200 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-medium text-ink">{item.fileName}</p>
-                  <span className="text-xs text-slate-500">{item.status}</span>
+                  <span className="text-xs text-slate-500">{getImportBatchStatusLabel(item.status)}</span>
                 </div>
                 <p className="mt-2 text-sm text-slate-500">总 {item.totalCount} / 成功 {item.successCount} / 失败 {item.failCount}</p>
                 <p className="mt-1 text-xs text-slate-400">{formatDate(item.createdAt)}</p>

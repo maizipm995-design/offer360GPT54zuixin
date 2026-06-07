@@ -57,6 +57,26 @@ function WechatPayLogo() {
   );
 }
 
+function getPendingPaymentTitle(order: CheckoutOrder) {
+  if (order.payScene === 'jsapi') {
+    return '微信内支付';
+  }
+  if (order.payScene === 'h5') {
+    return '微信 APP 支付';
+  }
+  return '扫码支付';
+}
+
+function getPendingPaymentDescription(order: CheckoutOrder) {
+  if (order.payScene === 'jsapi') {
+    return '当前页面在微信内打开，系统会自动拉起微信原生支付面板，无需扫码。若没有成功唤起，可点击“重新发起支付”再次尝试。';
+  }
+  if (order.payScene === 'h5') {
+    return '当前页面在手机浏览器打开，系统会自动跳转微信 APP 完成支付，无需手动扫码。若浏览器拦截跳转，可点击“重新发起支付”再次拉起。';
+  }
+  return '请使用微信扫码完成支付。支付成功后页面会自动更新订单状态。';
+}
+
 async function waitForWeixinBridge() {
   if (typeof window === 'undefined') {
     throw new Error('当前环境不支持微信支付');
@@ -440,6 +460,8 @@ function CheckoutPageClient() {
     return <main className="mx-auto max-w-[960px] px-4 py-10 lg:px-8">{message || '订单不存在'}</main>;
   }
 
+  const showQrCode = order.payStatus === 'unpaid' && order.payScene === 'native';
+
   return (
     <main className="mx-auto max-w-[1366px] px-4 py-8 lg:px-8">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_360px]">
@@ -460,6 +482,11 @@ function CheckoutPageClient() {
             <div>
               <p className="text-sm text-muted">商品名称</p>
               <p className="mt-2 text-lg font-semibold text-ink">{order.title}</p>
+              {order.orderType === 'membership' && order.grantDays ? (
+                <p className="mt-2 text-sm text-muted">
+                  套餐配置：{order.memberLevelLabel} / {order.grantDays} 天
+                </p>
+              ) : null}
             </div>
             <div>
               <p className="text-sm text-muted">订单原价</p>
@@ -467,7 +494,11 @@ function CheckoutPageClient() {
             </div>
             <div>
               <p className="text-sm text-muted">订单类型</p>
-              <p className="mt-2 font-semibold text-ink">{order.orderType === 'membership' ? `${order.memberLevelLabel} 会员订单` : '求职服务订单'}</p>
+              <p className="mt-2 font-semibold text-ink">
+                {order.orderType === 'membership'
+                  ? `${order.memberLevelLabel}会员订单${order.grantDays ? ` / ${order.grantDays}天` : ''}`
+                  : '求职服务订单'}
+              </p>
             </div>
             <div>
               <p className="text-sm text-muted">下单时间</p>
@@ -571,14 +602,17 @@ function CheckoutPageClient() {
           {order.payStatus === 'unpaid' ? (
             <Card className="p-6 text-center">
               <WechatPayLogo />
-              {qrCodeDataUrl ? (
+              <h2 className="mt-5 text-lg font-bold text-ink">{getPendingPaymentTitle(order)}</h2>
+              <p className="mt-3 text-sm leading-6 text-muted">{getPendingPaymentDescription(order)}</p>
+              {showQrCode && qrCodeDataUrl ? (
                 <>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={qrCodeDataUrl} alt="微信支付二维码" className="mx-auto mt-5 h-[260px] w-[260px] rounded-2xl border border-slate-100 bg-white p-3 shadow-sm" />
                 </>
-              ) : (
+              ) : null}
+              {showQrCode && !qrCodeDataUrl ? (
                 <div className="mx-auto mt-5 h-[260px] w-[260px] animate-pulse rounded-2xl border border-slate-100 bg-slate-50" aria-label={preparing ? '微信支付二维码生成中' : '微信支付二维码准备中'} />
-              )}
+              ) : null}
             </Card>
           ) : null}
 

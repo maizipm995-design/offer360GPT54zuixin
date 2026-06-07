@@ -4,6 +4,8 @@ export type CampusExamPracticeMode =
   | 'custom_practice'
   | 'quick_practice'
   | 'smart_mock'
+  | 'wrong_practice'
+  | 'favorite_practice'
   | 'wrong_retry';
 
 export interface CampusExamHistoryItem {
@@ -16,6 +18,8 @@ export interface CampusExamHistoryItem {
   totalQuestions: number;
   answeredCount: number;
   correctCount: number;
+  scoreRate: number;
+  currentScoreRate: number;
   status: string;
   lastQuestionId?: string | null;
   createdAt: string;
@@ -33,6 +37,21 @@ export interface CampusExamCategoryTreeItem {
     description?: string | null;
     questionCount: number;
     status?: string;
+  }>;
+}
+
+export interface CampusExamCategoryDetail {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  updatedAt?: string;
+  specials: Array<{
+    id: number;
+    name: string;
+    description?: string | null;
+    questionCount: number;
+    updatedAt?: string;
   }>;
 }
 
@@ -57,6 +76,7 @@ export interface CampusExamPagination {
 
 export interface CampusExamAdminCategory {
   id: string;
+  specialCode: string;
   name: string;
   slug: string;
   description?: string | null;
@@ -69,7 +89,9 @@ export interface CampusExamAdminCategory {
 
 export interface CampusExamAdminSpecial {
   id: number;
+  specialCode: string;
   categoryId: string;
+  categorySpecialCode: string;
   categoryName: string;
   name: string;
   description?: string | null;
@@ -83,7 +105,9 @@ export interface CampusExamAdminSpecial {
 
 export interface CampusExamAdminSpecialDetail {
   id: number;
+  specialCode: string;
   categoryId: string;
+  categorySpecialCode: string;
   categoryName: string;
   name: string;
   description?: string | null;
@@ -154,6 +178,47 @@ export interface CampusExamAdminImportConfirmResult {
   status: string;
 }
 
+export interface CampusExamAdminCategoryFolderImportResult {
+  categoryId: string | null;
+  categoryName: string;
+  categoryStatus: 'created' | 'reused' | 'not_created';
+  totalFileCount: number;
+  skippedFileCount: number;
+  createdSpecialCount: number;
+  skippedSpecialCount: number;
+  importedQuestionCount: number;
+  skippedQuestionCount: number;
+  failedQuestionCount: number;
+  fileResults: Array<{
+    fileName: string;
+    relativePath: string;
+    specialName: string;
+    specialId: number | null;
+    batchId: string | null;
+    totalCount: number;
+    importedCount: number;
+    skippedCount: number;
+    failedCount: number;
+    status: 'imported' | 'skipped_existing_special' | 'skipped_invalid_file' | 'skipped_invalid_template' | 'failed';
+    message: string;
+  }>;
+}
+
+export interface CampusExamAdminCategoryDeleteResult {
+  id: string;
+  name: string;
+  deletedSpecialCount: number;
+  deletedQuestionCount: number;
+  status: 'deleted';
+}
+
+export interface CampusExamAdminSpecialDeleteResult {
+  id: number;
+  name: string;
+  deletedQuestionCount: number;
+  status: 'deleted';
+}
+
 export interface CampusExamAdminImportBatch {
   id: string;
   fileName: string;
@@ -200,12 +265,14 @@ export interface CampusExamSpecialDetail {
   id: number;
   name: string;
   description?: string | null;
+  updatedAt?: string;
   category: {
     id: string;
     name: string;
     slug: string;
   };
   questionCount: number;
+  questionIds?: string[];
   questionTypeDistribution: Array<{ questionType: number; label: string; count: number }>;
   difficultyDistribution: Array<{ difficulty: number; count: number }>;
   latestSession?: {
@@ -237,6 +304,7 @@ export interface CampusExamQuestionDetail {
   analysisImageUrl?: string;
   analysisImageOssUrl?: string;
   analysisImagePreviewUrl?: string;
+  isFavorited?: boolean;
   interactionRule: {
     mode: 'single_choice' | 'multiple_choice' | 'judge' | 'blank_single' | 'blank_multiple' | 'essay';
     autoSubmitOnOptionClick: boolean;
@@ -382,4 +450,8 @@ export function getPracticeSessionHref(item: {
 export function renderPercent(value: number, total: number) {
   if (!total) return '0%';
   return `${Math.round((value / total) * 100)}%`;
+}
+
+export function formatPercentValue(value?: number | null) {
+  return `${Math.max(0, Math.round(Number(value ?? 0)))}%`;
 }

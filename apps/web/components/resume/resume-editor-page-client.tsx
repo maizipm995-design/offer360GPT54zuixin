@@ -18,6 +18,7 @@ import {
 import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import {
   ArrowLeft,
   AlignCenter,
@@ -366,10 +367,10 @@ const SECTION_COPY: Record<
     summaryHint: '补充学校、学历、专业与时间',
   },
   internships: {
-    sidebarLabel: '工作经历模块',
-    drawerTitle: '工作经历',
-    addLabel: '+ 再增加一段工作经历',
-    summaryHint: '梳理岗位、职责、城市与成果',
+    sidebarLabel: '实习经历模块',
+    drawerTitle: '实习经历',
+    addLabel: '+ 再增加一段实习经历',
+    summaryHint: '梳理岗位、职责、城市与关键动作',
   },
   projects: {
     sidebarLabel: '项目经历模块',
@@ -378,8 +379,8 @@ const SECTION_COPY: Record<
     summaryHint: '突出项目背景、角色与结果',
   },
   selfEvaluation: {
-    sidebarLabel: '个人总结模块',
-    drawerTitle: '个人总结',
+    sidebarLabel: '个人评价模块',
+    drawerTitle: '个人评价',
     summaryHint: '沉淀亮点、优势与匹配度',
   },
   awards: {
@@ -457,7 +458,7 @@ const TEMPLATE_PREVIEW_CONTENT: ResumeContent = {
   projects: [
     {
       id: 'preview-project-1',
-      projectName: '简历优化平台',
+      projectName: 'AI简历优化平台',
       roleName: '项目负责人',
       city: '上海',
       startDate: '2024-03',
@@ -554,54 +555,95 @@ const EMPTY_STATE_TEMPLATE_CONTENT: ResumeContent = {
   ...DEFAULT_RESUME_CONTENT,
   personal: {
     ...DEFAULT_RESUME_CONTENT.personal,
-    name: 'Offer360',
-    phone: '1356666888',
-    email: 'offer360@offer.com',
+    name: 'Offer 360',
+    phone: '138XXXX1234',
+    email: 'offer360@163.com',
+    expectedRole: '产品经理',
+    summary:
+      '<p>Offer 360大学 Offer 360专业本科，具备 <strong>2 段产品实习</strong> 与 <strong>1 段体验优化项目</strong> 经历，熟悉需求调研、原型设计、数据复盘、测试协同与版本推进。</p>',
   },
   education: [
     {
       id: 'empty-state-edu-1',
-      schoolName: 'Offer360',
+      schoolName: 'Offer 360大学',
       degree: '本科',
-      major: '行政管理',
+      major: 'Offer 360专业',
       logoUrl: '',
-      startDate: '2020-09',
-      endDate: '2024-06',
-      description: '<ul><li>主修行政管理、文书处理与组织协调等课程，展示标准教育经历排版结构。</li></ul>',
+      startDate: '2022-09',
+      endDate: '2026-06',
+      description:
+        '<ul><li><strong>专业基础：</strong>系统学习 <strong>用户研究</strong>、<strong>产品规划</strong>、<strong>数据分析</strong>、<strong>项目管理</strong> 等课程，持续训练需求分析与产品表达能力。</li></ul>',
     },
   ],
   internships: [
     {
       id: 'empty-state-exp-1',
-      companyName: 'Offer360',
-      roleName: '行政专员',
+      companyName: 'Offer 360',
+      roleName: '产品经理实习生',
       city: '',
-      startDate: '2024-01',
-      endDate: '2024-06',
-      description: '<ul><li>负责日常资料整理、会议支持与流程跟进，展示工作经历的标准呈现方式。</li></ul>',
+      startDate: '2026-06',
+      endDate: '2026-09',
+      description:
+        '<ul><li><strong>需求调研：</strong>聚焦 <strong>核心产品用户场景</strong> 开展调研，每周对接 <strong>30+ 终端用户</strong>、<strong>5 个合作渠道</strong>，通过问卷、访谈与场景观察累计沉淀 <strong>80+ 条原始需求</strong>，完成首轮筛查与问题归类。</li><li><strong>需求梳理：</strong>搭建标准化 <strong>产品需求台账</strong>，从用户优先级、开发成本、业务价值 3 个维度对需求分类分级，每周输出 <strong>1 份需求分析报告</strong>，协助团队明确迭代核心清单。</li><li><strong>原型设计：</strong>使用 <strong>Axure</strong> 承接新增功能与体验优化原型，累计完成 <strong>10+ 页原型迭代</strong>，细化交互规则、页面跳转关系与终端适配说明，并同步推进视觉方案落地。</li><li><strong>迭代跟进：</strong>建立每日进度同步机制，持续对接研发解决需求疑问与偏差问题，完整参与 <strong>2 轮产品全周期迭代</strong>，逐项记录并闭环开发问题。</li></ul>',
+    },
+    {
+      id: 'empty-state-exp-2',
+      companyName: 'Offer 360',
+      roleName: '产品策划实习生',
+      city: '',
+      startDate: '2025-07',
+      endDate: '2025-10',
+      description:
+        '<ul><li><strong>数据监测：</strong>负责产品日常数据监控，每日统计 <strong>用户活跃</strong>、<strong>页面留存</strong>、<strong>功能点击</strong> 三类核心指标，建立数据台账并及时识别异常波动。</li><li><strong>功能优化：</strong>结合用户反馈与监控数据拆解功能短板，围绕使用痛点梳理优化逻辑与执行路径，累计输出 <strong>12 项功能优化方案</strong>，并跟进内部评审与落地。</li><li><strong>产品测试：</strong>参与上线前全流程测试，覆盖移动端与电脑端主流场景，围绕核心功能、交互逻辑、页面适配完成 <strong>40+ 模块测试</strong>，输出标准化测试报告推动修复。</li><li><strong>文案优化：</strong>负责站内引导、功能说明、弹窗提示等文案迭代，累计完成 <strong>30+ 处文案优化</strong>，持续提升信息表达清晰度与用户理解效率。</li></ul>',
     },
   ],
   projects: [
     {
       id: 'empty-state-project-1',
-      projectName: 'Offer360',
-      roleName: '项目执行',
+      projectName: 'Offer 360产品用户体验升级优化项目',
+      roleName: '产品实习生',
       city: '',
-      startDate: '2023-09',
-      endDate: '2023-12',
-      description: '<ul><li>协助推进项目资料归档、进度同步与跨部门沟通，展示项目经历的标准排版结构。</li></ul>',
+      startDate: '2026-02',
+      endDate: '2026-07',
+      description:
+        '<p><strong>项目背景：</strong>Offer 360 原有版本存在 <strong>流程繁琐</strong>、<strong>页面层级混乱</strong>、<strong>功能入口隐蔽</strong> 等问题，用户负面反馈较多，核心页面留存持续承压。</p><p><strong>项目目标：</strong>系统梳理体验问题，优化核心页面与核心功能，简化冗余操作路径，统一产品交互逻辑，降低新手用户使用门槛。</p><ul><li><strong>痛点盘点：</strong>复盘近 <strong>3 个月</strong> 的用户反馈、测试记录、数据报表，累计梳理 <strong>68 项体验痛点</strong>，并归类为操作繁琐、视觉杂乱、功能冗余、终端适配 4 类问题。</li><li><strong>方案输出：</strong>围绕体验问题逐条拆解优化思路，细化交互更新逻辑、页面布局调整与执行步骤，输出 <strong>1 份完整优化方案</strong> 与 <strong>4 份专项细则</strong>，顺利通过团队评审。</li><li><strong>协同落地：</strong>联动 <strong>UI、研发、测试</strong> 多角色推进项目执行，持续处理需求偏差、技术适配与进度滞后问题，保障各项优化内容按节奏落地。</li><li><strong>灰度监测：</strong>上线后负责 <strong>灰度流量监测</strong>，分时段统计操作数据、留存数据与报错数据，持续收集用户反馈并及时微调优化细节。</li></ul><p><strong>项目结果：</strong>完成核心页面与重点功能的体验升级，统一交互规范并简化 <strong>30%+</strong> 冗余步骤；上线后核心页面留存提升，用户负面反馈下降 <strong>60%+</strong>。</p>',
     },
   ],
   skills: [],
   awards: [],
   languages: [],
   campusRoles: [],
-  selfEvaluation: '<p>具备良好的沟通表达、资料整理与执行推进能力，能够在明确流程下高效完成工作任务。</p>',
+  selfEvaluation:
+    '<ul><li><strong>专业扎实：</strong>具备较完整的 <strong>产品经理基础认知</strong>，熟悉需求调研、需求梳理、原型设计、版本迭代等工作方法，能够独立承接基础产品任务。</li><li><strong>实操丰富：</strong>拥有 <strong>2 段互联网产品实习</strong> 经验，深度参与体验优化、项目推进与日常迭代，擅长结合数据和用户反馈拆解问题。</li><li><strong>擅长协同：</strong>能够高效对接研发、UI、测试等岗位，准确传递需求信息、同步项目进度并推动问题闭环，团队协作意识较强。</li><li><strong>学习高效：</strong>对互联网产品保持敏感度，具备较强的问题拆解与逻辑思辨能力，做事细致、责任心强，能够快速适配岗位节奏。</li></ul>',
   links: [],
   sectionLabels: {
+    internships: '实习经历',
     selfEvaluation: '个人评价',
   },
 };
+
+const EMPTY_STATE_TEMPLATE_STYLE: ResumeStyleConfig = normalizeResumeStyle({
+  ...DEFAULT_RESUME_STYLE,
+  fontSize: 11,
+  spacingScale: 0.8,
+  lineHeight: 18,
+  pageMargin: 6,
+  sectionSpacing: 16,
+  itemSpacing: 16,
+  verticalSpacing: {
+    ...DEFAULT_RESUME_VERTICAL_SPACING,
+    dividerToEntryHeaderPt: 2,
+    entryHeaderToBodyPt: 2,
+    listItemGapPt: 1,
+    bodyTextLineHeightPt: 18,
+    paragraphGapPt: 1,
+    sectionCardGapPt: 2,
+    pagePaddingTopPt: 36,
+    pagePaddingBottomPt: 36,
+    headerPaddingTopPt: 28,
+    headerPaddingBottomPt: 28,
+  },
+});
 
 const EMPTY_STATE_TEMPLATE_LAYOUT: ResumeLayoutItem[] = [
   { id: 'personal', visible: true, deleted: false },
@@ -707,7 +749,10 @@ export function ResumeEditorPageClient() {
   });
   const [draftList, setDraftList] = useState<ResumeDraftRecord[]>([]);
   const [activeDraftManagerOpen, setActiveDraftManagerOpen] = useState(false);
+  const [draftDeleteMode, setDraftDeleteMode] = useState(false);
+  const [selectedDraftIds, setSelectedDraftIds] = useState<string[]>([]);
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [deletingDrafts, setDeletingDrafts] = useState(false);
   const [draggingSectionId, setDraggingSectionId] = useState<ResumeSectionId | null>(null);
   const [previewMetrics, setPreviewMetrics] = useState<ResumePreviewMetrics | null>(null);
   const [previewScale, setPreviewScale] = useState(1);
@@ -793,6 +838,36 @@ export function ResumeEditorPageClient() {
       showToast(message);
     }
     setAuthRequiredDialogOpen(true);
+  }, []);
+
+  const exitDraftDeleteMode = useCallback(() => {
+    setDraftDeleteMode(false);
+    setSelectedDraftIds([]);
+  }, []);
+
+  const resetEditorToEmptyDraft = useCallback(() => {
+    setDraftId('');
+    setDraftTitle('我的简历');
+    setContent(DEFAULT_RESUME_CONTENT);
+    setStyleConfig(sanitizeStyleConfig(DEFAULT_RESUME_STYLE));
+    setLayout(sanitizeLayoutItems(DEFAULT_RESUME_LAYOUT));
+    setLastSavedAt(null);
+    setActiveSectionId('personal');
+    setHighlightedSections([]);
+    setOpenDrawers({});
+    setActiveToolbarPanel(null);
+    setActiveStyleTab('header');
+    setSmartOnePageActive(false);
+    setSmartOnePageSnapshot(null);
+    setAiUndoState(null);
+    setEntrySuggestions({});
+    currentDraftIdRef.current = '';
+    lastSavedSnapshotRef.current = buildResumeSnapshot(
+      '我的简历',
+      DEFAULT_RESUME_CONTENT,
+      sanitizeStyleConfig(DEFAULT_RESUME_STYLE),
+      sanitizeLayoutItems(DEFAULT_RESUME_LAYOUT),
+    );
   }, []);
 
   const promptGuestLogin = useCallback(
@@ -926,6 +1001,10 @@ export function ResumeEditorPageClient() {
     }
     const response = await clientFetch<ResumeDraftListResponse>('/me/resume-drafts', {}, token);
     setDraftList(response.list);
+    setSelectedDraftIds((prev) => prev.filter((id) => response.list.some((draft) => draft.id === id)));
+    if (response.list.length === 0) {
+      setDraftDeleteMode(false);
+    }
     setDraftListMeta({
       limit: response.limit,
       total: response.total,
@@ -1025,6 +1104,7 @@ export function ResumeEditorPageClient() {
   );
   const previewContent = shouldUseEmptyStateTemplate ? EMPTY_STATE_TEMPLATE_CONTENT : content;
   const previewLayout = shouldUseEmptyStateTemplate ? EMPTY_STATE_TEMPLATE_LAYOUT : layout;
+  const previewStyleConfig = shouldUseEmptyStateTemplate ? EMPTY_STATE_TEMPLATE_STYLE : styleConfig;
 
   const persistCurrentDraft = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -1871,6 +1951,7 @@ export function ResumeEditorPageClient() {
       );
       await fetchDraftList();
       await loadDraftDetail(created.id);
+      exitDraftDeleteMode();
       setActiveDraftManagerOpen(false);
       showToast(RESUME_TOAST_COPY.draftCreated, 'success');
     } catch (error) {
@@ -1878,7 +1959,7 @@ export function ResumeEditorPageClient() {
     } finally {
       setCreatingDraft(false);
     }
-  }, [creatingDraft, draftList.length, draftListMeta.limit, draftListMeta.memberRoleCode, fetchDraftList, loadDraftDetail, openAuthRequiredDialog, token]);
+  }, [creatingDraft, draftList.length, draftListMeta.limit, draftListMeta.memberRoleCode, exitDraftDeleteMode, fetchDraftList, loadDraftDetail, openAuthRequiredDialog, token]);
 
   const switchDraft = useCallback(
     async (id: string) => {
@@ -1899,6 +1980,73 @@ export function ResumeEditorPageClient() {
     },
     [draftId, loadDraftDetail, openAuthRequiredDialog, persistCurrentDraft, token],
   );
+
+  const toggleDraftSelection = useCallback((id: string) => {
+    setSelectedDraftIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  }, []);
+
+  const handleDraftDeleteAction = useCallback(async () => {
+    if (!token) {
+      openAuthRequiredDialog('登录后才可删除简历草稿。');
+      return;
+    }
+
+    if (!draftDeleteMode) {
+      setDraftDeleteMode(true);
+      setSelectedDraftIds([]);
+      return;
+    }
+
+    if (selectedDraftIds.length === 0) {
+      showToast('请先勾选要删除的简历');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      selectedDraftIds.length === 1
+        ? '确认删除选中的简历吗？删除后不可恢复。'
+        : `确认删除选中的 ${selectedDraftIds.length} 份简历吗？删除后不可恢复。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDrafts(true);
+    try {
+      await Promise.all(
+        selectedDraftIds.map((id) =>
+          clientFetch(`/me/resume-drafts/${id}`, { method: 'DELETE' }, token),
+        ),
+      );
+
+      const remainingResponse = await fetchDraftList();
+      const remainingDrafts = remainingResponse?.list ?? [];
+      const activeDraftDeleted = selectedDraftIds.includes(draftId);
+
+      if (remainingDrafts.length === 0) {
+        resetEditorToEmptyDraft();
+      } else if (activeDraftDeleted || !remainingDrafts.some((item) => item.id === draftId)) {
+        await loadDraftDetail(remainingDrafts[0].id);
+      }
+
+      exitDraftDeleteMode();
+      showToast(selectedDraftIds.length === 1 ? '简历删除成功' : `已删除 ${selectedDraftIds.length} 份简历`, 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '删除简历失败');
+    } finally {
+      setDeletingDrafts(false);
+    }
+  }, [
+    draftDeleteMode,
+    draftId,
+    exitDraftDeleteMode,
+    fetchDraftList,
+    loadDraftDetail,
+    openAuthRequiredDialog,
+    resetEditorToEmptyDraft,
+    selectedDraftIds,
+    token,
+  ]);
 
   const handleSmartSort = useCallback(() => {
     const incompleteSections: ResumeSectionId[] = [];
@@ -2082,13 +2230,14 @@ export function ResumeEditorPageClient() {
   }
 
   return (
-    <main
-      className="h-[calc(100vh-56px)] overflow-hidden bg-[#EEF1F5] text-slate-900"
-      onPointerDownCapture={handleGuestPointerDownCapture}
-      onFocusCapture={handleGuestFocusCapture}
-      onBeforeInputCapture={handleGuestBeforeInputCapture}
-    >
-      <section className="relative flex h-full flex-col overflow-hidden bg-[#EEF1F5]">
+    <div className="bg-[#EEF1F5] text-slate-900">
+      <main
+        className="h-[calc(100vh-56px)] overflow-hidden"
+        onPointerDownCapture={handleGuestPointerDownCapture}
+        onFocusCapture={handleGuestFocusCapture}
+        onBeforeInputCapture={handleGuestBeforeInputCapture}
+      >
+        <section className="relative flex h-full flex-col overflow-hidden bg-[#EEF1F5]">
         <header className="relative z-30 h-[58px] shrink-0 border-b border-[#D8DEE8] bg-white px-4 shadow-[0_6px_20px_rgba(15,23,42,0.05)]">
           <div className="flex h-full min-w-0 items-center gap-3">
             <button
@@ -2227,7 +2376,14 @@ export function ResumeEditorPageClient() {
             <div className="space-y-2 px-2.5">
               <button
                 type="button"
-                onClick={() => setActiveDraftManagerOpen((prev) => !prev)}
+                onClick={() =>
+                  setActiveDraftManagerOpen((prev) => {
+                    if (prev) {
+                      exitDraftDeleteMode();
+                    }
+                    return !prev;
+                  })
+                }
                 className={cn(
                   'mb-3 flex h-[76px] w-full flex-col items-center justify-center gap-1 rounded-xl border text-[11px] transition',
                   activeDraftManagerOpen
@@ -2249,19 +2405,60 @@ export function ResumeEditorPageClient() {
                       <button
                         key={draft.id}
                         type="button"
-                        onClick={() => void switchDraft(draft.id)}
+                        onClick={() => {
+                          if (draftDeleteMode) {
+                            toggleDraftSelection(draft.id);
+                            return;
+                          }
+                          void switchDraft(draft.id);
+                        }}
                         className={cn(
                           'w-full rounded-xl px-2.5 py-2 text-left text-[11px] transition',
-                          draft.id === draftId
-                            ? 'bg-brand/10 text-brand ring-1 ring-brand/30'
-                            : 'text-slate-600 hover:bg-[#F5F7FA] hover:text-slate-900',
+                          draftDeleteMode
+                            ? selectedDraftIds.includes(draft.id)
+                              ? 'bg-rose-50 text-rose-600 ring-1 ring-rose-200'
+                              : 'text-slate-600 hover:bg-[#F5F7FA] hover:text-slate-900'
+                            : draft.id === draftId
+                              ? 'bg-brand/10 text-brand ring-1 ring-brand/30'
+                              : 'text-slate-600 hover:bg-[#F5F7FA] hover:text-slate-900',
                         )}
                       >
-                        <span className="block truncate font-medium">{draft.title || '未命名简历'}</span>
-                        <span className="mt-1 block text-[10px] text-slate-400">{formatDate(draft.updatedAt)}</span>
+                        <span className="flex items-start gap-2">
+                          {draftDeleteMode ? (
+                            <span
+                              className={cn(
+                                'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border text-[10px] font-semibold',
+                                selectedDraftIds.includes(draft.id)
+                                  ? 'border-rose-500 bg-rose-500 text-white'
+                                  : 'border-slate-300 bg-white text-transparent',
+                              )}
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{draft.title || '未命名简历'}</span>
+                            <span className="mt-1 block text-[10px] text-slate-400">{formatDate(draft.updatedAt)}</span>
+                          </span>
+                        </span>
                       </button>
                     ))}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleDraftDeleteAction()}
+                    disabled={deletingDrafts}
+                    data-resume-guest-block="true"
+                    className={cn(
+                      'mt-2 flex h-9 w-full items-center justify-center gap-1 rounded-xl text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-70',
+                      draftDeleteMode
+                        ? 'bg-rose-500 text-white hover:bg-rose-600'
+                        : 'border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100',
+                    )}
+                  >
+                    {deletingDrafts ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    {deletingDrafts ? '删除中...' : draftDeleteMode ? '确定删除' : '删除简历'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => void createNewDraft()}
@@ -2357,8 +2554,9 @@ export function ResumeEditorPageClient() {
                     <div ref={previewHostRef}>
                       <ResumeDocument
                         content={previewContent}
-                        styleConfig={styleConfig}
+                        styleConfig={previewStyleConfig}
                         layout={previewLayout}
+                        textPreset={shouldUseEmptyStateTemplate ? 'reference' : 'default'}
                         onSectionClick={jumpToSection}
                         activeSectionId={activeSectionId}
                         onMetricsChange={handlePreviewMetricsChange}
@@ -2371,8 +2569,8 @@ export function ResumeEditorPageClient() {
             </div>
           </aside>
         </section>
-      </section>
-      <div className="fixed bottom-6 right-6 z-[80] flex flex-col items-end gap-3">
+        </section>
+        <div className="fixed bottom-6 right-6 z-[80] flex flex-col items-end gap-3">
         {aiUndoState?.scope === 'global' ? (
           <button
             type="button"
@@ -2391,8 +2589,8 @@ export function ResumeEditorPageClient() {
           {optimizingGlobal ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
           {optimizingGlobal ? '正在优化整份简历...' : '一键AI优化简历'}
         </button>
-      </div>
-      {createLimitPromptOpen ? (
+        </div>
+        {createLimitPromptOpen ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 px-4">
           <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
             <h3 className="text-xl font-semibold text-slate-900">继续创建新简历需要开通会员</h3>
@@ -2418,8 +2616,8 @@ export function ResumeEditorPageClient() {
             </div>
           </div>
         </div>
-      ) : null}
-      {pendingBatchAiAction ? (
+        ) : null}
+        {pendingBatchAiAction ? (
         <BatchAiConfirmDialog
           action={pendingBatchAiAction}
           onCancel={() => setPendingBatchAiAction(null)}
@@ -2429,25 +2627,27 @@ export function ResumeEditorPageClient() {
             void submitBatchAiAction(action);
           }}
         />
-      ) : null}
-      <MemberAccessDialog
-        open={Boolean(memberAccessMessage)}
-        message={memberAccessMessage}
-        onClose={() => setMemberAccessMessage('')}
-        onConfirm={() => {
-          setMemberAccessMessage('');
-          router.push('/membership');
-        }}
-      />
-      <AuthRequiredDialog
-        open={authRequiredDialogOpen}
-        onClose={() => setAuthRequiredDialogOpen(false)}
-        onConfirm={() => {
-          setAuthRequiredDialogOpen(false);
-          router.push(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
-        }}
-      />
-    </main>
+        ) : null}
+        <MemberAccessDialog
+          open={Boolean(memberAccessMessage)}
+          message={memberAccessMessage}
+          onClose={() => setMemberAccessMessage('')}
+          onConfirm={() => {
+            setMemberAccessMessage('');
+            router.push('/membership');
+          }}
+        />
+        <AuthRequiredDialog
+          open={authRequiredDialogOpen}
+          onClose={() => setAuthRequiredDialogOpen(false)}
+          onConfirm={() => {
+            setAuthRequiredDialogOpen(false);
+            router.push(`/login?redirect=${encodeURIComponent(REDIRECT_PATH)}`);
+          }}
+        />
+      </main>
+      <SiteBeianFooter className="pb-8 pt-6" />
+    </div>
   );
 }
 
@@ -3543,7 +3743,7 @@ function AuthRequiredDialog({
       <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
         <h3 className="text-xl font-semibold text-slate-900">登录后即可继续</h3>
         <p className="mt-3 text-sm leading-6 text-slate-500">
-          未登录状态下可先浏览简历优化页面内容与填写样式；当你开始填写、选择、编辑、导出或发起 AI 操作时，需要先登录账号。
+          未登录状态下可先浏览 AI简历优化 页面内容与填写样式；当你开始填写、选择、编辑、导出或发起 AI 操作时，需要先登录账号。
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <button
@@ -3829,10 +4029,10 @@ function renderSectionEditor({
       return (
         <ExperienceEditorSection
           sectionId="internships"
-          title="工作经历"
-          itemLabel="工作经历"
+          title="实习经历"
+          itemLabel="实习经历"
           items={content.internships}
-          addLabel={SECTION_COPY.internships.addLabel ?? '+ 再增加一段工作经历'}
+          addLabel={SECTION_COPY.internships.addLabel ?? '+ 再增加一段实习经历'}
           isDrawerOpen={isDrawerOpen}
           toggleDrawer={toggleDrawer}
           onSaveDrawer={onSaveDrawer}
@@ -3915,7 +4115,7 @@ function renderSectionEditor({
       const suggestionState = getEntrySuggestions('selfEvaluation');
       return (
         <DrawerCard
-          title="个人总结"
+          title="个人评价"
           open={isDrawerOpen(drawerKey)}
           onToggle={() => toggleDrawer(drawerKey)}
           onOptimize={() => void onOptimizeSection('selfEvaluation')}
@@ -5203,7 +5403,7 @@ function getSectionLabelFallback(sectionId: ResumeSectionId) {
     awards: '荣誉奖项',
     languages: '语言能力',
     campusRoles: '校园经历',
-    selfEvaluation: '其他',
+    selfEvaluation: '个人评价',
     links: '作品集',
   };
   return labels[sectionId];

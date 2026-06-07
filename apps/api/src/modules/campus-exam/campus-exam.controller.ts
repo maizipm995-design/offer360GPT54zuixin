@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -65,6 +65,20 @@ export class CampusExamController {
     @CurrentUser() user?: CurrentUserPayload | null,
   ) {
     return this.campusExamService.getQuestionDetail(questionId, user?.userId ?? null, sessionId ?? null);
+  }
+
+  @Post('questions/:questionId/favorite')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  favoriteQuestion(@CurrentUser() user: CurrentUserPayload, @Param('questionId') questionId: string) {
+    return this.campusExamService.favoriteQuestion(user.userId, questionId);
+  }
+
+  @Delete('questions/:questionId/favorite')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  unfavoriteQuestion(@CurrentUser() user: CurrentUserPayload, @Param('questionId') questionId: string) {
+    return this.campusExamService.unfavoriteQuestion(user.userId, questionId);
   }
 
   @Get('history')

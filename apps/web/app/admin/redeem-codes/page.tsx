@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { AdminModal } from '@/components/admin/admin-modal';
 import { AdminPagination } from '@/components/admin/admin-pagination';
 import { AdminTable } from '@/components/admin/admin-table';
 import { Button } from '@/components/ui/button';
@@ -82,6 +83,7 @@ export default function AdminRedeemCodesPage() {
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [nextStatus, setNextStatus] = useState<'void' | 'unused'>('void');
   const [invalidReason, setInvalidReason] = useState('后台手动作废');
   const [showGenerateModal, setShowGenerateModal] = useState(false);
@@ -159,10 +161,20 @@ export default function AdminRedeemCodesPage() {
     syncActionForm(item);
   };
 
+  const openDetailModal = (item: AdminRedeemCodeItem) => {
+    handleSelect(item);
+    setDetailModalOpen(true);
+  };
+
+  const closeDetailModal = () => {
+    setDetailModalOpen(false);
+  };
+
   const handleResetCodes = async () => {
     setFilters(initialCodeFilters);
     setSelectedId('');
     syncActionForm(null);
+    closeDetailModal();
     await loadCodes(1, initialCodeFilters);
   };
 
@@ -300,97 +312,36 @@ export default function AdminRedeemCodesPage() {
             </div>
           </Card>
 
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="space-y-4">
-              <AdminTable
-                headers={['兑换码', '批次号', '会员等级', '时长类型', '状态', '使用用户', '有效期', '更新时间']}
-                hasData={data.list.length > 0}
-                emptyText={loading ? '兑换码列表加载中...' : '暂无兑换码数据'}
-              >
-                {data.list.map((item) => (
-                  <tr
-                    key={item.id}
-                    className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
-                    onClick={() => handleSelect(item)}
-                  >
-                    <td className="px-4 py-3 font-medium text-ink">{item.code}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.batchNo}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.memberLevelLabel}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.cardType} / {item.grantDays} 天</td>
-                    <td className="px-4 py-3 text-slate-600">{statusLabelMap[item.status] || item.status}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.usedByUserPhone || '-'}</td>
-                    <td className="px-4 py-3 text-slate-600">{formatDate(item.validUntil)}</td>
-                    <td className="px-4 py-3 text-slate-600">{formatDateTime(item.updatedAt)}</td>
-                  </tr>
-                ))}
-              </AdminTable>
+          <div className="space-y-4">
+            <AdminTable
+              headers={['兑换码', '批次号', '会员等级', '时长类型', '状态', '使用用户', '有效期', '更新时间']}
+              hasData={data.list.length > 0}
+              emptyText={loading ? '兑换码列表加载中...' : '暂无兑换码数据'}
+            >
+              {data.list.map((item) => (
+                <tr
+                  key={item.id}
+                  className={`cursor-pointer border-b border-slate-100 last:border-b-0 ${selectedId === item.id ? 'bg-brand/5' : 'hover:bg-slate-50'}`}
+                  onClick={() => openDetailModal(item)}
+                >
+                  <td className="px-4 py-3 font-medium text-ink">{item.code}</td>
+                  <td className="px-4 py-3 text-slate-600">{item.batchNo}</td>
+                  <td className="px-4 py-3 text-slate-600">{item.memberLevelLabel}</td>
+                  <td className="px-4 py-3 text-slate-600">{item.cardType} / {item.grantDays} 天</td>
+                  <td className="px-4 py-3 text-slate-600">{statusLabelMap[item.status] || item.status}</td>
+                  <td className="px-4 py-3 text-slate-600">{item.usedByUserPhone || '-'}</td>
+                  <td className="px-4 py-3 text-slate-600">{formatDate(item.validUntil)}</td>
+                  <td className="px-4 py-3 text-slate-600">{formatDateTime(item.updatedAt)}</td>
+                </tr>
+              ))}
+            </AdminTable>
 
-              <AdminPagination
-                page={data.pagination.page || 1}
-                limit={data.pagination.limit || 10}
-                total={data.pagination.total || 0}
-                onPageChange={(nextPage) => void loadCodes(nextPage, filters)}
-              />
-            </div>
-
-            <Card className="rounded-3xl p-5 xl:sticky xl:top-6 xl:self-start">
-              <h3 className="text-xl font-semibold text-ink">兑换码详情</h3>
-              <p className="mt-1 text-sm text-muted">已兑换和已过期兑换码仅支持查看；未使用码可作废，已作废码可恢复。</p>
-
-              {selectedCode ? (
-                <div className="mt-5 space-y-4 text-sm text-slate-600">
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-semibold text-ink">兑换码</p>
-                    <p className="mt-1 break-all">{selectedCode.code}</p>
-                    <p className="mt-3 font-semibold text-ink">当前状态</p>
-                    <p className="mt-1">{statusLabelMap[selectedCode.status] || selectedCode.status}</p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-semibold text-ink">所属批次</p>
-                    <p className="mt-1">{selectedCode.batchNo}</p>
-                    <p className="mt-3 font-semibold text-ink">会员等级 / 时长类型</p>
-                    <p className="mt-1">{selectedCode.memberLevelLabel} / {selectedCode.cardType} / {selectedCode.grantDays} 天</p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-semibold text-ink">使用信息</p>
-                    <p className="mt-1">使用用户：{selectedCode.usedByUserPhone || '暂无'}</p>
-                    <p className="mt-1">使用时间：{formatDateTime(selectedCode.usedAt)}</p>
-                    <p className="mt-1">兑换码失效时间：{formatDate(selectedCode.validUntil)}</p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-semibold text-ink">作废与备注</p>
-                    <p className="mt-1">作废时间：{formatDateTime(selectedCode.invalidatedAt)}</p>
-                    <p className="mt-1">作废管理员：{selectedCode.invalidatedByAdminName || '暂无'}</p>
-                    <p className="mt-1">作废原因：{selectedCode.invalidReason || '暂无'}</p>
-                    <p className="mt-3 font-semibold text-ink">最近兑换备注</p>
-                    <p className="mt-1">{selectedCode.latestRemark || '暂无'}</p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <p className="font-semibold text-ink">手动操作</p>
-                    {canOperate ? (
-                      <>
-                        <Select className="mt-3" value={nextStatus} onChange={(e) => setNextStatus(e.target.value as 'void' | 'unused')}>
-                          {selectedCode.status === 'void' ? <option value="unused">恢复为未使用</option> : null}
-                          {selectedCode.status === 'unused' ? <option value="void">作废兑换码</option> : null}
-                        </Select>
-                        <Textarea className="mt-3 min-h-[100px]" placeholder="作废原因" value={invalidReason} disabled={nextStatus === 'unused'} onChange={(e) => setInvalidReason(e.target.value)} />
-                        <Button className="mt-3 w-full" onClick={() => void handleSubmit()} disabled={saving}>
-                          {saving ? '提交中...' : nextStatus === 'void' ? '确认作废' : '恢复为未使用'}
-                        </Button>
-                      </>
-                    ) : (
-                      <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-4 text-sm text-muted">当前状态为 {statusLabelMap[selectedCode.status] || selectedCode.status}，不支持手动变更。</p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-6 rounded-2xl bg-slate-50 px-4 py-6 text-sm text-muted">请先从左侧选择一条兑换码记录，再查看详情或执行作废 / 恢复操作。</p>
-              )}
-            </Card>
+            <AdminPagination
+              page={data.pagination.page || 1}
+              limit={data.pagination.limit || 10}
+              total={data.pagination.total || 0}
+              onPageChange={(nextPage) => void loadCodes(nextPage, filters)}
+            />
           </div>
         </section>
 
@@ -448,6 +399,69 @@ export default function AdminRedeemCodesPage() {
           />
         </section>
       </div>
+
+      <AdminModal
+        open={detailModalOpen}
+        title="兑换码详情"
+        description="已兑换和已过期兑换码仅支持查看；未使用码可作废，已作废码可恢复。"
+        onClose={closeDetailModal}
+      >
+        {selectedCode ? (
+          <div className="space-y-4 text-sm text-slate-600">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-semibold text-ink">兑换码</p>
+                <p className="mt-1 break-all">{selectedCode.code}</p>
+                <p className="mt-3 font-semibold text-ink">当前状态</p>
+                <p className="mt-1">{statusLabelMap[selectedCode.status] || selectedCode.status}</p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-semibold text-ink">所属批次</p>
+                <p className="mt-1">{selectedCode.batchNo}</p>
+                <p className="mt-3 font-semibold text-ink">会员等级 / 时长类型</p>
+                <p className="mt-1">{selectedCode.memberLevelLabel} / {selectedCode.cardType} / {selectedCode.grantDays} 天</p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-semibold text-ink">使用信息</p>
+                <p className="mt-1">使用用户：{selectedCode.usedByUserPhone || '暂无'}</p>
+                <p className="mt-1">使用时间：{formatDateTime(selectedCode.usedAt)}</p>
+                <p className="mt-1">兑换码失效时间：{formatDate(selectedCode.validUntil)}</p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="font-semibold text-ink">作废与备注</p>
+                <p className="mt-1">作废时间：{formatDateTime(selectedCode.invalidatedAt)}</p>
+                <p className="mt-1">作废管理员：{selectedCode.invalidatedByAdminName || '暂无'}</p>
+                <p className="mt-1">作废原因：{selectedCode.invalidReason || '暂无'}</p>
+                <p className="mt-3 font-semibold text-ink">最近兑换备注</p>
+                <p className="mt-1">{selectedCode.latestRemark || '暂无'}</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <p className="font-semibold text-ink">手动操作</p>
+              {canOperate ? (
+                <div className="mt-3 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_200px] lg:items-start">
+                  <Select value={nextStatus} onChange={(e) => setNextStatus(e.target.value as 'void' | 'unused')}>
+                    {selectedCode.status === 'void' ? <option value="unused">恢复为未使用</option> : null}
+                    {selectedCode.status === 'unused' ? <option value="void">作废兑换码</option> : null}
+                  </Select>
+                  <Textarea className="min-h-[100px]" placeholder="作废原因" value={invalidReason} disabled={nextStatus === 'unused'} onChange={(e) => setInvalidReason(e.target.value)} />
+                  <Button onClick={() => void handleSubmit()} disabled={saving}>
+                    {saving ? '提交中...' : nextStatus === 'void' ? '确认作废' : '恢复为未使用'}
+                  </Button>
+                </div>
+              ) : (
+                <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-4 text-sm text-muted">当前状态为 {statusLabelMap[selectedCode.status] || selectedCode.status}，不支持手动变更。</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="rounded-2xl bg-slate-50 px-4 py-6 text-sm text-muted">请先从列表选择一条兑换码记录，再查看详情或执行作废 / 恢复操作。</p>
+        )}
+      </AdminModal>
 
       {showGenerateModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">

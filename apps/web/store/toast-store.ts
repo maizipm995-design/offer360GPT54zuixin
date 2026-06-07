@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { create } from 'zustand';
 
 const TOAST_DURATION_MS = 5000;
+let activeToastTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 export type ToastType = 'success' | 'info' | 'warning' | 'error';
 
 const TOAST_KEYWORDS = {
@@ -129,18 +130,28 @@ export const useToastStore = create<ToastState>((set, get) => ({
     const content = message.trim();
     if (!content) return;
 
-    const id = createToastId();
-    set((state) => ({
-      toasts: [...state.toasts, { id, message: content, type: resolveToastType(content, type) }],
-    }));
+    if (activeToastTimer) {
+      globalThis.clearTimeout(activeToastTimer);
+      activeToastTimer = null;
+    }
 
-    globalThis.setTimeout(() => {
+    const id = createToastId();
+    set({
+      toasts: [{ id, message: content, type: resolveToastType(content, type) }],
+    });
+
+    activeToastTimer = globalThis.setTimeout(() => {
       get().dismiss(id);
     }, TOAST_DURATION_MS);
   },
   dismiss: (id) => {
+    if (activeToastTimer) {
+      globalThis.clearTimeout(activeToastTimer);
+      activeToastTimer = null;
+    }
+
     set((state) => ({
-      toasts: state.toasts.filter((item) => item.id !== id),
+      toasts: state.toasts[0]?.id === id ? [] : state.toasts.filter((item) => item.id !== id),
     }));
   },
 }));

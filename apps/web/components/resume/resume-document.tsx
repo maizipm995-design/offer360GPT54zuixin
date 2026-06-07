@@ -37,6 +37,7 @@ interface ResumeDocumentProps {
   styleConfig: ResumeStyleConfig;
   layout: ResumeLayoutItem[];
   mode?: 'preview' | 'print';
+  textPreset?: 'default' | 'reference';
   onSectionClick?: (sectionId: ResumeSectionId) => void;
   onMetricsChange?: (metrics: ResumePreviewMetrics) => void;
   activeSectionId?: ResumeSectionId;
@@ -64,9 +65,9 @@ const HEADER_SCHOOL_LOGO_FRAME_WIDTH_MM = 30;
 const HEADER_SCHOOL_LOGO_FRAME_HEIGHT_MM = 18.54;
 const HEADER_AVATAR_SIZE_MM = 24;
 const HEADER_AVATAR_LARGE_SIZE_MM = 28;
-const RESUME_BODY_TEXT_COLOR = '#333333';
-const RESUME_PRIMARY_TEXT_COLOR = '#1a1a1a';
-const RESUME_META_TEXT_COLOR = '#666666';
+const RESUME_BODY_TEXT_COLOR = 'var(--resume-body-text-color)';
+const RESUME_PRIMARY_TEXT_COLOR = 'var(--resume-primary-text-color)';
+const RESUME_META_TEXT_COLOR = 'var(--resume-meta-text-color)';
 const RESUME_TITLE_FONT_WEIGHT = 600;
 const RESUME_DIVIDER_THICKNESS_PX = 2;
 const DEFAULT_AVATAR_PLACEHOLDER =
@@ -77,6 +78,7 @@ export function ResumeDocument({
   styleConfig,
   layout,
   mode = 'preview',
+  textPreset = 'default',
   onSectionClick,
   onMetricsChange,
   activeSectionId,
@@ -99,6 +101,21 @@ export function ResumeDocument({
     [content, layout, visibilityMap],
   );
   const typography = useMemo(() => buildTypography(styleConfig), [styleConfig]);
+  const textColors = useMemo(
+    () =>
+      textPreset === 'reference'
+        ? {
+            body: '#A3A3A3',
+            primary: '#909090',
+            meta: '#B0B0B0',
+          }
+        : {
+            body: '#333333',
+            primary: '#1A1A1A',
+            meta: '#666666',
+          },
+    [textPreset],
+  );
   const sheetStyle = useMemo<CSSProperties>(
     () => {
       const spacing = buildVerticalSpacing(styleConfig);
@@ -127,9 +144,12 @@ export function ResumeDocument({
         '--resume-theme-soft': hexToRgba(styleConfig.themeColor, 0.1),
         '--resume-theme-faint': hexToRgba(styleConfig.themeColor, 0.16),
         '--resume-theme-border': hexToRgba(styleConfig.themeColor, 0.32),
+        '--resume-body-text-color': textColors.body,
+        '--resume-primary-text-color': textColors.primary,
+        '--resume-meta-text-color': textColors.meta,
       } as CSSProperties;
     },
-    [styleConfig, typography.bodySizePt],
+    [styleConfig, textColors.body, textColors.meta, textColors.primary, typography.bodySizePt],
   );
   const pageStyle = useMemo<CSSProperties>(
     () => ({

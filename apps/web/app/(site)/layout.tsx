@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { SiteBeianFooter } from '@/components/layout/site-beian-footer';
 import { SiteHeader } from '@/components/layout/site-header';
 
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
@@ -15,6 +16,7 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
     <div className="pb-[104px] pt-[48px] lg:pb-0 lg:pt-[64px]">
       <SiteHeader />
       {children}
+      <SiteBeianFooter />
     </div>
   );
 }

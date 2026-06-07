@@ -1,5 +1,4 @@
 import { ForbiddenException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertUserHasMemberPermission } from '../../../common/utils/member-access';
 import { JobsService } from '../jobs.service';
@@ -8,27 +7,6 @@ vi.mock('../../../common/utils/member-access', () => ({
   assertUserHasMemberPermission: vi.fn(),
   getUserMemberAccess: vi.fn(),
 }));
-
-type AccessLogRecord = {
-  jobId: string;
-  userId: string | null;
-  membershipId: string | null;
-  memberLevel: string | null;
-  action: string;
-  requestStatus: string;
-  accessTokenId: string | null;
-  redirectTargetType: string | null;
-  limitHit: boolean;
-  riskHit: boolean;
-  reviewStatus: string;
-  failureReason: string | null;
-  consumedAt: Date | null;
-  expiresAt: Date | null;
-  ip: string | null;
-  userAgent: string | null;
-  deviceId: string | null;
-  sessionId: string | null;
-};
 
 function createRedisServiceMock() {
   const store = new Map<string, string>();
@@ -74,7 +52,6 @@ function createRedisServiceMock() {
 }
 
 function createAccessPrismaMock() {
-  const accessLogs: AccessLogRecord[] = [];
   const trackingStore = new Map<string, { progressStatus: string }>();
   const job = {
     id: 'job-1',
@@ -85,7 +62,6 @@ function createAccessPrismaMock() {
   };
 
   return {
-    accessLogs,
     prisma: {
       jobAnnouncement: {
         findUnique: vi.fn().mockImplementation(async ({ where }: { where: { id: string } }) => (
@@ -97,6 +73,10 @@ function createAccessPrismaMock() {
           id: 'membership-1',
           memberLevel: 'standard',
         }),
+      },
+      adminBootstrapConfig: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: vi.fn().mockResolvedValue({ id: 1 }),
       },
       userJobTracking: {
         findUnique: vi.fn().mockImplementation(async ({ where }: { where: { userId_jobId: { userId: string; jobId: string } } }) => (
@@ -119,23 +99,8 @@ function createAccessPrismaMock() {
           return next;
         }),
       },
-      jobAnnouncementAccessLog: {
-        create: vi.fn().mockImplementation(async ({ data }: { data: AccessLogRecord }) => {
-          accessLogs.push({ ...data });
-          return data;
-        }),
-        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { accessTokenId: string } }) => (
-          accessLogs.find((item) => item.accessTokenId === where.accessTokenId) ?? null
-        )),
-        update: vi.fn().mockImplementation(async ({ where, data }: { where: { accessTokenId: string }; data: Partial<AccessLogRecord> }) => {
-          const target = accessLogs.find((item) => item.accessTokenId === where.accessTokenId);
-          if (!target) {
-            throw new Error('access log not found');
-          }
-          Object.assign(target, data);
-          return target;
-        }),
-      },
+      $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+      $queryRawUnsafe: vi.fn().mockResolvedValue([]),
       $transaction: vi.fn().mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => callback({})),
     },
   };
@@ -145,7 +110,6 @@ function createService(prisma: ReturnType<typeof createAccessPrismaMock>['prisma
   const redisService = createRedisServiceMock();
   return new JobsService(
     prisma as never,
-    new JwtService({ secret: 'unit-test-secret' }),
     {} as never,
     {
       recordAccessClick: vi.fn().mockResolvedValue(undefined),
@@ -154,6 +118,23 @@ function createService(prisma: ReturnType<typeof createAccessPrismaMock>['prisma
     {} as never,
     redisService as never,
   );
+}
+
+function createServiceBundle(prisma: ReturnType<typeof createAccessPrismaMock>['prisma']) {
+  const redisService = createRedisServiceMock();
+  return {
+    redisService,
+    service: new JobsService(
+      prisma as never,
+      {} as never,
+      {
+        recordAccessClick: vi.fn().mockResolvedValue(undefined),
+        recordDeliveryMark: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {} as never,
+      redisService as never,
+    ),
+  };
 }
 
 describe('JobsService announcement access control', () => {
@@ -170,8 +151,8 @@ describe('JobsService announcement access control', () => {
     });
   });
 
-  it('查看公告时直接返回真实链接并写入 consumed 审计记录', async () => {
-    const { prisma, accessLogs } = createAccessPrismaMock();
+  it('查看公告时直接返回数据库原始链接', async () => {
+    const { prisma } = createAccessPrismaMock();
     const service = createService(prisma);
 
     const result = await service.viewAnnouncement('user-1', 'job-1', {
@@ -181,20 +162,11 @@ describe('JobsService announcement access control', () => {
       sessionId: 'session-1',
     });
 
-    expect(result).toMatchObject({
-      announcementUrl: 'https://campus.acme.cn/jobs/1',
-      redirectPath: 'https://campus.acme.cn/jobs/1',
-    });
-    expect(accessLogs).toHaveLength(1);
-    expect(accessLogs[0]?.requestStatus).toBe('consumed');
-    expect(accessLogs[0]?.userId).toBe('user-1');
-    expect(accessLogs[0]?.membershipId).toBe('membership-1');
-    expect(accessLogs[0]?.redirectTargetType).toBe('announcement');
-    expect(accessLogs[0]?.consumedAt).toBeInstanceOf(Date);
+    expect(result.announcementUrl).toBe('https://campus.acme.cn/jobs/1');
   });
 
-  it('公告查看返回真实链接且不附加追踪参数', async () => {
-    const { prisma, accessLogs } = createAccessPrismaMock();
+  it('公告查看返回数据库源站直链', async () => {
+    const { prisma } = createAccessPrismaMock();
     const service = createService(prisma);
 
     const result = await service.viewAnnouncement('user-1', 'job-1', {
@@ -202,11 +174,10 @@ describe('JobsService announcement access control', () => {
       sessionId: 'session-1',
     });
     expect(result.announcementUrl).toBe('https://campus.acme.cn/jobs/1');
-    expect(accessLogs[0]?.requestStatus).toBe('consumed');
   });
 
-  it('投递链路恢复直接返回真实链接', async () => {
-    const { prisma, accessLogs } = createAccessPrismaMock();
+  it('投递链路直接返回数据库原始投递链接', async () => {
+    const { prisma } = createAccessPrismaMock();
     prisma.$transaction = vi.fn().mockImplementation(async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma));
     const service = createService(prisma);
 
@@ -220,10 +191,8 @@ describe('JobsService announcement access control', () => {
       action: 'open_link',
       deliveryType: 'website',
       deliveryUrl: 'https://apply.acme.cn/delivery/1',
-      redirectPath: 'https://apply.acme.cn/delivery/1',
       progressStatus: '已投递',
     });
-    expect(accessLogs[0]?.requestStatus).toBe('consumed');
   });
 
   it('免费专区查看公告不受会员权限限制', async () => {
@@ -238,10 +207,7 @@ describe('JobsService announcement access control', () => {
       bypassPermission: true,
     });
 
-    expect(result).toMatchObject({
-      announcementUrl: 'https://campus.acme.cn/jobs/1',
-      redirectPath: 'https://campus.acme.cn/jobs/1',
-    });
+    expect(result.announcementUrl).toBe('https://campus.acme.cn/jobs/1');
   });
 
   it('免费专区立即投递不受会员权限限制', async () => {
@@ -261,13 +227,12 @@ describe('JobsService announcement access control', () => {
       action: 'open_link',
       deliveryType: 'website',
       deliveryUrl: 'https://apply.acme.cn/delivery/1',
-      redirectPath: 'https://apply.acme.cn/delivery/1',
       progressStatus: '已投递',
     });
   });
 
   it('邮箱投递会直接返回邮箱地址而不是跳转链接', async () => {
-    const { prisma, accessLogs } = createAccessPrismaMock();
+    const { prisma } = createAccessPrismaMock();
     prisma.jobAnnouncement.findUnique = vi.fn().mockResolvedValue({
       id: 'job-1',
       status: 'published',
@@ -290,7 +255,77 @@ describe('JobsService announcement access control', () => {
       progressStatus: '已投递',
     });
     expect(result).not.toHaveProperty('redirectPath');
-    expect(accessLogs[0]?.requestStatus).toBe('consumed');
-    expect(accessLogs[0]?.redirectTargetType).toBe('email');
+  });
+
+  it('已登录会员在共享 IP 被限制时仍可查看公告', async () => {
+    const { prisma } = createAccessPrismaMock();
+    const { service, redisService } = createServiceBundle(prisma);
+    redisService.get.mockImplementation(async (key: string) => (
+      key === 'jobs:risk:control:restrict:ip:127.0.0.1'
+        ? JSON.stringify({ reason: '检测到多账号共用同一 IP 高频访问' })
+        : null
+    ));
+
+    const result = await service.viewAnnouncement('user-1', 'job-1', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+      deviceId: 'device-1',
+      sessionId: 'session-1',
+    });
+
+    expect(result.announcementUrl).toBe('https://campus.acme.cn/jobs/1');
+  });
+
+  it('已登录会员在共享设备被冻结时仍可打开投递入口', async () => {
+    const { prisma } = createAccessPrismaMock();
+    prisma.$transaction = vi.fn().mockImplementation(async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma));
+    const { service, redisService } = createServiceBundle(prisma);
+    redisService.get.mockImplementation(async (key: string) => (
+      key === 'jobs:freeze:device:device-1'
+        ? JSON.stringify({ reason: '检测到多账号共用同一设备高频访问' })
+        : null
+    ));
+
+    const result = await service.deliver('user-1', 'job-1', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+      deviceId: 'device-1',
+      sessionId: 'session-1',
+    });
+
+    expect(result).toMatchObject({
+      action: 'open_link',
+      deliveryType: 'website',
+      deliveryUrl: 'https://apply.acme.cn/delivery/1',
+      progressStatus: '已投递',
+    });
+  });
+
+  it('超级会员命中账号级 restrict 时仍可继续查看公告', async () => {
+    const { prisma } = createAccessPrismaMock();
+    const { service, redisService } = createServiceBundle(prisma);
+    vi.mocked(assertUserHasMemberPermission).mockResolvedValueOnce({
+      isMember: true,
+      memberLevel: 'super',
+      memberLevelLabel: '超级会员',
+      memberRoleCode: 'SUPER_MEMBER',
+      memberRoleName: '超级会员',
+      permissionKeys: ['jobs:detail:view', 'jobs:deliver:use', 'jobs:referral:view', 'jobs:progress:update', 'jobs:recommend:view'],
+      membershipRemainingDays: 30,
+    });
+    redisService.get.mockImplementation(async (key: string) => (
+      key === 'jobs:risk:control:restrict:user:user-1'
+        ? JSON.stringify({ reason: '短时间访问过多不同岗位，已进入临时限制查看' })
+        : null
+    ));
+
+    const result = await service.viewAnnouncement('user-1', 'job-1', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+      deviceId: 'device-1',
+      sessionId: 'session-1',
+    });
+
+    expect(result.announcementUrl).toBe('https://campus.acme.cn/jobs/1');
   });
 });

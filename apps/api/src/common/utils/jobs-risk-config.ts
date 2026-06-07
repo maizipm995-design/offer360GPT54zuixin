@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 
 type BootstrapConfigClient = {
   $executeRawUnsafe: (query: string) => Promise<unknown>;
+  $queryRawUnsafe: <T = unknown>(query: string) => Promise<T>;
 };
 
 type BootstrapConfigReader = BootstrapConfigClient & {
@@ -111,22 +112,22 @@ export type JobsRiskConfig = {
 export const DEFAULT_JOBS_RISK_CONFIG: JobsRiskConfig = {
   accessLimits: {
     detail: {
-      perMinute: 18,
-      perTenMinutes: 120,
-      perHour: 320,
-      perDay: 800,
+      perMinute: 10000,
+      perTenMinutes: 100000,
+      perHour: 300000,
+      perDay: 2000000,
     },
     viewAnnouncement: {
-      perMinute: 10,
-      perTenMinutes: 50,
-      perHour: 150,
-      perDay: 400,
+      perMinute: 5000,
+      perTenMinutes: 50000,
+      perHour: 200000,
+      perDay: 1000000,
     },
     deliver: {
-      perMinute: 10,
-      perTenMinutes: 50,
-      perHour: 150,
-      perDay: 400,
+      perMinute: 5000,
+      perTenMinutes: 50000,
+      perHour: 200000,
+      perDay: 1000000,
     },
     scopeMultiplier: {
       user: 1,
@@ -137,73 +138,174 @@ export const DEFAULT_JOBS_RISK_CONFIG: JobsRiskConfig = {
   },
   controls: {
     dailyQuotaExceeded: {
-      restrictSeconds: 30 * 60,
+      restrictSeconds: 20 * 60,
     },
     repeatedLimitHits: {
       windowSeconds: 10 * 60,
-      userThreshold: 10,
-      ipThreshold: 20,
-      deviceThreshold: 18,
-      userCooldownSeconds: 5 * 60,
-      ipRestrictSeconds: 5 * 60,
-      deviceRestrictSeconds: 5 * 60,
+      userThreshold: 50000,
+      ipThreshold: 50000,
+      deviceThreshold: 50000,
+      userCooldownSeconds: 2 * 60,
+      ipRestrictSeconds: 3 * 60,
+      deviceRestrictSeconds: 3 * 60,
     },
     distinctJobBurst: {
       windowSeconds: 10 * 60,
-      userThreshold: 45,
-      ipThreshold: 90,
-      deviceThreshold: 60,
-      restrictSeconds: 8 * 60,
+      userThreshold: 50000,
+      ipThreshold: 50000,
+      deviceThreshold: 50000,
+      restrictSeconds: 5 * 60,
     },
     nightBurst: {
       windowSeconds: 20 * 60,
-      userThreshold: 60,
-      ipThreshold: 90,
-      deviceThreshold: 72,
-      freezeSeconds: 10 * 60,
+      userThreshold: 50000,
+      ipThreshold: 50000,
+      deviceThreshold: 50000,
+      freezeSeconds: 5 * 60,
       startHour: 1,
       endHour: 6,
     },
     sharedIpUsers: {
       windowSeconds: 10 * 60,
-      threshold: 15,
+      threshold: 10000,
       freezeSeconds: 10 * 60,
     },
     sharedDeviceUsers: {
       windowSeconds: 10 * 60,
-      threshold: 10,
+      threshold: 10000,
       freezeSeconds: 10 * 60,
     },
     userIpRotation: {
       windowSeconds: 10 * 60,
-      threshold: 12,
-      freezeSeconds: 10 * 60,
+      threshold: 10000,
+      freezeSeconds: 5 * 60,
     },
     regularPageScan: {
-      windowSeconds: 2 * 60,
-      userThreshold: 24,
-      ipThreshold: 40,
-      deviceThreshold: 32,
-      sessionThreshold: 24,
-      maxGapSeconds: 12,
-      cooldownSeconds: 3 * 60,
+      windowSeconds: 5 * 60,
+      userThreshold: 50000,
+      ipThreshold: 50000,
+      deviceThreshold: 50000,
+      sessionThreshold: 50000,
+      maxGapSeconds: 4,
+      cooldownSeconds: 2 * 60,
     },
     jobEnumeration: {
-      windowSeconds: 2 * 60,
-      userThreshold: 40,
-      ipThreshold: 60,
-      deviceThreshold: 48,
-      sessionThreshold: 40,
-      restrictSeconds: 8 * 60,
+      windowSeconds: 5 * 60,
+      userThreshold: 50000,
+      ipThreshold: 50000,
+      deviceThreshold: 50000,
+      sessionThreshold: 50000,
+      restrictSeconds: 5 * 60,
     },
     escalation: {
       windowSeconds: 24 * 60 * 60,
-      distinctRuleThreshold: 5,
-      severeHitThreshold: 5,
-      freezeSeconds: 2 * 60 * 60,
+      distinctRuleThreshold: 999,
+      severeHitThreshold: 50000,
+      freezeSeconds: 60 * 60,
     },
   },
 };
+
+function applyRelaxedJobsRiskFloor(config: JobsRiskConfig): JobsRiskConfig {
+  const floor = DEFAULT_JOBS_RISK_CONFIG;
+
+  return {
+    accessLimits: {
+      detail: {
+        perMinute: Math.max(config.accessLimits.detail.perMinute, floor.accessLimits.detail.perMinute),
+        perTenMinutes: Math.max(config.accessLimits.detail.perTenMinutes, floor.accessLimits.detail.perTenMinutes),
+        perHour: Math.max(config.accessLimits.detail.perHour, floor.accessLimits.detail.perHour),
+        perDay: Math.max(config.accessLimits.detail.perDay, floor.accessLimits.detail.perDay),
+      },
+      viewAnnouncement: {
+        perMinute: Math.max(config.accessLimits.viewAnnouncement.perMinute, floor.accessLimits.viewAnnouncement.perMinute),
+        perTenMinutes: Math.max(config.accessLimits.viewAnnouncement.perTenMinutes, floor.accessLimits.viewAnnouncement.perTenMinutes),
+        perHour: Math.max(config.accessLimits.viewAnnouncement.perHour, floor.accessLimits.viewAnnouncement.perHour),
+        perDay: Math.max(config.accessLimits.viewAnnouncement.perDay, floor.accessLimits.viewAnnouncement.perDay),
+      },
+      deliver: {
+        perMinute: Math.max(config.accessLimits.deliver.perMinute, floor.accessLimits.deliver.perMinute),
+        perTenMinutes: Math.max(config.accessLimits.deliver.perTenMinutes, floor.accessLimits.deliver.perTenMinutes),
+        perHour: Math.max(config.accessLimits.deliver.perHour, floor.accessLimits.deliver.perHour),
+        perDay: Math.max(config.accessLimits.deliver.perDay, floor.accessLimits.deliver.perDay),
+      },
+      scopeMultiplier: {
+        user: Math.max(config.accessLimits.scopeMultiplier.user, 1),
+        ip: Math.max(config.accessLimits.scopeMultiplier.ip, 1),
+        device: Math.max(config.accessLimits.scopeMultiplier.device, 1),
+        session: Math.max(config.accessLimits.scopeMultiplier.session, 1),
+      },
+    },
+    controls: {
+      dailyQuotaExceeded: {
+        restrictSeconds: config.controls.dailyQuotaExceeded.restrictSeconds,
+      },
+      repeatedLimitHits: {
+        windowSeconds: config.controls.repeatedLimitHits.windowSeconds,
+        userThreshold: Math.max(config.controls.repeatedLimitHits.userThreshold, floor.controls.repeatedLimitHits.userThreshold),
+        ipThreshold: Math.max(config.controls.repeatedLimitHits.ipThreshold, floor.controls.repeatedLimitHits.ipThreshold),
+        deviceThreshold: Math.max(config.controls.repeatedLimitHits.deviceThreshold, floor.controls.repeatedLimitHits.deviceThreshold),
+        userCooldownSeconds: config.controls.repeatedLimitHits.userCooldownSeconds,
+        ipRestrictSeconds: config.controls.repeatedLimitHits.ipRestrictSeconds,
+        deviceRestrictSeconds: config.controls.repeatedLimitHits.deviceRestrictSeconds,
+      },
+      distinctJobBurst: {
+        windowSeconds: config.controls.distinctJobBurst.windowSeconds,
+        userThreshold: Math.max(config.controls.distinctJobBurst.userThreshold, floor.controls.distinctJobBurst.userThreshold),
+        ipThreshold: Math.max(config.controls.distinctJobBurst.ipThreshold, floor.controls.distinctJobBurst.ipThreshold),
+        deviceThreshold: Math.max(config.controls.distinctJobBurst.deviceThreshold, floor.controls.distinctJobBurst.deviceThreshold),
+        restrictSeconds: config.controls.distinctJobBurst.restrictSeconds,
+      },
+      nightBurst: {
+        windowSeconds: config.controls.nightBurst.windowSeconds,
+        userThreshold: Math.max(config.controls.nightBurst.userThreshold, floor.controls.nightBurst.userThreshold),
+        ipThreshold: Math.max(config.controls.nightBurst.ipThreshold, floor.controls.nightBurst.ipThreshold),
+        deviceThreshold: Math.max(config.controls.nightBurst.deviceThreshold, floor.controls.nightBurst.deviceThreshold),
+        freezeSeconds: config.controls.nightBurst.freezeSeconds,
+        startHour: config.controls.nightBurst.startHour,
+        endHour: config.controls.nightBurst.endHour,
+      },
+      sharedIpUsers: {
+        windowSeconds: config.controls.sharedIpUsers.windowSeconds,
+        threshold: Math.max(config.controls.sharedIpUsers.threshold, floor.controls.sharedIpUsers.threshold),
+        freezeSeconds: config.controls.sharedIpUsers.freezeSeconds,
+      },
+      sharedDeviceUsers: {
+        windowSeconds: config.controls.sharedDeviceUsers.windowSeconds,
+        threshold: Math.max(config.controls.sharedDeviceUsers.threshold, floor.controls.sharedDeviceUsers.threshold),
+        freezeSeconds: config.controls.sharedDeviceUsers.freezeSeconds,
+      },
+      userIpRotation: {
+        windowSeconds: config.controls.userIpRotation.windowSeconds,
+        threshold: Math.max(config.controls.userIpRotation.threshold, floor.controls.userIpRotation.threshold),
+        freezeSeconds: config.controls.userIpRotation.freezeSeconds,
+      },
+      regularPageScan: {
+        windowSeconds: config.controls.regularPageScan.windowSeconds,
+        userThreshold: Math.max(config.controls.regularPageScan.userThreshold, floor.controls.regularPageScan.userThreshold),
+        ipThreshold: Math.max(config.controls.regularPageScan.ipThreshold, floor.controls.regularPageScan.ipThreshold),
+        deviceThreshold: Math.max(config.controls.regularPageScan.deviceThreshold, floor.controls.regularPageScan.deviceThreshold),
+        sessionThreshold: Math.max(config.controls.regularPageScan.sessionThreshold, floor.controls.regularPageScan.sessionThreshold),
+        maxGapSeconds: config.controls.regularPageScan.maxGapSeconds,
+        cooldownSeconds: config.controls.regularPageScan.cooldownSeconds,
+      },
+      jobEnumeration: {
+        windowSeconds: config.controls.jobEnumeration.windowSeconds,
+        userThreshold: Math.max(config.controls.jobEnumeration.userThreshold, floor.controls.jobEnumeration.userThreshold),
+        ipThreshold: Math.max(config.controls.jobEnumeration.ipThreshold, floor.controls.jobEnumeration.ipThreshold),
+        deviceThreshold: Math.max(config.controls.jobEnumeration.deviceThreshold, floor.controls.jobEnumeration.deviceThreshold),
+        sessionThreshold: Math.max(config.controls.jobEnumeration.sessionThreshold, floor.controls.jobEnumeration.sessionThreshold),
+        restrictSeconds: config.controls.jobEnumeration.restrictSeconds,
+      },
+      escalation: {
+        windowSeconds: config.controls.escalation.windowSeconds,
+        distinctRuleThreshold: Math.max(config.controls.escalation.distinctRuleThreshold, floor.controls.escalation.distinctRuleThreshold),
+        severeHitThreshold: Math.max(config.controls.escalation.severeHitThreshold, floor.controls.escalation.severeHitThreshold),
+        freezeSeconds: config.controls.escalation.freezeSeconds,
+      },
+    },
+  };
+}
 
 let jobsRiskConfigCache: { value: JobsRiskConfig; expiresAt: number } | null = null;
 
@@ -288,7 +390,7 @@ export function normalizeJobsRiskConfig(input: unknown, options: NormalizeOption
   const jobEnumeration = ensureObject(controls.jobEnumeration, 'controls.jobEnumeration', strict);
   const escalation = ensureObject(controls.escalation, 'controls.escalation', strict);
 
-  return {
+  const normalized = {
     accessLimits: {
       detail: {
         perMinute: readPositiveInteger(detail.perMinute, defaultConfig.accessLimits.detail.perMinute, '详情每分钟阈值', strict),
@@ -384,6 +486,8 @@ export function normalizeJobsRiskConfig(input: unknown, options: NormalizeOption
       },
     },
   } satisfies JobsRiskConfig;
+
+  return applyRelaxedJobsRiskFloor(normalized);
 }
 
 export async function ensureAdminBootstrapRiskConfigStorage(client: BootstrapConfigClient) {
@@ -396,10 +500,15 @@ export async function ensureAdminBootstrapRiskConfigStorage(client: BootstrapCon
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
-  await client.$executeRawUnsafe(`
-    ALTER TABLE admin_bootstrap_configs
-    ADD COLUMN IF NOT EXISTS jobs_risk_config JSON NULL AFTER register_entry_closed
-  `);
+  const jobsRiskColumns = await client.$queryRawUnsafe<Array<{ Field: string }>>(
+    "SHOW COLUMNS FROM admin_bootstrap_configs LIKE 'jobs_risk_config'",
+  );
+  if (!jobsRiskColumns.length) {
+    await client.$executeRawUnsafe(`
+      ALTER TABLE admin_bootstrap_configs
+      ADD COLUMN jobs_risk_config JSON NULL AFTER register_entry_closed
+    `);
+  }
 }
 
 export async function getJobsRiskConfig(client: BootstrapConfigReader, options: { forceRefresh?: boolean } = {}) {

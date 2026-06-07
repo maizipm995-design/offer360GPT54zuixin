@@ -1,73 +1,95 @@
-'use client';
+import { notFound } from 'next/navigation';
+import { CampusExamSpecialPageClient } from '@/components/campus-exam/campus-exam-special-page-client';
+import { SeoHiddenContent } from '@/components/common/seo-hidden-content';
+import { getCampusExamSpecialDetail } from '@/lib/campus-exam-page-data';
+import {
+  buildBreadcrumbSchema,
+  buildWebPageSchema,
+  mergeSeoKeywords,
+  SEO_OVERSEAS_JOB_KEYWORDS,
+} from '@/lib/seo';
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { clientFetch } from '@/lib/api';
-import type { CampusExamSpecialDetail } from '@/lib/campus-exam';
+export const revalidate = 300;
 
-export default function CampusExamSpecialPage() {
-  const params = useParams<{ specialId: string }>();
-  const [data, setData] = useState<CampusExamSpecialDetail | null>(null);
-  const [error, setError] = useState('');
+export default async function CampusExamSpecialPage({
+  params,
+}: {
+  params: Promise<{ specialId: string }>;
+}) {
+  const { specialId } = await params;
 
-  useEffect(() => {
-    if (!params?.specialId) return;
-    clientFetch<CampusExamSpecialDetail>(`/campus-exam/specials/${params.specialId}`)
-      .then(setData)
-      .catch((err) => setError(err instanceof Error ? err.message : '专项详情加载失败'));
-  }, [params]);
+  try {
+    const data = await getCampusExamSpecialDetail(specialId);
+    const path = `/campus-exam/special/${encodeURIComponent(String(data.id))}`;
+    const questionTypeSummary = data.questionTypeDistribution
+      .filter((item) => item.count > 0)
+      .slice(0, 4)
+      .map((item) => `${item.label}${item.count}题`)
+      .join('、');
+    const difficultySummary = data.difficultyDistribution
+      .filter((item) => item.count > 0)
+      .slice(0, 4)
+      .map((item) => `难度${item.difficulty}${item.count}题`)
+      .join('、');
+    const pageSchema = buildWebPageSchema({
+      title: `${data.name}专项练习 - Offer360`,
+      description: data.description?.trim()
+        ? `${data.description.trim()}，包含 ${data.questionCount} 道题与标准答案解析。`
+        : `Offer360 ${data.name} 专项提供 ${data.questionCount} 道练习题，覆盖校招笔试真题、答案解析与专项刷题。`,
+      path,
+      type: 'CollectionPage',
+    });
+    const breadcrumbSchema = buildBreadcrumbSchema([
+      { name: '首页', path: '/' },
+      { name: '笔试真题', path: '/campus-exam' },
+      { name: data.category.name, path: `/campus-exam/category/${encodeURIComponent(data.category.slug)}` },
+      { name: data.name, path },
+    ]);
+    const seoKeywords = mergeSeoKeywords(
+      [
+        data.name,
+        `${data.name}真题`,
+        `${data.name}专项练习`,
+        `${data.category.name}题库`,
+        `${data.category.name}笔试真题`,
+        '校招笔试真题',
+        '实习校招',
+        '求职全流程',
+        '大学生',
+        '留学生',
+        '海归',
+      ],
+      SEO_OVERSEAS_JOB_KEYWORDS,
+    );
 
-  return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 lg:px-6">
-      <Card className="p-6 lg:p-8">
-        <p className="text-sm font-medium text-brand">专项顺序练习</p>
-        <h1 className="mt-3 text-3xl font-bold text-ink">{data?.name ?? '专项详情'}</h1>
-        <p className="mt-2 text-sm text-slate-500">{data?.category.name}</p>
-        {data?.description ? <p className="mt-3 text-sm leading-7 text-slate-600">{data.description}</p> : null}
-        {error ? <p className="mt-3 text-sm text-rose-500">{error}</p> : null}
-        <div className="mt-5 flex flex-wrap gap-3">
-          <Link href={`/campus-exam/special/${params?.specialId}/practice`}>
-            <Button>开始顺序练习</Button>
-          </Link>
-          {data?.latestSession?.sessionId ? (
-            <Link href={`/campus-exam/special/${params?.specialId}/practice?sessionId=${data.latestSession.sessionId}`}>
-              <Button variant="secondary">继续顺序练习</Button>
-            </Link>
-          ) : null}
-        </div>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold text-ink">题型分布</h2>
-          <div className="mt-4 space-y-3">
-            {(data?.questionTypeDistribution ?? []).map((item) => (
-              <div key={item.questionType} className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-                <span className="text-sm text-ink">{item.label}</span>
-                <span className="text-sm font-medium text-slate-600">{item.count}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold text-ink">难度分布</h2>
-          <div className="mt-4 space-y-3">
-            {(data?.difficultyDistribution ?? []).map((item) => (
-              <div key={item.difficulty} className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-                <span className="text-sm text-ink">难度 {item.difficulty}</span>
-                <span className="text-sm font-medium text-slate-600">{item.count}</span>
-              </div>
-            ))}
-            <div className="rounded-2xl bg-brand/5 px-4 py-4 text-sm text-brand">
-              当前二级分类共 {data?.questionCount ?? 0} 道题，进入后会按固有顺序逐题作答，支持客观题即时判分与简答题自动评分。
-            </div>
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(pageSchema) }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
+        />
+        <CampusExamSpecialPageClient initialData={data} specialId={specialId} />
+        <SeoHiddenContent
+          title={`${data.name} 专项页 SEO 摘要`}
+          paragraphs={[
+            `${data.name} 是 ${data.category.name} 分类下的专项练习页，当前提供 ${data.questionCount} 道校招笔试真题，覆盖标准答案、题目解析与顺序刷题入口。`,
+            questionTypeSummary
+              ? `${data.name} 题型分布包括 ${questionTypeSummary}，帮助大学生、留学生与海归围绕实习校招场景进行专项强化。`
+              : `${data.name} 专项持续承接校招笔试真题、专项刷题与题目解析等深层搜索需求。`,
+            difficultySummary ? `${data.name} 当前难度分布为 ${difficultySummary}。` : '',
+          ].filter(Boolean)}
+          keywords={seoKeywords}
+        />
+      </>
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('不存在')) {
+      notFound();
+    }
+    throw error;
+  }
 }

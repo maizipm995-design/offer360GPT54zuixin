@@ -3,35 +3,74 @@ import type { ServiceItem } from '@/types';
 
 const DEFAULT_SITE_URL = 'https://www.offer360.cn';
 const DEFAULT_SITE_NAME = 'Offer360';
-const DEFAULT_SITE_TITLE = 'Offer360 - 中国校招招聘信息汇总平台与大学生求职平台';
+export const SEO_COMPETITOR_BRANDS = ['offer先生', '超级简历', '粉笔', '中公', '华图'] as const;
+export const SEO_OVERSEAS_JOB_KEYWORDS = [
+  '留学生求职',
+  '海归求职',
+  '留学生简历优化',
+  '留学生面试辅导',
+  '留学生校招',
+] as const;
+const DEFAULT_SITE_TITLE = 'Offer360 - 中国校招招聘信息汇总平台_实习校招_AI简历优化_面试辅导';
 const DEFAULT_SITE_DESCRIPTION =
-  'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，覆盖校招招聘信息、实习岗位、简历AI优化、面试辅导、笔试真题、面试逐字稿与求职全流程服务。';
+  'Offer360 致力于打造中国校招招聘信息汇总平台中的权威入口，覆盖实习校招、招聘公告、实习、春招、秋招、夏招、AI简历优化、面试辅导、校招笔试真题、面试逐字稿与求职全流程服务，服务大学生、留学生与海归群体。';
 const DEFAULT_SITE_KEYWORDS = [
-  'offer360',
+  'Offer360',
   '中国校招招聘信息汇总平台',
-  '校招信息汇总',
-  '大学生求职',
-  '应届生招聘',
-  '实习岗位',
-  '春招秋招',
-  '简历AI优化',
+  '实习校招',
+  '招聘公告',
+  '实习',
+  '春招',
+  '秋招',
+  '夏招',
+  'AI简历优化',
   '面试辅导',
-  '笔试真题',
+  '校招笔试真题',
   '面试逐字稿',
+  '求职全流程',
+  '大学生求职',
+  '留学生求职',
+  '海归求职',
 ];
 const DEFAULT_SITE_TOPICS = [
-  '校招招聘信息',
-  '实习招聘',
-  '简历AI优化',
-  '面试辅导',
-  '笔试真题',
-  '面试逐字稿',
-  '求职全流程服务',
+  '中国校招招聘信息汇总',
+  '实习校招与招聘公告',
+  'AI简历优化与面试辅导',
+  '校招笔试真题与面试逐字稿',
+  '大学生留学生海归求职全流程服务',
 ];
 const FAVICON_URL = 'https://i.postimg.cc/h4scGvF6/sun-lao-shilogo-64X64.png';
 const SEARCH_LOGO_URL = 'https://i.postimg.cc/J05Dn45v/sun-lao-shilogo-192X192.png';
 const DEFAULT_OG_IMAGE = FAVICON_URL;
 const BAIDU_VERIFICATION_CODE = 'codeva-m269Vh4kNt';
+
+export const CORE_SITE_LINKS = [
+  {
+    path: '/',
+    label: '名企校招',
+    description: '实时查看实习校招、招聘公告、春招秋招夏招与名企岗位资讯。',
+  },
+  {
+    path: '/campus-exam',
+    label: '笔试真题',
+    description: '系统练习校招笔试真题、分类题库、专项刷题与模考内容。',
+  },
+  {
+    path: '/resume-optimizer',
+    label: 'AI简历优化',
+    description: '通过 AI简历优化 工作台完成简历编辑、润色、结构优化与排版提升。',
+  },
+  {
+    path: '/interview-transcript',
+    label: '面试辅导',
+    description: '获取面试辅导建议、面试逐字稿复盘、回答优化与面试表现提升支持。',
+  },
+  {
+    path: '/services',
+    label: '求职服务',
+    description: '查看简历精修、面试辅导、笔试陪跑与求职陪跑等一站式服务。',
+  },
+] as const;
 
 function normalizeBaseUrl(input?: string | null) {
   const value = (input || '').trim();
@@ -102,6 +141,14 @@ export function getAbsoluteUrl(path = '/') {
 
 export function getDefaultOgImage() {
   return DEFAULT_OG_IMAGE;
+}
+
+export function mergeSeoKeywords(...groups: Array<Array<string | undefined> | readonly string[] | undefined>) {
+  return Array.from(
+    new Set(
+      groups.flatMap((group) => (group ?? []).filter((item): item is string => Boolean(item && item.trim()))),
+    ),
+  );
 }
 
 export function buildPageMetadata({
@@ -237,7 +284,7 @@ export function buildOrganizationSchema() {
     logo: SEARCH_LOGO_URL,
     description: DEFAULT_SITE_DESCRIPTION,
     areaServed: 'CN',
-    slogan: '校招招聘信息汇总与大学生求职全流程服务平台',
+    slogan: '中国校招招聘信息汇总平台中的权威入口',
     knowsAbout: DEFAULT_SITE_TOPICS,
   };
 }
@@ -256,6 +303,29 @@ export function buildWebsiteSchema() {
       url: getAbsoluteUrl('/'),
     },
     about: DEFAULT_SITE_TOPICS,
+    hasPart: CORE_SITE_LINKS.map((item) => ({
+      '@type': 'WebPage',
+      name: item.label,
+      url: getAbsoluteUrl(item.path),
+      description: item.description,
+    })),
+  };
+}
+
+export function buildSiteNavigationSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: 'Offer360 核心栏目导航',
+    itemListOrder: 'https://schema.org/ItemListOrderAscending',
+    numberOfItems: CORE_SITE_LINKS.length,
+    itemListElement: CORE_SITE_LINKS.map((item, index) => ({
+      '@type': 'SiteNavigationElement',
+      position: index + 1,
+      name: item.label,
+      description: item.description,
+      url: getAbsoluteUrl(item.path),
+    })),
   };
 }
 

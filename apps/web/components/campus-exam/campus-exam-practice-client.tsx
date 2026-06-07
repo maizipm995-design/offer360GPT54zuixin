@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,8 +12,10 @@ import {
   FileStack,
   PenLine,
   RotateCcw,
+  Star,
   X,
 } from 'lucide-react';
+import { useCampusExamAccess } from '@/components/campus-exam/use-campus-exam-access';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -27,11 +29,16 @@ import type {
   CampusExamSessionDetail,
   CampusExamSpecialDetail,
 } from '@/lib/campus-exam';
-import { useAuthStore } from '@/store/auth-store';
 
 type UserAnswerState = {
   type: string;
   values: string[];
+};
+
+type PracticeView = 'question' | 'summary' | 'wrong_review';
+type SubmitOutcome = 'blocked' | 'stayed' | 'advanced' | 'completed';
+type SubmitOptions = {
+  allowIncompleteSubmit?: boolean;
 };
 
 type CampusExamPracticeClientProps = {
@@ -76,6 +83,18 @@ const practiceModeMeta: Record<CampusExamPracticeMode, {
     badge: '分类随机 20 题',
     startLabel: '开始智能模考',
   },
+  wrong_practice: {
+    title: '错题顺序练习',
+    subtitle: '按错题库当前题目顺序逐题作答，适合系统化回顾薄弱项。',
+    badge: '错题顺序',
+    startLabel: '开始错题练习',
+  },
+  favorite_practice: {
+    title: '收藏顺序练习',
+    subtitle: '按收藏题库当前题目顺序逐题作答，方便围绕重点题目反复训练。',
+    badge: '收藏顺序',
+    startLabel: '开始收藏练习',
+  },
   wrong_retry: {
     title: '错题重练',
     subtitle: '从错题库随机抽取 10 题，适合做针对性回顾。',
@@ -95,6 +114,8 @@ function resolvePracticeMode(value: string | null, specialId?: number): CampusEx
     || value === 'custom_practice'
     || value === 'quick_practice'
     || value === 'smart_mock'
+    || value === 'wrong_practice'
+    || value === 'favorite_practice'
     || value === 'wrong_retry'
   ) {
     return value;
@@ -109,6 +130,8 @@ function buildPracticeAnswerResult(question: CampusExamQuestionDetail) {
     isCorrect: question.answerRecord.isCorrect,
     score: question.answerRecord.score,
     answerStatus: question.answerRecord.answerStatus,
+    correctAnswer: question.answerJson,
+    analysisHtml: question.analysisHtml,
     judgementResult: question.answerRecord.subjectiveJudgement?.judgementResult,
     subjectiveJudgement: question.answerRecord.subjectiveJudgement
       ? {
@@ -123,21 +146,21 @@ function buildPracticeAnswerResult(question: CampusExamQuestionDetail) {
 function buildQuestionRuleHint(question: CampusExamQuestionDetail) {
   const rule = question.interactionRule;
   if (rule.mode === 'single_choice') {
-    return '单选题仅可选择 1 个选项，点击后自动提交并进入下一题。';
+    return '单选题选择后立即判题，答对自动进入下一题，答错会停留当前页供你查看答案与解析。';
   }
   if (rule.mode === 'multiple_choice') {
-    return `多选题需选择 ${rule.minSelectionCount}~${rule.maxSelectionCount} 个选项后再手动提交。`;
+    return `多选题需选择 ${rule.minSelectionCount}~${rule.maxSelectionCount} 个选项，可点击“确定提交”或直接点“下一题”完成提交。`;
   }
   if (rule.mode === 'judge') {
-    return '判断题点击“正确/错误”后自动提交并进入下一题。';
+    return '判断题选择后立即判题，答对自动进入下一题，答错会停留当前页供你查看答案与解析。';
   }
   if (rule.mode === 'blank_single') {
-    return '单项填空题需填写 1 个答案后提交。';
+    return '单项填空题填写答案后，可点击“确定提交”或直接点“下一题”完成提交。';
   }
   if (rule.mode === 'blank_multiple') {
-    return `多项填空题需填写 ${rule.blankCount} 个答案后提交。`;
+    return `多项填空题需填写 ${rule.blankCount} 个答案，可点击“确定提交”或直接点“下一题”完成提交。`;
   }
-  return '简答题需填写答案后手动提交。';
+  return '简答题需填写答案后提交，提交后会展示判题结果与解析。';
 }
 
 function validateQuestionAnswer(question: CampusExamQuestionDetail, answer: UserAnswerState) {
@@ -163,14 +186,44 @@ function validateQuestionAnswer(question: CampusExamQuestionDetail, answer: User
   return nonEmptyValues[0] ? '' : '请填写当前题目的答案';
 }
 
-function buildSubmitButtonLabel(question: CampusExamQuestionDetail | null, submitting: boolean) {
+function stripHtml(value: string) {
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatAnswerValues(
+  question: CampusExamQuestionDetail,
+  answerState?: UserAnswerState | { values: string[] } | null,
+) {
+  const values = answerState?.values?.map((item) => item.trim()).filter(Boolean) ?? [];
+  if (!values.length) {
+    return ['未作答'];
+  }
+  if (question.optionsJson?.length) {
+    return values.map((value) => {
+      const matched = question.optionsJson?.find((option) => option.key === value || option.value === value);
+      if (!matched) {
+        return value;
+      }
+      const optionText = stripHtml(matched.previewHtml ?? matched.value);
+      return optionText ? `${matched.label}. ${optionText}` : matched.label;
+    });
+  }
+  return values;
+}
+
+function buildSubmitButtonLabel(submitting: boolean) {
   if (submitting) {
     return '提交中...';
   }
-  if (!question) {
-    return '提交答案';
-  }
-  return question.interactionRule.autoSubmitOnOptionClick ? '自动提交中' : '提交答案';
+  return '确定提交';
+}
+
+function buildNextButtonLabel(isLastQuestion: boolean) {
+  return isLastQuestion ? '完成作答' : '下一题';
 }
 
 function renderOptionContent(option: { label: string; value: string; previewHtml?: string }) {
@@ -190,11 +243,70 @@ function isSpecialAvailable(status?: string) {
   return ['published', 'enabled', 'active'].includes(status.toLowerCase());
 }
 
+function isMobileGestureViewport() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.innerWidth < 1024;
+}
+
+function shouldIgnoreGestureTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && Boolean(target.closest('button, a, input, textarea, select, label, [role="button"]'));
+}
+
+function buildPracticeAccessCopy(mode: CampusExamPracticeMode, specialName?: string) {
+  switch (mode) {
+    case 'quick_practice':
+      return {
+        guestMessage: '快速练习需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '快速练习需开通标准会员或超级会员后使用。',
+      };
+    case 'smart_mock':
+      return {
+        guestMessage: '智能模考需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '智能模考需开通标准会员或超级会员后使用。',
+      };
+    case 'wrong_practice':
+      return {
+        guestMessage: '错题顺序练习需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '错题顺序练习需开通标准会员或超级会员后使用。',
+      };
+    case 'favorite_practice':
+      return {
+        guestMessage: '收藏顺序练习需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '收藏顺序练习需开通标准会员或超级会员后使用。',
+      };
+    case 'wrong_retry':
+      return {
+        guestMessage: '错题重练需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '错题重练需开通标准会员或超级会员后使用。',
+      };
+    case 'custom_practice':
+      return {
+        guestMessage: '自定义刷题需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '自定义刷题需开通标准会员或超级会员后使用。',
+      };
+    case 'category_practice':
+      return {
+        guestMessage: '分类顺序练习需登录或注册后使用，请先完成账号登录。',
+        memberMessage: '分类顺序练习需开通标准会员或超级会员后使用。',
+      };
+    case 'special_practice':
+    default:
+      return {
+        guestMessage: `${specialName ?? '专项顺序练习'}需登录或注册后使用，请先完成账号登录。`,
+        memberMessage: `${specialName ?? '专项顺序练习'}需开通标准会员或超级会员后使用。`,
+      };
+  }
+}
+
 export default function CampusExamPracticeClient({ specialId }: CampusExamPracticeClientProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const token = useAuthStore((state) => state.token);
+  const { token, ensurePracticeAccess, accessDialog } = useCampusExamAccess();
   const requestedMode = resolvePracticeMode(searchParams.get('mode'), specialId);
-  const initialView = searchParams.get('view') === 'summary' ? 'summary' : 'question';
+  const initialView: PracticeView = searchParams.get('view') === 'summary' ? 'summary' : 'question';
   const requestedCategoryId = searchParams.get('categoryId') ?? '';
   const modeMeta = practiceModeMeta[requestedMode];
   const [special, setSpecial] = useState<CampusExamSpecialDetail | null>(null);
@@ -207,10 +319,22 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
   const [answerError, setAnswerError] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [favoriteSubmitting, setFavoriteSubmitting] = useState(false);
   const [jumping, setJumping] = useState(false);
-  const [practiceView, setPracticeView] = useState<'question' | 'summary'>(initialView);
+  const [practiceView, setPracticeView] = useState<PracticeView>(initialView);
   const [selectedSpecialIds, setSelectedSpecialIds] = useState<number[]>([]);
   const [isQuestionCardOpen, setIsQuestionCardOpen] = useState(false);
+  const [wrongReviewQuestionId, setWrongReviewQuestionId] = useState('');
+  const [wrongReviewCache, setWrongReviewCache] = useState<Record<string, CampusExamQuestionDetail>>({});
+  const [wrongReviewLoading, setWrongReviewLoading] = useState(false);
+  const [wrongResultRevealToken, setWrongResultRevealToken] = useState(0);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [submitScoreConfirmOpen, setSubmitScoreConfirmOpen] = useState(false);
+  const resultCardRef = useRef<HTMLDivElement | null>(null);
+  const questionStemRef = useRef<HTMLDivElement | null>(null);
+  const swipeGestureRef = useRef({ startX: 0, startY: 0, active: false });
+  const stemDoubleTapRef = useRef({ lastTapAt: 0, lastX: 0, lastY: 0 });
+  const allowBrowserLeaveRef = useRef(false);
 
   const currentIndex = useMemo(() => {
     if (!session?.questionOrder?.length || !question?.id) return 0;
@@ -245,6 +369,24 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
       wrongCount,
     };
   }, [session]);
+
+  const wrongQuestionIds = useMemo(() => {
+    if (!session) return [];
+    return session.questionOrder.filter((questionId) => session.answeredMap[questionId]?.isCorrect === false);
+  }, [session]);
+
+  const currentQuestionAnswered = useMemo(
+    () => Boolean(question?.id && session?.answeredMap[question.id]),
+    [question?.id, session?.answeredMap],
+  );
+
+  const wrongReviewQuestion = wrongReviewQuestionId ? wrongReviewCache[wrongReviewQuestionId] ?? null : null;
+  const wrongReviewIndex = wrongReviewQuestionId ? wrongQuestionIds.indexOf(wrongReviewQuestionId) : -1;
+  const isLastQuestion = Boolean(session && currentIndex >= session.questionOrder.length - 1);
+  const hideQuestionPagePanels = Boolean(session && practiceView === 'question');
+  const previousQuestionId = currentIndex > 0 ? session?.questionOrder[currentIndex - 1] : undefined;
+  const questionNavSecondaryClassName = 'h-11 min-w-[132px] rounded-full border-brand/20 bg-brand/5 text-brand hover:border-brand/35 hover:bg-brand/10 hover:text-brand disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400';
+  const questionNavPrimaryClassName = 'h-11 min-w-[132px] rounded-full bg-brand text-white shadow-card hover:bg-brand-dark disabled:bg-slate-300 disabled:text-white';
 
   useEffect(() => {
     if (!specialId) {
@@ -310,8 +452,12 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
   ), [token]);
 
   const loadInitialSession = useCallback(async (sessionId: string) => {
+    if (!ensurePracticeAccess(buildPracticeAccessCopy(requestedMode, special?.name))) {
+      setLoading(false);
+      setError('');
+      return;
+    }
     if (!token) {
-      setError('请先登录后再开始刷题');
       return;
     }
     setLoading(true);
@@ -336,7 +482,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
     } finally {
       setLoading(false);
     }
-  }, [applyQuestionState, fetchQuestionDetail, fetchSessionDetail, initialView, syncUrl, token]);
+  }, [applyQuestionState, ensurePracticeAccess, fetchQuestionDetail, fetchSessionDetail, initialView, requestedMode, special?.name, syncUrl, token]);
 
   useEffect(() => {
     const sessionId = searchParams.get('sessionId');
@@ -346,6 +492,83 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
     }
     void loadInitialSession(sessionId);
   }, [loadInitialSession, searchParams, token]);
+
+  useEffect(() => {
+    if (practiceView !== 'question' || !resultCardRef.current || !result || result.isCorrect !== false || wrongResultRevealToken === 0) {
+      return;
+    }
+    const card = resultCardRef.current;
+    const previewHeight = 180;
+    const revealTop = card.getBoundingClientRect().top;
+    const viewportBottom = window.innerHeight;
+    if (revealTop <= viewportBottom - previewHeight) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      const nextTop = card.getBoundingClientRect().top + window.scrollY - (window.innerHeight - previewHeight);
+      window.scrollTo({
+        top: Math.max(0, nextTop),
+        behavior: 'smooth',
+      });
+    });
+  }, [practiceView, result, wrongResultRevealToken]);
+
+  useEffect(() => {
+    swipeGestureRef.current.active = false;
+    stemDoubleTapRef.current.lastTapAt = 0;
+  }, [practiceView, question?.id]);
+
+  useEffect(() => {
+    if (practiceView !== 'question' || !question?.id || !questionStemRef.current) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      const stemTop = questionStemRef.current?.getBoundingClientRect().top;
+      if (typeof stemTop !== 'number') {
+        return;
+      }
+      window.scrollTo({
+        top: Math.max(0, window.scrollY + stemTop - 16),
+        behavior: 'smooth',
+      });
+    });
+  }, [practiceView, question?.id]);
+
+  useEffect(() => {
+    allowBrowserLeaveRef.current = false;
+  }, [session?.sessionId, practiceView]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || practiceView !== 'question' || !session?.sessionId) {
+      return;
+    }
+    if (!window.history.state?.campusExamPracticeGuard) {
+      window.history.pushState(
+        { ...(window.history.state ?? {}), campusExamPracticeGuard: true, sessionId: session.sessionId },
+        '',
+        window.location.href,
+      );
+    }
+    const handlePopState = () => {
+      if (allowBrowserLeaveRef.current) {
+        return;
+      }
+      if (previousQuestionId) {
+        void jumpToQuestion(previousQuestionId);
+      } else {
+        setExitConfirmOpen(true);
+      }
+      window.history.pushState(
+        { ...(window.history.state ?? {}), campusExamPracticeGuard: true, sessionId: session.sessionId },
+        '',
+        window.location.href,
+      );
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [practiceView, previousQuestionId, session?.sessionId]);
 
   const jumpToQuestion = async (questionId: string) => {
     if (!session?.sessionId || !token) return;
@@ -364,9 +587,38 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
     }
   };
 
+  const loadWrongReviewQuestion = useCallback(async (questionId: string) => {
+    if (!session?.sessionId || !token) return;
+    setWrongReviewQuestionId(questionId);
+    if (wrongReviewCache[questionId]) {
+      return;
+    }
+    setWrongReviewLoading(true);
+    try {
+      const detail = await fetchQuestionDetail(session.sessionId, questionId);
+      setWrongReviewCache((prev) => ({ ...prev, [questionId]: detail }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '错题回顾加载失败');
+    } finally {
+      setWrongReviewLoading(false);
+    }
+  }, [fetchQuestionDetail, session?.sessionId, token, wrongReviewCache]);
+
+  const openWrongReview = useCallback(async () => {
+    if (!wrongQuestionIds.length) return;
+    setPracticeView('wrong_review');
+    setIsQuestionCardOpen(false);
+    await loadWrongReviewQuestion(wrongReviewQuestionId && wrongQuestionIds.includes(wrongReviewQuestionId)
+      ? wrongReviewQuestionId
+      : wrongQuestionIds[0]);
+  }, [loadWrongReviewQuestion, wrongQuestionIds, wrongReviewQuestionId]);
+
   const handleStart = async () => {
+    if (!ensurePracticeAccess(buildPracticeAccessCopy(requestedMode, special?.name))) {
+      setError('');
+      return;
+    }
     if (!token) {
-      setError('请先登录后再开始练习');
       return;
     }
     setSubmitting(true);
@@ -394,13 +646,14 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
     }
   };
 
-  const handleSubmit = async (nextAnswer?: UserAnswerState) => {
-    if (!session?.sessionId || !question || !token || submitting) return;
+  const handleSubmit = async (nextAnswer?: UserAnswerState, options?: SubmitOptions): Promise<SubmitOutcome> => {
+    if (!session?.sessionId || !question || !token || submitting) return 'blocked';
     const submitAnswer = nextAnswer ?? answer;
-    const validationMessage = validateQuestionAnswer(question, submitAnswer);
+    const allowIncompleteSubmit = options?.allowIncompleteSubmit === true;
+    const validationMessage = allowIncompleteSubmit ? '' : validateQuestionAnswer(question, submitAnswer);
     if (validationMessage) {
       setAnswerError(validationMessage);
-      return;
+      return 'blocked';
     }
     setSubmitting(true);
     setError('');
@@ -414,48 +667,60 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
             questionId: question.id,
             userAnswer: submitAnswer,
             usedTimeSec: 10,
+            allowIncompleteSubmit,
           }),
         },
         token,
       );
       const sessionDetail = await fetchSessionDetail(session.sessionId);
       setSession(sessionDetail);
-      setResult(submitResult);
-      if (sessionDetail.status === 'completed') {
-        setIsQuestionCardOpen(false);
-        setPracticeView('summary');
-        syncUrl(session.sessionId, 'summary');
-        return;
-      }
-      const shouldAdvance = question.interactionRule.autoSubmitOnOptionClick;
-      if (shouldAdvance) {
+      if (submitResult.isCorrect) {
         const nextQuestionId = sessionDetail.questionOrder[currentIndex + 1];
         if (nextQuestionId) {
           const nextQuestion = await fetchQuestionDetail(session.sessionId, nextQuestionId);
           applyQuestionState(nextQuestion);
-        } else {
-          const currentQuestion = await fetchQuestionDetail(session.sessionId, question.id);
-          applyQuestionState(currentQuestion);
-          setResult(submitResult);
+          return 'advanced';
         }
-      } else {
-        const currentQuestion = await fetchQuestionDetail(session.sessionId, question.id);
-        applyQuestionState(currentQuestion);
-        setResult(submitResult);
+        if (sessionDetail.status === 'completed') {
+          setIsQuestionCardOpen(false);
+          setPracticeView('summary');
+          syncUrl(session.sessionId, 'summary');
+          return 'completed';
+        }
       }
+      setWrongResultRevealToken((prev) => prev + 1);
+      const currentQuestion = await fetchQuestionDetail(session.sessionId, question.id);
+      applyQuestionState(currentQuestion);
+      return 'stayed';
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交答案失败');
+      return 'blocked';
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleSingleChoiceSubmit = (optionKey: string) => {
-    if (!question || submitting) return;
+    if (!question || submitting || currentQuestionAnswered) return;
     const nextAnswer = { type: question.questionTypeCode, values: [optionKey] };
     setAnswer(nextAnswer);
     setAnswerError('');
     void handleSubmit(nextAnswer);
+  };
+
+  const handleNextAction = async () => {
+    if (!session?.sessionId || !question || jumping) return;
+    if (currentQuestionAnswered) {
+      if (isLastQuestion) {
+        setIsQuestionCardOpen(false);
+        setPracticeView('summary');
+        syncUrl(session.sessionId, 'summary');
+        return;
+      }
+      await jumpToQuestion(session.questionOrder[currentIndex + 1]);
+      return;
+    }
+    await handleSubmit(undefined, { allowIncompleteSubmit: !question.interactionRule.autoSubmitOnOptionClick });
   };
 
   const toggleCustomSpecial = (nextSpecialId: number) => {
@@ -479,6 +744,160 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
     });
   };
 
+  const handleFavoriteToggle = async () => {
+    if (!question || favoriteSubmitting) return;
+    if (!ensurePracticeAccess({
+      guestMessage: '收藏题目需登录或注册后使用，请先完成账号登录。',
+      memberMessage: '收藏题目需开通标准会员或超级会员后使用。',
+    })) {
+      return;
+    }
+    if (!token) {
+      return;
+    }
+    const nextFavorited = !question.isFavorited;
+    setFavoriteSubmitting(true);
+    setError('');
+    try {
+      await clientFetch(
+        `/campus-exam/questions/${question.id}/favorite`,
+        { method: nextFavorited ? 'POST' : 'DELETE' },
+        token,
+      );
+      setQuestion((current) => (current && current.id === question.id
+        ? {
+            ...current,
+            isFavorited: nextFavorited,
+          }
+        : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : nextFavorited ? '收藏题目失败' : '取消收藏失败');
+    } finally {
+      setFavoriteSubmitting(false);
+    }
+  };
+
+  const handleQuestionSwipeStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (
+      practiceView !== 'question'
+      || !question
+      || isQuestionCardOpen
+      || exitConfirmOpen
+      || submitScoreConfirmOpen
+      || !isMobileGestureViewport()
+      || event.touches.length !== 1
+      || shouldIgnoreGestureTarget(event.target)
+    ) {
+      swipeGestureRef.current.active = false;
+      return;
+    }
+    const touch = event.touches[0];
+    swipeGestureRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      active: true,
+    };
+  };
+
+  const handleQuestionSwipeMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (
+      !swipeGestureRef.current.active
+      || !isMobileGestureViewport()
+      || event.touches.length !== 1
+    ) {
+      return;
+    }
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - swipeGestureRef.current.startX;
+    const deltaY = touch.clientY - swipeGestureRef.current.startY;
+    if (Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      event.preventDefault();
+    }
+  };
+
+  const handleQuestionSwipeEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (
+      !swipeGestureRef.current.active
+      || practiceView !== 'question'
+      || !question
+      || isQuestionCardOpen
+      || exitConfirmOpen
+      || submitScoreConfirmOpen
+      || !isMobileGestureViewport()
+      || event.changedTouches.length !== 1
+    ) {
+      swipeGestureRef.current.active = false;
+      return;
+    }
+    swipeGestureRef.current.active = false;
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - swipeGestureRef.current.startX;
+    const deltaY = touch.clientY - swipeGestureRef.current.startY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    if (absX < 64 || absX < absY * 1.3 || absY > 96) {
+      return;
+    }
+    event.preventDefault();
+    if (deltaX < 0) {
+      if (isLastQuestion) {
+        setSubmitScoreConfirmOpen(true);
+        return;
+      }
+      const nextQuestionId = !isLastQuestion ? session?.questionOrder[currentIndex + 1] : undefined;
+      if (nextQuestionId) {
+        void jumpToQuestion(nextQuestionId);
+      }
+      return;
+    }
+    if (previousQuestionId) {
+      void jumpToQuestion(previousQuestionId);
+    }
+  };
+
+  const handleStemTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (
+      practiceView !== 'question'
+      || !question
+      || !isMobileGestureViewport()
+      || event.changedTouches.length !== 1
+    ) {
+      return;
+    }
+    const touch = event.changedTouches[0];
+    const now = Date.now();
+    const withinDoubleTapWindow = now - stemDoubleTapRef.current.lastTapAt <= 280;
+    const isSameSpot = Math.abs(touch.clientX - stemDoubleTapRef.current.lastX) <= 24
+      && Math.abs(touch.clientY - stemDoubleTapRef.current.lastY) <= 24;
+    if (withinDoubleTapWindow && isSameSpot) {
+      event.preventDefault();
+      event.stopPropagation();
+      stemDoubleTapRef.current.lastTapAt = 0;
+      void handleFavoriteToggle();
+      return;
+    }
+    stemDoubleTapRef.current = {
+      lastTapAt: now,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+    };
+  };
+
+  const openExitConfirm = () => {
+    setExitConfirmOpen(true);
+  };
+
+  const confirmExitPractice = () => {
+    allowBrowserLeaveRef.current = true;
+    setExitConfirmOpen(false);
+    router.push('/campus-exam');
+  };
+
+  const confirmSubmitAndViewScore = () => {
+    setSubmitScoreConfirmOpen(false);
+    void handleNextAction();
+  };
+
   const renderAnswerPanel = () => {
     if (!question) return null;
     const options = question.optionsJson ?? [];
@@ -489,7 +908,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
             <button
               key={option.key}
               type="button"
-              disabled={submitting}
+              disabled={submitting || currentQuestionAnswered}
               onClick={() => handleSingleChoiceSubmit(option.key)}
               className={`w-full rounded-2xl border px-4 py-4 text-left text-sm transition ${
                 answer.values[0] === option.key
@@ -510,6 +929,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
             <button
               key={option.key}
               type="button"
+              disabled={submitting || currentQuestionAnswered}
               onClick={() => {
                 const alreadySelected = answer.values.includes(option.key);
                 if (!alreadySelected && answer.values.length >= question.interactionRule.maxSelectionCount) {
@@ -540,6 +960,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
             <Input
               key={index}
               placeholder={`请输入第 ${index + 1} 空答案`}
+              disabled={submitting || currentQuestionAnswered}
               value={answer.values[index] ?? ''}
               onChange={(event) => {
                 const nextValues = [...answer.values];
@@ -555,6 +976,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
     return (
       <Textarea
         placeholder="请输入你的简答题答案"
+        disabled={submitting || currentQuestionAnswered}
         value={answer.values[0] ?? ''}
         onChange={(event) => {
           setAnswerError('');
@@ -623,51 +1045,59 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
   );
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 bg-slate-50 px-4 py-6 lg:px-6">
-      <Card className="overflow-hidden border-0 bg-gradient-to-r from-[#6B8AFF] to-[#406AFF] p-0 text-white shadow-card">
-        <div className="relative overflow-hidden px-6 py-6 lg:px-8">
-          <div className="absolute right-0 top-0 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
-          <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-medium">
-                {specialId ? '专项顺序' : modeMeta.badge}
+    <div
+      className="mx-auto flex w-full max-w-7xl flex-col gap-6 bg-slate-50 px-4 py-6 lg:px-6"
+      onTouchStart={handleQuestionSwipeStart}
+      onTouchMove={handleQuestionSwipeMove}
+      onTouchEnd={handleQuestionSwipeEnd}
+      style={{ touchAction: 'pan-y' }}
+    >
+      {!hideQuestionPagePanels ? (
+        <Card className="overflow-hidden border-0 bg-gradient-to-r from-[#6B8AFF] to-[#406AFF] p-0 text-white shadow-card">
+          <div className="relative overflow-hidden px-6 py-6 lg:px-8">
+            <div className="absolute right-0 top-0 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-medium">
+                  {specialId ? '专项顺序' : modeMeta.badge}
+                </div>
+                <h1 className="mt-3 text-3xl font-bold">
+                  {specialId
+                    ? special?.name ?? modeMeta.title
+                    : requestedMode === 'category_practice'
+                      ? `${selectedCategory?.name ?? '一级分类'}顺序练习`
+                      : modeMeta.title}
+                </h1>
+                <p className="mt-2 max-w-3xl text-sm leading-7 text-white/85">
+                  {specialId
+                    ? `${special?.category.name ?? '笔试真题'} · 当前二级分类下全部题目会按固有顺序逐题作答，支持自动切题、上一题返回和题卡回溯。`
+                    : requestedMode === 'category_practice'
+                      ? `${selectedCategory?.name ?? '当前一级分类'}下全部题目将按固有顺序逐题作答。`
+                      : modeMeta.subtitle}
+                </p>
               </div>
-              <h1 className="mt-3 text-3xl font-bold">
-                {specialId
-                  ? special?.name ?? modeMeta.title
-                  : requestedMode === 'category_practice'
-                    ? `${selectedCategory?.name ?? '一级分类'}顺序练习`
-                    : modeMeta.title}
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-7 text-white/85">
-                {specialId
-                  ? `${special?.category.name ?? '校招笔试'} · 当前二级分类下全部题目会按固有顺序逐题作答，支持自动切题、上一题返回和题卡回溯。`
-                  : requestedMode === 'category_practice'
-                    ? `${selectedCategory?.name ?? '当前一级分类'}下全部题目将按固有顺序逐题作答。`
-                    : modeMeta.subtitle}
-              </p>
+              {!session ? (
+                <Button
+                  onClick={handleStart}
+                  disabled={
+                    submitting
+                    || (requestedMode === 'category_practice' && !requestedCategoryId)
+                    || (requestedMode === 'custom_practice' && selectedSpecialCount === 0)
+                  }
+                  className="rounded-full bg-white px-5 text-brand hover:bg-white/90"
+                >
+                  {submitting ? '创建中...' : modeMeta.startLabel}
+                </Button>
+              ) : (
+                <div className="rounded-2xl bg-white/12 px-4 py-3 text-sm text-white/90">
+                  <p>{session.title}</p>
+                  <p className="mt-1">已完成 {session.answeredCount}/{session.totalQuestions}</p>
+                </div>
+              )}
             </div>
-            {!session ? (
-              <Button
-                onClick={handleStart}
-                disabled={
-                  submitting
-                  || (requestedMode === 'category_practice' && !requestedCategoryId)
-                  || (requestedMode === 'custom_practice' && selectedSpecialCount === 0)
-                }
-                className="rounded-full bg-white px-5 text-brand hover:bg-white/90"
-              >
-                {submitting ? '创建中...' : modeMeta.startLabel}
-              </Button>
-            ) : (
-              <div className="rounded-2xl bg-white/12 px-4 py-3 text-sm text-white/90">
-                <p>{session.title}</p>
-                <p className="mt-1">已完成 {session.answeredCount}/{session.totalQuestions}</p>
-              </div>
-            )}
           </div>
-        </div>
-      </Card>
+        </Card>
+      ) : null}
 
       {error ? <Card className="border-rose-100 bg-rose-50 p-6 text-sm text-rose-500">{error}</Card> : null}
       {answerError ? <Card className="border-amber-100 bg-amber-50 p-6 text-sm text-amber-700">{answerError}</Card> : null}
@@ -703,7 +1133,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
             <Card className="p-6 lg:p-8">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-brand">答题结算页</p>
+                  <p className="text-sm font-medium text-brand">练习详情</p>
                   <h2 className="mt-2 text-3xl font-bold text-ink">本次作答已完成</h2>
                   <p className="mt-2 text-sm text-slate-500">系统已根据本次完整作答情况生成汇总结果。</p>
                 </div>
@@ -739,6 +1169,11 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
                 >
                   回到题卡复盘
                 </Button>
+                {wrongQuestionIds.length ? (
+                  <Button variant="secondary" onClick={() => void openWrongReview()}>
+                    回顾错题
+                  </Button>
+                ) : null}
                 <Link href="/campus-exam/history">
                   <Button variant="secondary">查看练习历史</Button>
                 </Link>
@@ -749,7 +1184,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
             </Card>
           ) : null}
 
-          {practiceView === 'question' ? (
+          {practiceView === 'question' && !hideQuestionPagePanels ? (
             <Card className="border-dashed p-4 text-sm text-slate-600">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -770,7 +1205,15 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
               <div className="border-b border-slate-200 px-6 py-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <button
+                      type="button"
+                      onClick={openExitConfirm}
+                      className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-3 py-1.5 text-sm font-medium text-brand transition hover:bg-brand/15"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                      返回
+                    </button>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
                       <span className="rounded-full bg-brand/10 px-3 py-1 text-brand">{question.questionTypeLabel}</span>
                       <span>第 {currentIndex + 1} / {session.totalQuestions} 题</span>
                       {currentGroupLabel ? <span>{currentGroupLabel}</span> : null}
@@ -779,6 +1222,19 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
                     <h2 className="mt-3 text-lg font-semibold text-ink">当前题目</h2>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <button
+                      type="button"
+                      onClick={() => void handleFavoriteToggle()}
+                      disabled={favoriteSubmitting}
+                      className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                        question.isFavorited
+                          ? 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-amber-200 hover:text-amber-600'
+                      } ${favoriteSubmitting ? 'cursor-not-allowed opacity-70' : ''}`}
+                    >
+                      <Star className={`h-4 w-4 ${question.isFavorited ? 'fill-current' : ''}`} />
+                      {question.isFavorited ? '已收藏' : '收藏本题'}
+                    </button>
                     <span>难度 {question.difficulty}</span>
                     {question.isHighFrequencyWrong ? (
                       <span className="rounded-full bg-rose-50 px-3 py-1 text-rose-500">高频错题</span>
@@ -788,7 +1244,16 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
               </div>
 
               <div className="px-6 py-6">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div
+                  ref={questionStemRef}
+                  className="rounded-2xl border border-slate-200 bg-white p-5"
+                  onTouchEnd={handleStemTouchEnd}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    void handleFavoriteToggle();
+                  }}
+                  style={{ touchAction: 'manipulation' }}
+                >
                   <div className={richTextClassName} dangerouslySetInnerHTML={{ __html: question.stemPreviewHtml }} />
                   {question.questionImagePreviewUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -799,80 +1264,276 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
                 <div className="mt-6">{renderAnswerPanel()}</div>
                 <p className="mt-3 text-xs text-slate-400">{buildQuestionRuleHint(question)}</p>
 
-                <div className="mt-6 flex flex-wrap gap-3">
+                <div className="mt-6 flex flex-wrap justify-center gap-3">
                   <Button
                     variant="secondary"
                     onClick={() => {
                       if (currentIndex > 0) void jumpToQuestion(session.questionOrder[currentIndex - 1]);
                     }}
                     disabled={currentIndex <= 0 || jumping}
+                    className={questionNavSecondaryClassName}
                   >
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     上一题
                   </Button>
+                  {!question.interactionRule.autoSubmitOnOptionClick && !currentQuestionAnswered ? (
+                    <Button
+                      onClick={() => void handleSubmit()}
+                      disabled={submitting || Boolean(validateQuestionAnswer(question, answer))}
+                      className={questionNavPrimaryClassName}
+                    >
+                      {buildSubmitButtonLabel(submitting)}
+                    </Button>
+                  ) : null}
                   <Button
-                    onClick={() => void handleSubmit()}
-                    disabled={submitting || question.interactionRule.autoSubmitOnOptionClick || Boolean(validateQuestionAnswer(question, answer))}
+                    variant="primary"
+                    onClick={() => void handleNextAction()}
+                    disabled={jumping || submitting || (!currentQuestionAnswered && question.interactionRule.autoSubmitOnOptionClick)}
+                    className={questionNavPrimaryClassName}
                   >
-                    {buildSubmitButtonLabel(question, submitting)}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      if (currentIndex < session.questionOrder.length - 1) {
-                        void jumpToQuestion(session.questionOrder[currentIndex + 1]);
-                      }
-                    }}
-                    disabled={currentIndex >= session.questionOrder.length - 1 || jumping}
-                  >
-                    下一题
+                    {buildNextButtonLabel(isLastQuestion)}
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </div>
 
                 {(question.questionType === 1 || question.questionType === 3) ? (
-                  <p className="mt-3 text-xs text-slate-400">该题型会在你选择选项后自动提交并切到下一题。</p>
+                  <p className="mt-3 text-xs text-slate-400">选择后系统会立即判题，答对自动切题，答错会停留当前页供你查看解析后再继续。</p>
                 ) : (
-                  <p className="mt-3 text-xs text-slate-400">提交后会先展示判题结果与解析，你可以自行决定是否继续下一题。</p>
+                  <p className="mt-3 text-xs text-slate-400">你可以点击“确定提交”主动判题，也可以直接点“下一题/完成作答”默认提交当前作答内容。</p>
                 )}
               </div>
             </Card>
           ) : null}
 
-          {practiceView === 'question' && result ? (
-            <Card className="p-6">
-              <div className="flex flex-wrap items-center gap-3">
-                <h3 className="text-lg font-semibold text-ink">当前题目结果</h3>
-                <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm ${
-                  result.isCorrect ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-500'
-                }`}>
-                  {result.isCorrect ? <CheckCircle2 className="mr-1 h-4 w-4" /> : <Circle className="mr-1 h-4 w-4" />}
-                  {result.isCorrect ? '回答正确' : result.judgementResult === 'partial' ? '部分命中' : '回答错误'}
-                </span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
-                  得分 {result.score ?? 0}
+          {practiceView === 'question' && result && question ? (
+            <div ref={resultCardRef}>
+              <Card className="p-6">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h3 className="text-lg font-semibold text-ink">当前题目结果</h3>
+                  <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm ${
+                    result.isCorrect ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-500'
+                  }`}>
+                    {result.isCorrect ? <CheckCircle2 className="mr-1 h-4 w-4" /> : <Circle className="mr-1 h-4 w-4" />}
+                    {result.isCorrect ? '回答正确' : result.judgementResult === 'partial' ? '部分命中' : '回答错误'}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
+                    得分 {result.score ?? 0}
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                    <p className="font-medium text-ink">你的作答</p>
+                    <div className="mt-2 space-y-2">
+                      {formatAnswerValues(question, question.answerRecord?.userAnswer).map((item) => (
+                        <p key={item}>{item}</p>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-700">
+                    <p className="font-medium text-emerald-800">正确答案</p>
+                    <div className="mt-2 space-y-2">
+                      {formatAnswerValues(question, result.correctAnswer ?? question.answerJson).map((item) => (
+                        <p key={item}>{item}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {result.subjectiveJudgement ? (
+                  <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                    <p>评分模式：{result.subjectiveJudgement.scoringMode}</p>
+                    {result.subjectiveJudgement.matchedKeywords?.length ? (
+                      <p className="mt-2">命中点：{result.subjectiveJudgement.matchedKeywords.join('、')}</p>
+                    ) : null}
+                    {result.subjectiveJudgement.reason ? <p className="mt-2">说明：{result.subjectiveJudgement.reason}</p> : null}
+                  </div>
+                ) : null}
+                {question?.analysisPreviewHtml ? (
+                  <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+                    <h4 className="text-base font-semibold text-ink">答案解析</h4>
+                    <div className={`mt-3 ${richTextClassName}`} dangerouslySetInnerHTML={{ __html: question.analysisPreviewHtml }} />
+                    {question.analysisImagePreviewUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={question.analysisImagePreviewUrl} alt="解析配图" className="mt-4 max-h-96 rounded-2xl border border-slate-200 object-contain" />
+                    ) : null}
+                  </div>
+                ) : null}
+              </Card>
+            </div>
+          ) : null}
+
+          {practiceView === 'wrong_review' ? (
+            <Card className="p-6 lg:p-8">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-brand">错题回顾</p>
+                  <h2 className="mt-2 text-3xl font-bold text-ink">本场错题复盘</h2>
+                  <p className="mt-2 text-sm text-slate-500">
+                    仅展示本场答错的题目，支持在错题之间自由切换，查看你的作答、正确答案与完整解析。
+                  </p>
+                </div>
+                <span className="rounded-full bg-rose-50 px-4 py-2 text-sm font-medium text-rose-600">
+                  共 {wrongQuestionIds.length} 道错题
                 </span>
               </div>
-              {result.subjectiveJudgement ? (
-                <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                  <p>评分模式：{result.subjectiveJudgement.scoringMode}</p>
-                  {result.subjectiveJudgement.matchedKeywords?.length ? (
-                    <p className="mt-2">命中点：{result.subjectiveJudgement.matchedKeywords.join('、')}</p>
-                  ) : null}
-                  {result.subjectiveJudgement.reason ? <p className="mt-2">说明：{result.subjectiveJudgement.reason}</p> : null}
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setPracticeView('summary');
+                    syncUrl(session.sessionId, 'summary');
+                  }}
+                >
+                  返回结算页
+                </Button>
+                <Link href="/campus-exam">
+                  <Button variant="secondary">返回刷题首页</Button>
+                </Link>
+              </div>
+
+              {wrongQuestionIds.length ? (
+                <div className="mt-6 rounded-2xl bg-slate-50 p-4">
+                  <div className="flex flex-wrap gap-2">
+                    {wrongQuestionIds.map((questionId) => {
+                      const index = session.questionOrder.indexOf(questionId);
+                      const active = questionId === wrongReviewQuestionId;
+                      return (
+                        <button
+                          key={questionId}
+                          type="button"
+                          onClick={() => void loadWrongReviewQuestion(questionId)}
+                          className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                            active ? 'bg-brand text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          第 {index + 1} 题
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+              ) : (
+                <div className="mt-6 rounded-2xl bg-emerald-50 p-5 text-sm text-emerald-700">
+                  本场练习没有错题，继续保持。
+                </div>
+              )}
+
+              {wrongReviewLoading ? (
+                <Card className="mt-6 p-6 text-sm text-slate-500">正在加载错题详情...</Card>
               ) : null}
-              {question?.analysisPreviewHtml ? (
-                <div className="mt-4 rounded-2xl border border-slate-200 p-4">
-                  <h4 className="text-base font-semibold text-ink">答案解析</h4>
-                  <div className={`mt-3 ${richTextClassName}`} dangerouslySetInnerHTML={{ __html: question.analysisPreviewHtml }} />
-                  {question.analysisImagePreviewUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={question.analysisImagePreviewUrl} alt="解析配图" className="mt-4 max-h-96 rounded-2xl border border-slate-200 object-contain" />
-                  ) : null}
+
+              {wrongReviewQuestion ? (
+                <div className="mt-6 space-y-6">
+                  <div className="rounded-2xl border border-slate-200 p-5">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span className="rounded-full bg-brand/10 px-3 py-1 text-brand">{wrongReviewQuestion.questionTypeLabel}</span>
+                      {wrongReviewIndex >= 0 ? <span>错题 {wrongReviewIndex + 1} / {wrongQuestionIds.length}</span> : null}
+                      <span>原题序号 {session.questionOrder.indexOf(wrongReviewQuestion.id) + 1}</span>
+                    </div>
+                    <div className={`mt-4 ${richTextClassName}`} dangerouslySetInnerHTML={{ __html: wrongReviewQuestion.stemPreviewHtml }} />
+                    {wrongReviewQuestion.questionImagePreviewUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={wrongReviewQuestion.questionImagePreviewUrl} alt="题目配图" className="mt-4 max-h-96 rounded-2xl border border-slate-200 object-contain" />
+                    ) : null}
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                      <p className="font-medium text-ink">你的作答</p>
+                      <div className="mt-2 space-y-2">
+                        {formatAnswerValues(wrongReviewQuestion, wrongReviewQuestion.answerRecord?.userAnswer).map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-700">
+                      <p className="font-medium text-emerald-800">正确答案</p>
+                      <div className="mt-2 space-y-2">
+                        {formatAnswerValues(wrongReviewQuestion, wrongReviewQuestion.answerJson).map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <h3 className="text-base font-semibold text-ink">答案解析</h3>
+                    <div className={`mt-3 ${richTextClassName}`} dangerouslySetInnerHTML={{ __html: wrongReviewQuestion.analysisPreviewHtml }} />
+                    {wrongReviewQuestion.analysisImagePreviewUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={wrongReviewQuestion.analysisImagePreviewUrl} alt="解析配图" className="mt-4 max-h-96 rounded-2xl border border-slate-200 object-contain" />
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <Button
+                      variant="secondary"
+                      disabled={wrongReviewIndex <= 0}
+                      onClick={() => {
+                        if (wrongReviewIndex > 0) {
+                          void loadWrongReviewQuestion(wrongQuestionIds[wrongReviewIndex - 1]);
+                        }
+                      }}
+                      className={questionNavSecondaryClassName}
+                    >
+                      <ArrowLeft className="mr-2 h-4 w-4" />
+                      上一题
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={wrongReviewIndex < 0 || wrongReviewIndex >= wrongQuestionIds.length - 1}
+                      onClick={() => {
+                        if (wrongReviewIndex >= 0 && wrongReviewIndex < wrongQuestionIds.length - 1) {
+                          void loadWrongReviewQuestion(wrongQuestionIds[wrongReviewIndex + 1]);
+                        }
+                      }}
+                      className={questionNavPrimaryClassName}
+                    >
+                      下一题
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ) : null}
             </Card>
+          ) : null}
+
+          {exitConfirmOpen ? (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 px-4">
+              <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-ink">是否结束本次刷题</h3>
+                <p className="mt-3 text-sm leading-6 text-slate-500">
+                  结束后将返回笔试真题首页，本次刷题进度会保留在练习记录中。
+                </p>
+                <div className="mt-6 flex justify-end gap-3">
+                  <Button variant="secondary" onClick={() => setExitConfirmOpen(false)}>
+                    继续刷题
+                  </Button>
+                  <Button onClick={confirmExitPractice} className="bg-brand text-white hover:bg-brand-dark">
+                    结束并返回
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {submitScoreConfirmOpen ? (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 px-4">
+              <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-ink">是否提交查看得分</h3>
+                <p className="mt-3 text-sm leading-6 text-slate-500">
+                  当前已是最后一题，确认后将提交本次作答并进入得分结算页。
+                </p>
+                <div className="mt-6 flex justify-end gap-3">
+                  <Button variant="secondary" onClick={() => setSubmitScoreConfirmOpen(false)}>
+                    继续答题
+                  </Button>
+                  <Button onClick={confirmSubmitAndViewScore} className="bg-brand text-white hover:bg-brand-dark">
+                    立即交卷
+                  </Button>
+                </div>
+              </div>
+            </div>
           ) : null}
 
           {practiceView === 'question' && requestedMode === 'wrong_retry' ? (
@@ -924,7 +1585,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
                       <p className="mt-2">{session.title}</p>
                       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-400">
                         <span>已完成 {session.answeredCount}/{session.totalQuestions}</span>
-                        {session.status === 'completed' ? <span>本次作答已完成，可查看结算。</span> : <span>可随时切换到任意题目继续作答。</span>}
+                        {session.status === 'completed' ? <span>本次作答已完成，可查看详情。</span> : <span>可随时切换到任意题目继续作答。</span>}
                       </div>
                     </div>
 
@@ -969,7 +1630,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
                             syncUrl(session.sessionId, 'summary');
                           }}
                         >
-                          查看本次结算
+                          查看详情
                         </Button>
                       ) : null}
                       <Link href="/campus-exam/history">
@@ -983,6 +1644,7 @@ export default function CampusExamPracticeClient({ specialId }: CampusExamPracti
           ) : null}
         </div>
       ) : null}
+      {accessDialog}
     </div>
   );
 }
